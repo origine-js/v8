@@ -3,9 +3,85 @@ const v8 = @import("v8.zig");
 
 // Demo js repl.
 
+// comptime {
+//     _ = @import("./alloc.zig");
+// }
+
 pub fn main() !void {
     repl();
     std.process.exit(0);
+}
+
+var runtime: std.Io.Threaded = undefined;
+
+fn hello_fn(info: v8.FunctionCallbackInfo) callconv(.c) void {
+    // var hscope: v8.HandleScope = undefined;
+    // hscope.init(info.isolate());
+    // defer hscope.deinit();
+    std.debug.print("arg length: {}\n", .{info.length});
+    const isolate = info.isolate();
+    const ctx = isolate.getCurrentContext();
+    var idx: c_int = 0;
+    var arr: std.ArrayList(u8) = .empty;
+    defer arr.deinit(std.heap.smp_allocator);
+    while (idx < info.length) : (idx += 1) {
+        arr.clearRetainingCapacity();
+        const s = appendValueAsUtf8(std.heap.smp_allocator, &arr, isolate, ctx, info.get_arg(idx));
+        std.debug.print("arg {} = {s}\n", .{ idx, s });
+    }
+    var retval = info.retval();
+    retval.setBool(true);
+}
+
+fn read_file_fn(info: v8.FunctionCallbackInfo) callconv(.c) void {
+    const l = info.length;
+    const isolate = info.isolate();
+    if (l != 1) {
+        _ = info.isolate().throwException(v8.String.initOneByteStatic(isolate, "bad args").name.primitive.value);
+        return;
+    }
+    const val = info.get_arg(0);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.heap.smp_allocator);
+    const st = appendValueAsUtf8(std.heap.smp_allocator, &buf, isolate, isolate.getCurrentContext(), val);
+    var file = std.fs.cwd().openFile(st, .{}) catch {
+        _ = info.isolate().throwException(v8.String.initOneByteStatic(isolate, "open failed").name.primitive.value);
+        return;
+    };
+    var writer: std.Io.Writer.Allocating = .init(std.heap.smp_allocator);
+    defer writer.deinit();
+
+    var reader = file.reader(runtime.io(), buf.allocatedSlice());
+    _ = reader.interface.streamRemaining(&writer.writer) catch unreachable;
+    const result = v8.String.initUtf8(isolate, writer.toOwnedSlice() catch unreachable);
+    var rv = info.retval();
+    rv.set(result.name.primitive.value);
+}
+
+fn create_api(isolate: v8.Isolate) v8.ObjectTemplate {
+    var impl = v8.ObjectTemplate.initDefault(isolate).?;
+
+    // _ = impl.template.set(js_name, v8.Number.initInt(isolate, 1).numeric.primitive.value.data, .{
+    //     .DontDelete = true,
+    //     .ReadOnly = true,
+    // });
+    var builder: v8.FunctionTemplate.Builder = .{};
+    _ = impl.template.set(v8.String.initOneByte(isolate, "inspect").name, builder.build(isolate, &hello_fn, &.{}).template.data, .{
+        .DontDelete = true,
+        .ReadOnly = true,
+    });
+    _ = impl.template.set(v8.String.initOneByte(isolate, "read_file").name, builder.build(isolate, &read_file_fn, &.{}).template.data, .{
+        .DontDelete = true,
+        .ReadOnly = true,
+    });
+
+    return impl;
+}
+
+fn setup_global(isolate: v8.Isolate, ctx: v8.Context) void {
+    const global = ctx.getGlobal();
+    var js_name: v8.Name = v8.String.initOneByte(isolate, "core").name;
+    _ = global.set(ctx, js_name.primitive.value, create_api(isolate).initInstance(ctx).?.value);
 }
 
 fn repl() void {
@@ -13,7 +89,7 @@ fn repl() void {
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
-    var runtime: std.Io.Threaded = .init_single_threaded;
+    runtime = .init(gpa.allocator());
     defer runtime.deinit();
 
     var input_buf: std.ArrayList(u8) = .empty;
@@ -22,15 +98,14 @@ fn repl() void {
     const platform = v8.Platform.initDefault(0, true);
     defer platform.deinit();
 
-    v8.initV8Platform(platform);
-    defer v8.deinitV8Platform();
+    v8.V8.initializePlatform(platform);
 
-    v8.initV8();
-    defer _ = v8.deinitV8();
+    v8.V8.initialize();
+    defer _ = v8.V8.dispose();
 
-    var params = v8.initCreateParams();
-    params.array_buffer_allocator = v8.createDefaultArrayBufferAllocator();
-    defer v8.destroyArrayBufferAllocator(params.array_buffer_allocator.?);
+    var params: v8.Isolate.CreateParams = .init();
+    params.array_buffer_allocator = v8.ArrayBuffer.Allocator.initDefault();
+    defer v8.ArrayBuffer.Allocator.deinit(params.array_buffer_allocator);
     var isolate = v8.Isolate.init(&params);
     defer isolate.deinit();
 
@@ -41,11 +116,11 @@ fn repl() void {
     hscope.init(isolate);
     defer hscope.deinit();
 
-    var context = v8.Context.init(isolate, null, null);
+    var context: v8.Context = .init(isolate, null, null, null);
     context.enter();
     defer context.exit();
 
-    // context.getGlobal().setValue(ctx: Context, , value: anytype)
+    setup_global(isolate, context);
 
     const origin = v8.String.initUtf8(isolate, "(shell)");
 
@@ -128,22 +203,22 @@ pub fn executeString(alloc: std.mem.Allocator, isolate: v8.Isolate, src: []const
     hscope.init(isolate);
     defer hscope.deinit();
 
-    var try_catch: v8.TryCatch = undefined;
-    try_catch.init(isolate);
-    defer try_catch.deinit();
+    var tc_scope: v8.TryCatch = undefined;
+    tc_scope.init(isolate);
+    defer tc_scope.deinit();
 
-    const origin = v8.ScriptOrigin.initDefault(src_origin.toValue());
+    const origin = v8.ScriptOrigin.initDefault(src_origin.name.primitive.value);
 
     const context = isolate.getCurrentContext();
 
     const js_src = v8.String.initUtf8(isolate, src);
 
     const script = v8.Script.compile(context, js_src, origin) catch {
-        setResultError(alloc, isolate, try_catch, result);
+        setResultError(alloc, isolate, tc_scope, result);
         return;
     };
     const script_res = script.run(context) catch {
-        setResultError(alloc, isolate, try_catch, result);
+        setResultError(alloc, isolate, tc_scope, result);
         return;
     };
     result.* = .{
@@ -163,8 +238,7 @@ fn setResultError(alloc: std.mem.Allocator, isolate: v8.Isolate, try_catch: v8.T
     };
 }
 
-pub fn valueToUtf8Alloc(alloc: std.mem.Allocator, isolate: v8.Isolate, ctx: v8.Context, any_value: anytype) []const u8 {
-    const val = v8.getValue(any_value);
+pub fn valueToUtf8Alloc(alloc: std.mem.Allocator, isolate: v8.Isolate, ctx: v8.Context, val: v8.Value) []const u8 {
     const str = val.toString(ctx) catch unreachable;
     const len = str.lenUtf8(isolate);
     const buf = alloc.alloc(u8, len) catch unreachable;
@@ -172,19 +246,20 @@ pub fn valueToUtf8Alloc(alloc: std.mem.Allocator, isolate: v8.Isolate, ctx: v8.C
     return buf;
 }
 
-pub fn getTryCatchErrorString(alloc: std.mem.Allocator, isolate: v8.Isolate, try_catch: v8.TryCatch) []const u8 {
+pub fn getTryCatchErrorString(alloc: std.mem.Allocator, isolate: v8.Isolate, tc_scope: v8.TryCatch) []const u8 {
     var hscope: v8.HandleScope = undefined;
     hscope.init(isolate);
     defer hscope.deinit();
 
     const ctx = isolate.getCurrentContext();
 
-    if (try_catch.getMessage()) |message| {
-        var buf: std.ArrayList(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
+    if (tc_scope.getMessage()) |message| {
+        buf.clearRetainingCapacity();
 
         // Append source line.
         const source_line = message.getSourceLine(ctx).?;
-        _ = appendValueAsUtf8(alloc, &buf, isolate, ctx, source_line);
+        _ = appendValueAsUtf8(alloc, &buf, isolate, ctx, source_line.name.primitive.value);
         buf.append(alloc, '\n') catch unreachable;
 
         // Print wavy underline.
@@ -200,7 +275,7 @@ pub fn getTryCatchErrorString(alloc: std.mem.Allocator, isolate: v8.Isolate, try
         }
         buf.append(alloc, '\n') catch unreachable;
 
-        if (try_catch.getStackTrace(ctx)) |trace| {
+        if (tc_scope.getStackTrace(ctx)) |trace| {
             _ = appendValueAsUtf8(alloc, &buf, isolate, ctx, trace);
             buf.append(alloc, '\n') catch unreachable;
         }
@@ -208,17 +283,20 @@ pub fn getTryCatchErrorString(alloc: std.mem.Allocator, isolate: v8.Isolate, try
         return buf.toOwnedSlice(alloc) catch unreachable;
     } else {
         // V8 didn't provide any extra information about this error, just get exception str.
-        const exception = try_catch.getException().?;
+        const exception = tc_scope.getException().?;
         return valueToUtf8Alloc(alloc, isolate, ctx, exception);
     }
 }
 
-pub fn appendValueAsUtf8(alloc: std.mem.Allocator, arr: *std.ArrayList(u8), isolate: v8.Isolate, ctx: v8.Context, any_value: anytype) []const u8 {
-    const val = v8.getValue(any_value);
+pub fn appendValueAsUtf8(alloc: std.mem.Allocator, arr: *std.ArrayList(u8), isolate: v8.Isolate, ctx: v8.Context, val: v8.Value) []const u8 {
     const str = val.toString(ctx) catch unreachable;
     const len = str.lenUtf8(isolate);
-    const start = arr.items.len;
-    arr.resize(alloc, start + len) catch unreachable;
-    _ = str.writeUtf8(isolate, arr.items[start..arr.items.len]);
-    return arr.items[start..];
+    arr.ensureTotalCapacityPrecise(alloc, len) catch unreachable;
+    const buf = arr.addManyAsSliceAssumeCapacity(len);
+    const actual_len = str.writeUtf8(
+        isolate,
+        buf,
+    );
+    std.debug.assert(len == actual_len);
+    return buf;
 }

@@ -4,7 +4,7 @@
 static_library("v8_zig") {
   complete_static_lib = true
 
-  sources = [ "../binding.cpp" ]
+  sources = [ "./binding/binding.cc" ]
   deps = [
     "//build/config:shared_library_deps",
     "//:v8",

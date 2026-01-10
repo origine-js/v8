@@ -1,1747 +1,1459 @@
 const std = @import("std");
-const t = std.testing;
+const binding = @import("./binding.zig");
 
-pub const c = @cImport({
-    @cInclude("binding.h");
-});
+const support = struct {
+    pub const MaybeBool = enum(c_int) {
+        JustFalse = 0,
+        JustTrue = 1,
+        Nothing = 2,
 
-pub const Intercepted = struct {
-    pub const No = 0;
-    pub const Yes = 1;
+        pub fn as_maybe_bool(self: @This()) ?bool {
+            return switch (self) {
+                @This().JustFalse => false,
+                @This().JustTrue => true,
+                @This().Nothing => null,
+            };
+        }
+    };
 };
-
-pub const PropertyAttribute = struct {
-    pub const None = c.None;
-    pub const ReadOnly = c.ReadOnly;
-    pub const DontEnum = c.DontEnum;
-    pub const DontDelete = c.DontDelete;
-};
-
-pub const PropertyHandlerFlags = struct {
-    pub const None = c.None;
-    pub const AllCanRead = c.kAllCanRead;
-    pub const NonMasking = c.kNonMasking;
-    pub const OnlyInterceptStrings = c.kOnlyInterceptStrings;
-};
-
-pub const PromiseRejectEvent = struct {
-    pub const kPromiseRejectWithNoHandler = c.kPromiseRejectWithNoHandler;
-    pub const kPromiseHandlerAddedAfterReject = c.kPromiseHandlerAddedAfterReject;
-    pub const kPromiseRejectAfterResolved = c.kPromiseRejectAfterResolved;
-    pub const kPromiseResolveAfterResolved = c.kPromiseResolveAfterResolved;
-};
-
-pub const MessageErrorLevel = struct {
-    pub const kMessageLog = c.kMessageLog;
-    pub const kMessageDebug = c.kMessageDebug;
-    pub const kMessageInfo = c.kMessageInfo;
-    pub const kMessageError = c.kMessageError;
-    pub const kMessageWarning = c.kMessageWarning;
-    pub const kMessageAll = c.kMessageAll;
-};
-
-/// [V8]
-/// Policy for running microtasks:
-/// - explicit: microtasks are invoked with the
-///     Isolate::PerformMicrotaskCheckpoint() method;
-/// - scoped: microtasks invocation is controlled by MicrotasksScope objects;
-/// - auto: microtasks are invoked when the script call depth decrements to zero.
-pub const MicrotasksPolicy = struct {
-    pub const kExplicit = c.kExplicit;
-    pub const kScoped = c.kScoped;
-    pub const kAuto = c.kAuto;
-};
-
-pub const FunctionCodeHandling = struct {
-    pub const kClear = c.kClear;
-    pub const kKeep = c.kKeep;
-};
-
-// Currently, user callback functions passed into FunctionTemplate will need to have this declared as a param and then
-// converted to FunctionCallbackInfo to get a nicer interface.
-pub const C_FunctionCallbackInfo = c.FunctionCallbackInfo;
-pub const C_PropertyCallbackInfo = c.PropertyCallbackInfo;
-pub const C_WeakCallbackInfo = c.WeakCallbackInfo;
-pub const C_PromiseRejectMessage = c.PromiseRejectMessage;
-
-pub const C_Message = c.Message;
-pub const C_Value = c.Value;
-pub const C_Object = c.Object;
-pub const C_Name = c.Name;
-pub const C_Context = c.Context;
-pub const C_FunctionTemplate = c.FunctionTemplate;
-pub const C_Data = c.Data;
-pub const C_FixedArray = c.FixedArray;
-pub const C_Module = c.Module;
-pub const C_InternalAddress = c.InternalAddress;
-pub const C_String = c.String;
-
-pub const MessageCallback = c.MessageCallback;
-pub const FunctionCallback = c.FunctionCallback;
-pub const AccessorNameGetterCallback = c.AccessorNameGetterCallback;
-pub const AccessorNameSetterCallback = c.AccessorNameSetterCallback;
-
-pub const IndexedPropertyGetterCallback = c.IndexedPropertyGetterCallback;
-pub const IndexedPropertySetterCallback = c.IndexedPropertySetterCallback;
-pub const IndexedPropertyQueryCallback = c.IndexedPropertyQueryCallback;
-pub const IndexedPropertyDeleterCallback = c.IndexedPropertyDeleterCallback;
-pub const IndexedPropertyEnumeratorCallback = c.IndexedPropertyEnumeratorCallback;
-pub const IndexedPropertyDefinerCallback = c.IndexedPropertyDefinerCallback;
-pub const IndexedPropertyDescriptorCallback = c.IndexedPropertyDescriptorCallback;
-pub const IndexedPropertyHandlerConfiguration = struct {
-    getter: ?IndexedPropertyGetterCallback = null,
-    setter: ?IndexedPropertySetterCallback = null,
-    query: ?IndexedPropertyQueryCallback = null,
-    deleter: ?IndexedPropertyDeleterCallback = null,
-    enumerator: ?IndexedPropertyEnumeratorCallback = null,
-    definer: ?IndexedPropertyDefinerCallback = null,
-    descriptor: ?IndexedPropertyDescriptorCallback = null,
-    flags: c.PropertyHandlerFlags = PropertyHandlerFlags.None,
-};
-
-pub const NamedPropertyGetterCallback = c.NamedPropertyGetterCallback;
-pub const NamedPropertySetterCallback = c.NamedPropertySetterCallback;
-pub const NamedPropertyQueryCallback = c.NamedPropertyQueryCallback;
-pub const NamedPropertyDeleterCallback = c.NamedPropertyDeleterCallback;
-pub const NamedPropertyEnumeratorCallback = c.NamedPropertyEnumeratorCallback;
-pub const NamedPropertyDefinerCallback = c.NamedPropertyDefinerCallback;
-pub const NamedPropertyDescriptorCallback = c.NamedPropertyDescriptorCallback;
-pub const NamedPropertyHandlerConfiguration = struct {
-    getter: ?NamedPropertyGetterCallback = null,
-    setter: ?NamedPropertySetterCallback = null,
-    query: ?NamedPropertyQueryCallback = null,
-    deleter: ?NamedPropertyDeleterCallback = null,
-    enumerator: ?NamedPropertyEnumeratorCallback = null,
-    definer: ?NamedPropertyDefinerCallback = null,
-    descriptor: ?NamedPropertyDescriptorCallback = null,
-    flags: c.PropertyHandlerFlags = PropertyHandlerFlags.None,
-};
-
-pub const CreateParams = c.CreateParams;
-
-pub const SharedPtr = c.SharedPtr;
-
-const Root = @This();
 
 pub const Platform = struct {
+    pub const Opaque = opaque {};
+
+    extern fn v8__Platform__NewDefaultPlatform(thread_pool_size: c_int, idle_task_support: bool) ?*Opaque;
+    extern fn v8__Platform__DELETE(handle: *Opaque) void;
+    extern fn v8__Platform__PumpMessageLoop(platform: *Opaque, isolate: *Isolate.Opaque, wait_for_work: bool) bool;
+
+    handle: *Opaque,
+
     const Self = @This();
 
-    handle: *c.Platform,
-
-    /// Must be called first before initV8Platform and initV8
     /// Returns a new instance of the default v8::Platform implementation.
-    ///
-    /// |thread_pool_size| is the number of worker threads to allocate for
-    /// background jobs. If a value of zero is passed, a suitable default
-    /// based on the current number of processors online will be chosen.
-    /// If |idle_task_support| is enabled then the platform will accept idle
-    /// tasks (IdleTasksEnabled will return true) and will rely on the embedder
-    /// calling v8::platform::RunIdleTasks to process the idle tasks.
+    /// |thread_pool_size| is the number of worker threads to allocate for background jobs.
+    /// If 0, a suitable default based on the processors will be chosen.
     pub fn initDefault(thread_pool_size: u32, idle_task_support: bool) Self {
         return .{
-            .handle = c.v8__Platform__NewDefaultPlatform(@as(c_int, @intCast(thread_pool_size)), if (idle_task_support) 1 else 0).?,
+            .handle = v8__Platform__NewDefaultPlatform(@as(c_int, @intCast(thread_pool_size)), idle_task_support).?,
         };
     }
 
     pub fn deinit(self: Self) void {
-        c.v8__Platform__DELETE(self.handle);
+        v8__Platform__DELETE(self.handle);
     }
 
-    /// [V8]
     /// Pumps the message loop for the given isolate.
-    ///
-    /// The caller has to make sure that this is called from the right thread.
-    /// Returns true if a task was executed, and false otherwise. If the call to
-    /// PumpMessageLoop is nested within another call to PumpMessageLoop, only
-    /// nestable tasks may run. Otherwise, any task may run. Unless requested through
-    /// the |behavior| parameter, this call does not block if no task is pending. The
-    /// |platform| has to be created using |NewDefaultPlatform|.
     pub fn pumpMessageLoop(self: Self, isolate: Isolate, wait_for_work: bool) bool {
-        return c.v8__Platform__PumpMessageLoop(self.handle, isolate.handle, wait_for_work);
-    }
-
-    pub fn runIdleTasks(self: Self, isolate: Isolate, idle_time_in_seconds: u32) void {
-        c.v8__Platform__RunIdleTasks(self.handle, isolate.handle, @floatFromInt(idle_time_in_seconds));
+        return v8__Platform__PumpMessageLoop(self.handle, isolate.handle, wait_for_work);
     }
 };
 
-pub fn getVersion() []const u8 {
-    const str = c.v8__V8__GetVersion();
-    const idx = std.mem.indexOfSentinel(u8, 0, str);
-    return str[0..idx];
-}
+pub const V8 = struct {
+    extern fn v8__V8__Initialize() void;
+    extern fn v8__V8__InitializePlatform(platform: *Platform.Opaque) void;
+    extern fn v8__V8__InitializeICU() void;
+    extern fn v8__V8__Dispose() void;
+    extern fn v8__V8__DisposePlatform() void;
 
-/// [v8]
-/// Sets the v8::Platform to use. This should be invoked before V8 is
-/// initialized.
-pub fn initV8Platform(platform: Platform) void {
-    c.v8__V8__InitializePlatform(platform.handle);
-}
-
-/// [v8]
-/// Initializes V8. This function needs to be called before the first Isolate
-/// is created. It always returns true.
-pub fn initV8() void {
-    c.v8__V8__Initialize();
-}
-
-/// [v8]
-/// Initializes the ICU bundled with v8.
-pub fn initV8ICU() bool {
-    return c.v8__V8__InitializeICU();
-}
-
-/// [v8]
-/// Releases any resources used by v8 and stops any utility thread
-/// that may be running.  Note that disposing v8 is permanent, it
-/// cannot be reinitialized.
-///
-/// It should generally not be necessary to dispose v8 before exiting
-/// a process, this should happen automatically.  It is only necessary
-/// to use if the process needs the resources taken up by v8.
-pub fn deinitV8() bool {
-    return c.v8__V8__Dispose() == 1;
-}
-
-/// [v8]
-/// Clears all references to the v8::Platform. This should be invoked after
-/// V8 was disposed.
-pub fn deinitV8Platform() void {
-    c.v8__V8__DisposePlatform();
-}
-
-pub fn idleNotificaiton(hint: c_int) void {
-    c.v8__V8__IdleNoticiation(hint);
-}
-
-pub fn initCreateParams() c.CreateParams {
-    var params: c.CreateParams = undefined;
-    c.v8__Isolate__CreateParams__CONSTRUCT(&params);
-    return params;
-}
-
-pub fn createDefaultArrayBufferAllocator() *c.ArrayBufferAllocator {
-    return c.v8__ArrayBuffer__Allocator__NewDefaultAllocator().?;
-}
-
-pub fn destroyArrayBufferAllocator(alloc: *c.ArrayBufferAllocator) void {
-    c.v8__ArrayBuffer__Allocator__DELETE(alloc);
-}
-
-pub const Exception = struct {
-    pub fn initError(msg: String) Value {
-        return .{
-            .handle = c.v8__Exception__Error(msg.handle).?,
-        };
+    /// Initializes V8. This function needs to be called before the first Isolate is created.
+    pub fn initialize() void {
+        v8__V8__Initialize();
     }
 
-    pub fn initTypeError(msg: String) Value {
-        return .{
-            .handle = c.v8__Exception__TypeError(msg.handle).?,
-        };
+    /// Sets the v8::Platform to use. This should be invoked before V8 is initialized.
+    pub fn initializePlatform(platform: Platform) void {
+        v8__V8__InitializePlatform(platform.handle);
     }
 
-    pub fn initSyntaxError(msg: String) Value {
-        return .{
-            .handle = c.v8__Exception__SyntaxError(msg.handle).?,
-        };
+    /// Initializes the ICU bundled with v8.
+    pub fn initializeICU() void {
+        v8__V8__InitializeICU();
     }
 
-    pub fn initReferenceError(msg: String) Value {
-        return .{
-            .handle = c.v8__Exception__ReferenceError(msg.handle).?,
-        };
+    /// Releases any resources used by v8 and stops any utility thread that may be running.
+    pub fn dispose() void {
+        v8__V8__Dispose();
     }
 
-    pub fn initRangeError(msg: String) Value {
-        return .{
-            .handle = c.v8__Exception__RangeError(msg.handle).?,
-        };
-    }
-
-    pub fn initMessage(iso: Isolate, exception: Value) Message {
-        return .{
-            .handle = c.v8__Exception__CreateMessage(iso.handle, exception.handle).?,
-        };
-    }
-
-    /// [v8]
-    /// Returns the original stack trace that was captured at the creation time
-    /// of a given exception, or an empty handle if not available.
-    pub fn getStackTrace(exception: Value) ?StackTrace {
-        if (c.v8__Exception__GetStackTrace(exception.handle)) |handle| {
-            return StackTrace{
-                .handle = handle,
-            };
-        } else return null;
+    /// Clears all references to the v8::Platform. This should be invoked after V8 was disposed.
+    pub fn disposePlatform() void {
+        v8__V8__DisposePlatform();
     }
 };
 
-/// Contains Isolate related methods and convenience methods for creating js values.
+pub const ResourceConstraints = extern struct {
+    code_range_size_: usize,
+    max_old_generation_size_: usize,
+    max_young_generation_size_: usize,
+    initial_old_generation_size_: usize,
+    initial_young_generation_size_: usize,
+    physical_memory_size_: u64,
+    stack_limit_: *const u32,
+};
+
+pub const FixedArray = extern struct {
+    // todo
+};
+
+pub const HostInitializeImportMetaObjectCallback = *const fn (Context, Module, Object) void;
+pub const HostImportModuleDynamicallyCallback = *const fn (Context, host_defined_options: Data, resource_name: Value, specifier: String, import_attributes: FixedArray) void;
+
 pub const Isolate = extern struct {
+    pub const Opaque = opaque {};
+
+    extern fn v8__Isolate__New(params: *const CreateParams) ?*Opaque;
+    extern fn v8__Isolate__Enter(handle: *Opaque) void;
+    extern fn v8__Isolate__Exit(handle: *Opaque) void;
+    extern fn v8__Isolate__Dispose(handle: *Opaque) void;
+    extern fn v8__Isolate__GetCurrentContext(handle: *Opaque) ?*Address;
+    extern fn v8__Isolate__ThrowException(handle: *Opaque, value: Value) ?*Address;
+    extern fn v8__Isolate__SetData(handle: *Opaque, slot: u32, data: ?*anyopaque) void;
+    extern fn v8__Isolate__GetData(handle: *Opaque, slot: u32) ?*anyopaque;
+    extern fn v8__Isolate__PerformMicrotaskCheckpoint(handle: *Opaque) void;
+    extern fn v8__Isolate__GetMicrotasksPolicy(handle: *Opaque) MicrotasksPolicy;
+    extern fn v8__Isolate__SetMicrotasksPolicy(handle: *Opaque, policy: MicrotasksPolicy) void;
+    extern fn v8__Isolate__LowMemoryNotification(handle: *Opaque) void;
+    extern fn v8__Isolate__TerminateExecution(handle: *Opaque) void;
+    extern fn v8__Isolate__IsExecutionTerminating(handle: *Opaque) bool;
+    extern fn v8__Isolate__CancelTerminateExecution(handle: *Opaque) void;
+    extern fn v8__Isolate__SetCaptureStackTraceForUncaughtExceptions(handle: *Opaque, capture: bool, frame_limit: c_int) void;
+    extern fn v8__Isolate__GetHeapStatistics(handle: *Opaque, statistics: *HeapStatistics) void;
+
+    pub const CreateParams = extern struct {
+        pub extern fn v8__Isolate__CreateParams__CONSTRUCT(ptr: *@This()) void;
+
+        code_event_handler: ?*const anyopaque = null,
+        constraints: ResourceConstraints = std.mem.zeroes(ResourceConstraints),
+        snapshot_blob: ?*const anyopaque = null,
+        counter_lookup_callback: ?*const anyopaque = null,
+        create_histogram_callback: ?*const anyopaque = null,
+        add_histogram_sample_callback: ?*const anyopaque = null,
+        array_buffer_allocator: ArrayBuffer.Allocator,
+        array_buffer_allocator_shared: [2]?*anyopaque = .{ null, null },
+        external_references: ?*const isize = null,
+        allow_atomics_wait: bool = true,
+        embedder_wrapper_type_index: c_int = -1,
+        embedder_wrapper_object_index: c_int = -1,
+        _fatal_error_handler: ?*const anyopaque = null,
+        _oom_error_handler: ?*const anyopaque = null,
+        cpp_heap: ?*const anyopaque = null,
+
+        pub fn init() CreateParams {
+            comptime {
+                if (@sizeOf(CreateParams) != binding.sizes.Isolate_CreateParams) {
+                    @compileError("Isolate.CreateParams size mismatch");
+                }
+            }
+            var params: CreateParams = undefined;
+            v8__Isolate__CreateParams__CONSTRUCT(&params);
+            return params;
+        }
+    };
+
+    handle: *Opaque,
+
     const Self = @This();
 
-    handle: *c.Isolate,
-
-    pub fn init(params: *const c.CreateParams) Self {
-        const ptr = @as(*c.CreateParams, @ptrFromInt(@intFromPtr(params)));
+    pub fn init(params: *const CreateParams) Self {
         return .{
-            .handle = c.v8__Isolate__New(ptr).?,
+            .handle = v8__Isolate__New(params).?,
         };
     }
 
-    /// [V8]
-    /// Disposes the isolate.  The isolate must not be entered by any
-    /// thread to be disposable.
     pub fn deinit(self: Self) void {
-        c.v8__Isolate__Dispose(self.handle);
+        v8__Isolate__Dispose(self.handle);
     }
 
-    /// [V8]
-    /// Sets this isolate as the entered one for the current thread.
-    /// Saves the previously entered one (if any), so that it can be
-    /// restored when exiting.  Re-entering an isolate is allowed.
-    /// [Notes]
-    /// This is equivalent to initing an Isolate Scope.
-    pub fn enter(self: *Self) void {
-        c.v8__Isolate__Enter(self.handle);
+    pub fn enter(self: Self) void {
+        v8__Isolate__Enter(self.handle);
     }
 
-    /// [V8]
-    /// Exits this isolate by restoring the previously entered one in the
-    /// current thread.  The isolate may still stay the same, if it was
-    /// entered more than once.
-    ///
-    /// Requires: this == Isolate::GetCurrent().
-    /// [Notes]
-    /// This is equivalent to deiniting an Isolate Scope.
-    pub fn exit(self: *Self) void {
-        c.v8__Isolate__Exit(self.handle);
+    pub fn exit(self: Self) void {
+        v8__Isolate__Exit(self.handle);
     }
 
     pub fn getCurrentContext(self: Self) Context {
         return .{
-            .handle = c.v8__Isolate__GetCurrentContext(self.handle).?,
+            .data = .from_opaque(v8__Isolate__GetCurrentContext(self.handle)),
         };
     }
 
-    /// It seems stack trace is only captured if the value is wrapped in an Exception.initError.
-    pub fn throwException(self: Self, value: anytype) Value {
-        return .{
-            .handle = c.v8__Isolate__ThrowException(self.handle, getValueHandle(value)).?,
-        };
-    }
-    /// [V8]
-    /// This specifies the callback called by the upcoming dynamic import() language feature to load modules.
-    pub fn setHostImportModuleDynamicallyCallback(
-        self: Self,
-        callback: c.HostImportModuleDynamicallyCallback,
-    ) void {
-        c.v8__Isolate__SetHostImportModuleDynamicallyCallback(self.handle, callback);
+    pub fn throwException(self: Self, value: Value) Value {
+        return .from_opaque(v8__Isolate__ThrowException(self.handle, value));
     }
 
-    /// [V8]
-    /// Sets callback for the first time import.meta is called on a module
-    pub fn setHostInitializeImportMetaObjectCallback(
-        self: Self,
-        callback: c.HostInitializeImportMetaObjectCallback,
-    ) void {
-        c.v8__Isolate__SetHostInitializeImportMetaObjectCallback(self.handle, callback);
+    pub fn setData(self: Self, slot: u32, data: ?*anyopaque) void {
+        v8__Isolate__SetData(self.handle, slot, data);
     }
 
-    /// [V8]
-    /// Set callback to notify about promise reject with no handler, or
-    /// revocation of such a previous notification once the handler is added.
-    pub fn setPromiseRejectCallback(self: Self, callback: c.PromiseRejectCallback) void {
-        c.v8__Isolate__SetPromiseRejectCallback(self.handle, callback);
-    }
-
-    pub fn getMicrotasksPolicy(self: Self) c.MicrotasksPolicy {
-        return c.v8__Isolate__GetMicrotasksPolicy(self.handle);
-    }
-
-    pub fn setMicrotasksPolicy(self: Self, policy: c.MicrotasksPolicy) void {
-        c.v8__Isolate__SetMicrotasksPolicy(self.handle, policy);
+    pub fn getData(self: Self, slot: u32) ?*anyopaque {
+        return v8__Isolate__GetData(self.handle, slot);
     }
 
     pub fn performMicrotasksCheckpoint(self: Self) void {
-        c.v8__Isolate__PerformMicrotaskCheckpoint(self.handle);
+        v8__Isolate__PerformMicrotaskCheckpoint(self.handle);
     }
 
-    pub fn addMessageListener(self: Self, callback: c.MessageCallback) bool {
-        return c.v8__Isolate__AddMessageListener(self.handle, callback);
+    pub fn getMicrotasksPolicy(self: Self) MicrotasksPolicy {
+        return v8__Isolate__GetMicrotasksPolicy(self.handle);
     }
 
-    pub fn addMessageListenerWithErrorLevel(self: Self, callback: c.MessageCallback, message_levels: c_int, value: Value) bool {
-        return c.v8__Isolate__AddMessageListenerWithErrorLevel(self.handle, callback, message_levels, value.handle);
-    }
-
-    /// [v8]
-    /// Tells V8 to capture current stack trace when uncaught exception occurs
-    /// and report it to the message listeners. The option is off by default.
-    pub fn setCaptureStackTraceForUncaughtExceptions(self: Self, capture: bool, frame_limit: u32) void {
-        c.v8__Isolate__SetCaptureStackTraceForUncaughtExceptions(self.handle, capture, @as(c_int, @intCast(frame_limit)));
-    }
-
-    /// This does not terminate the current script immediately. V8 will mark it for termination at a later time. This was intended to end long running loops.
-    pub fn terminateExecution(self: Self) void {
-        c.v8__Isolate__TerminateExecution(self.handle);
-    }
-
-    pub fn isExecutionTerminating(self: Self) bool {
-        return c.v8__Isolate__IsExecutionTerminating(self.handle);
-    }
-
-    pub fn cancelTerminateExecution(self: Self) void {
-        c.v8__Isolate__CancelTerminateExecution(self.handle);
+    pub fn setMicrotasksPolicy(self: Self, policy: MicrotasksPolicy) void {
+        v8__Isolate__SetMicrotasksPolicy(self.handle, policy);
     }
 
     pub fn lowMemoryNotification(self: Self) void {
-        c.v8__Isolate__LowMemoryNotification(self.handle);
+        v8__Isolate__LowMemoryNotification(self.handle);
     }
 
-    pub fn getHeapStatistics(self: Self) c.HeapStatistics {
-        var res: c.HeapStatistics = undefined;
-        c.v8__Isolate__GetHeapStatistics(self.handle, &res);
+    pub fn terminateExecution(self: Self) void {
+        v8__Isolate__TerminateExecution(self.handle);
+    }
+
+    pub fn isExecutionTerminating(self: Self) bool {
+        return v8__Isolate__IsExecutionTerminating(self.handle);
+    }
+
+    pub fn cancelTerminateExecution(self: Self) void {
+        v8__Isolate__CancelTerminateExecution(self.handle);
+    }
+
+    pub fn getHeapStatistics(self: Self) HeapStatistics {
+        var res: HeapStatistics = undefined;
+        v8__Isolate__GetHeapStatistics(self.handle, &res);
         return res;
     }
 
-    pub fn initNumber(self: Self, val: f64) Number {
-        return Number.init(self, val);
-    }
-
-    pub fn initNumberBitCastedU64(self: Self, val: u64) Number {
-        return Number.initBitCastedU64(self, val);
-    }
-
-    pub fn initBoolean(self: Self, val: bool) Boolean {
-        return Boolean.init(self, val);
-    }
-
-    pub fn initIntegerI32(self: Self, val: i32) Integer {
-        return Integer.initI32(self, val);
-    }
-
-    pub fn initIntegerU32(self: Self, val: u32) Integer {
-        return Integer.initU32(self, val);
-    }
-
-    pub fn initBigIntI64(self: Self, val: i64) BigInt {
-        return BigInt.initI64(self, val);
-    }
-
-    pub fn initBigIntU64(self: Self, val: u64) BigInt {
-        return BigInt.initU64(self, val);
-    }
-
-    pub fn initStringUtf8(self: Self, val: []const u8) String {
-        return String.initUtf8(self, val);
-    }
-
-    pub fn initPersistent(self: Self, comptime T: type, val: T) Persistent(T) {
-        return Persistent(T).init(self, val);
-    }
-
-    pub fn initFunctionTemplateDefault(self: Self) FunctionTemplate {
-        return FunctionTemplate.initDefault(self);
-    }
-
-    pub fn initFunctionTemplateCallback(self: Self, callback: c.FunctionCallback) FunctionTemplate {
-        return FunctionTemplate.initCallback(self, callback);
-    }
-
-    pub fn initFunctionTemplateCallbackData(self: Self, callback: c.FunctionCallback, data_value: anytype) FunctionTemplate {
-        return FunctionTemplate.initCallbackData(self, callback, data_value);
-    }
-
-    pub fn initObjectTemplateDefault(self: Self) ObjectTemplate {
-        return ObjectTemplate.initDefault(self);
-    }
-
-    pub fn initObjectTemplate(self: Self, constructor: FunctionTemplate) ObjectTemplate {
-        return ObjectTemplate.init(self, constructor);
-    }
-
-    pub fn initObject(self: Self) Object {
-        return Object.init(self);
-    }
-
-    pub fn initArray(self: Self, len: u32) Array {
-        return Array.init(self, len);
-    }
-
-    pub fn initArrayElements(self: Self, elems: []const Value) Array {
-        return Array.initElements(self, elems);
-    }
-
-    pub fn initUndefined(self: Self) Primitive {
-        return Root.initUndefined(self);
-    }
-
-    pub fn initNull(self: Self) Primitive {
-        return Root.initNull(self);
-    }
-
-    pub fn initTrue(self: Self) Boolean {
-        return Root.initTrue(self);
-    }
-
-    pub fn initFalse(self: Self) Boolean {
-        return Root.initFalse(self);
-    }
-
-    pub fn initContext(self: Self, global_tmpl: ?ObjectTemplate, global_obj: ?*c.Value) Context {
-        return Context.init(self, global_tmpl, global_obj);
-    }
-
-    pub fn initExternal(self: Self, val: ?*anyopaque) External {
-        return External.init(self, val);
-    }
-
-    pub fn setData(self: Self, idx: u32, val: *anyopaque) void {
-        return c.v8__Isolate__SetData(self.handle, @as(c_int, @intCast(idx)), val);
-    }
-
-    pub fn getData(self: Self, idx: u32) ?*anyopaque {
-        return c.v8__Isolate__GetData(self.handle, @as(c_int, @intCast(idx)));
-    }
-
-    pub fn enqueueMicrotask(self: Self, callback: c.MicrotaskCallback, data: ?*anyopaque) void {
-        c.v8__Isolate__EnqueueMicrotask(self.handle, callback, data);
-    }
-
-    pub fn enqueueMicrotaskFunc(self: Self, function: Function) void {
-        c.v8__Isolate__EnqueueMicrotaskFunc(self.handle, function.handle);
-    }
-
-    pub fn getDataFromSnapshotOnce(self: Self, idx: usize) ?*const c.Data {
-        return c.v8__Isolate__GetDataFromSnapshotOnce(self.handle, idx);
+    pub fn setCaptureStackTraceForUncaughtExceptions(self: Self, capture: bool, frame_limit: u32) void {
+        v8__Isolate__SetCaptureStackTraceForUncaughtExceptions(self.handle, capture, @as(c_int, @intCast(frame_limit)));
     }
 };
 
 pub const HandleScope = struct {
+    pub const Opaque = [binding.sizes.HandleScope]u8;
+
+    extern fn v8__HandleScope__CONSTRUCT(ptr: *Opaque, isolate: *Isolate.Opaque) void;
+    extern fn v8__HandleScope__DESTRUCT(ptr: *Opaque) void;
+
+    inner: Opaque,
+
     const Self = @This();
 
-    inner: c.HandleScope,
-
-    /// [Notes]
-    /// This starts a new stack frame to record local objects created.
-    /// Since deinit depends on the inner pointer being the same, init should construct in place.
     pub fn init(self: *Self, isolate: Isolate) void {
-        c.v8__HandleScope__CONSTRUCT(&self.inner, isolate.handle);
+        v8__HandleScope__CONSTRUCT(&self.inner, isolate.handle);
     }
 
-    /// [Notes]
-    /// This pops the scope frame and allows V8 to mark/free local objects created since HandleScope.init.
-    /// In C++ code, this would happen automatically when the HandleScope var leaves the current scope.
     pub fn deinit(self: *Self) void {
-        c.v8__HandleScope__DESTRUCT(&self.inner);
+        v8__HandleScope__DESTRUCT(&self.inner);
     }
 };
 
-pub const Context = extern struct {
-    const Self = @This();
+pub const CTypeInfo = extern struct {
+    type: enum(u8) {
+        Void = 1,
+        Bool = 2,
+        Uint8 = 3,
+        Int32 = 4,
+        Uint32 = 5,
+        Int64 = 6,
+        Uint64 = 7,
+        Float32 = 8,
+        Float64 = 9,
+        Pointer = 10,
+        V8Value = 11,
+    },
+    flags: packed struct {
+        AllowSharedBit: bool,
+        EnforceRangeBit: bool,
+        ClampBit: bool,
+        IsRestrictedBit: bool,
+        _unused: u28 = 0,
+    },
+};
 
-    handle: *const c.Context,
+pub const CFunctionInfo = extern struct {
+    pub const Int64Representation = enum(u8) {
+        Number,
+        BigInt,
+    };
 
-    /// [V8]
-    /// Creates a new context and returns a handle to the newly allocated
-    /// context.
-    ///
-    /// \param isolate The isolate in which to create the context.
-    ///
-    /// \param extensions An optional extension configuration containing
-    /// the extensions to be installed in the newly created context.
-    ///
-    /// \param global_template An optional object template from which the
-    /// global object for the newly created context will be created.
-    ///
-    /// \param global_object An optional global object to be reused for
-    /// the newly created context. This global object must have been
-    /// created by a previous call to Context::New with the same global
-    /// template. The state of the global object will be completely reset
-    /// and only object identify will remain.
-    pub fn init(isolate: Isolate, global_tmpl: ?ObjectTemplate, global_obj: ?*c.Value) Self {
-        return .{
-            .handle = c.v8__Context__New(isolate.handle, if (global_tmpl != null) global_tmpl.?.handle else null, global_obj).?,
-        };
+    return_info_: CTypeInfo,
+    repr_: Int64Representation,
+    arg_count_: c_uint,
+    arg_info_: *const CTypeInfo,
+};
+
+pub const CFunction = extern struct {
+    pub const OverloadResolution = enum(c_int) {
+        Impossible,
+        AtRuntime,
+        AtCompileTime,
+    };
+
+    address_: *anyopaque,
+    type_info_: *const CFunctionInfo,
+};
+
+pub const ReturnValue = extern struct {
+    extern fn v8__ReturnValue__Value__Set(self: *ReturnValue, value: Value) void;
+    extern fn v8__ReturnValue__Value__Set__Bool(self: *ReturnValue, i: bool) void;
+    extern fn v8__ReturnValue__Value__Set__Int32(self: *ReturnValue, i: i32) void;
+    extern fn v8__ReturnValue__Value__Set__Uint32(self: *ReturnValue, i: u32) void;
+    extern fn v8__ReturnValue__Value__Set__Double(self: *ReturnValue, i: f64) void;
+    extern fn v8__ReturnValue__Value__SetNull(self: *ReturnValue) void;
+    extern fn v8__ReturnValue__Value__SetUndefined(self: *ReturnValue) void;
+    extern fn v8__ReturnValue__Value__SetEmptyString(self: *ReturnValue) void;
+    extern fn v8__ReturnValue__Value__Get(self: *const ReturnValue) ?*Address;
+
+    handle: *Address,
+
+    pub fn set(self: *@This(), value: Value) void {
+        v8__ReturnValue__Value__Set(self, value);
     }
 
-    pub fn fromSnapshot(isolate: Isolate, index: usize) ?Self {
-        const handle = c.v8__Context__FromSnapshot(isolate.handle, index) orelse return null;
-        return .{ .handle = handle };
+    pub fn setBool(self: *@This(), i: bool) void {
+        v8__ReturnValue__Value__Set__Bool(self, i);
     }
 
-    /// [V8]
-    /// Enter this context.  After entering a context, all code compiled
-    /// and run is compiled and run in this context.  If another context
-    /// is already entered, this old context is saved so it can be
-    /// restored when the new context is exited.
-    pub fn enter(self: Self) void {
-        c.v8__Context__Enter(self.handle);
+    pub fn setInt32(self: *@This(), i: i32) void {
+        v8__ReturnValue__Value__Set__Int32(self, i);
     }
 
-    /// [V8]
-    /// Exit this context.  Exiting the current context restores the
-    /// context that was in place when entering the current context.
-    pub fn exit(self: Self) void {
-        c.v8__Context__Exit(self.handle);
+    pub fn setUint32(self: *@This(), i: u32) void {
+        v8__ReturnValue__Value__Set__Uint32(self, i);
     }
 
-    /// [V8]
-    /// Returns the isolate associated with a current context.
-    pub fn getIsolate(_: Self) Isolate {
-        return Isolate{
-            .handle = c.v8__Isolate__GetCurrent().?,
-        };
+    pub fn setDouble(self: *@This(), i: f64) void {
+        v8__ReturnValue__Value__Set__Double(self, i);
     }
 
-    pub fn getGlobal(self: Self) Object {
-        return .{
-            .handle = c.v8__Context__Global(self.handle).?,
-        };
+    pub fn setNull(self: *@This()) void {
+        v8__ReturnValue__Value__SetNull(self);
     }
 
-    pub fn getEmbedderData(self: Self, idx: u32) Value {
-        return .{
-            .handle = c.v8__Context__GetEmbedderData(self.handle, @as(c_int, @intCast(idx))).?,
-        };
+    pub fn setUndefined(self: *@This()) void {
+        v8__ReturnValue__Value__SetUndefined(self);
     }
 
-    pub fn setEmbedderData(self: Self, idx: u32, val: anytype) void {
-        c.v8__Context__SetEmbedderData(self.handle, @as(c_int, @intCast(idx)), getValueHandle(val));
+    pub fn setEmptyString(self: *@This()) void {
+        v8__ReturnValue__Value__SetEmptyString(self);
     }
 
-    pub fn debugContextId(self: Self) i32 {
-        return c.v8__Context__DebugContextId(self.handle);
-    }
-
-    pub fn getDataFromSnapshotOnce(self: Self, idx: usize) ?*const c.Data {
-        return c.v8__Context__GetDataFromSnapshotOnce(self.handle, idx);
+    pub fn get(self: *const @This()) ?Value {
+        return Value.from_opaque_maybe(v8__ReturnValue__Value__Get(self));
     }
 };
 
-pub const PropertyCallbackInfo = struct {
-    const Self = @This();
+pub const PropertyCallbackInfo = extern struct {
+    pub const Opaque = [binding.sizes.PropertyCallbackInfo]u8;
 
-    handle: *const c.PropertyCallbackInfo,
+    extern fn v8__PropertyCallbackInfo__GetIsolate(self: *const PropertyCallbackInfo) *Isolate.Opaque;
+    extern fn v8__PropertyCallbackInfo__Data(self: *const PropertyCallbackInfo) ?*Address;
+    extern fn v8__PropertyCallbackInfo__This(self: *const PropertyCallbackInfo) ?*Address;
+    extern fn v8__PropertyCallbackInfo__Holder(self: *const PropertyCallbackInfo) ?*Address;
+    extern fn v8__PropertyCallbackInfo__GetReturnValue(self: *const PropertyCallbackInfo) *Address;
+    extern fn v8__PropertyCallbackInfo__ShouldThrowOnError(self: *const PropertyCallbackInfo) bool;
 
-    pub fn initFromV8(val: ?*const c.PropertyCallbackInfo) Self {
-        return .{
-            .handle = val.?,
-        };
+    inner: Opaque,
+
+    pub fn isolate(self: *const @This()) Isolate {
+        return .{ .handle = v8__PropertyCallbackInfo__GetIsolate(self) };
     }
 
-    pub fn getIsolate(self: Self) Isolate {
-        return .{
-            .handle = c.v8__PropertyCallbackInfo__GetIsolate(self.handle).?,
-        };
+    pub fn data(self: *const @This()) ?Data {
+        return Data.from_opaque_maybe(v8__PropertyCallbackInfo__Data(self));
     }
 
-    pub fn getReturnValue(self: Self) ReturnValue {
-        var res: c.ReturnValue = undefined;
-        c.v8__PropertyCallbackInfo__GetReturnValue(self.handle, &res);
-        return .{
-            .inner = res,
-        };
+    pub fn this(self: *const @This()) Object {
+        return Object.from_opaque(v8__PropertyCallbackInfo__This(self));
     }
 
-    pub fn getThis(self: Self) Object {
-        return .{
-            .handle = c.v8__PropertyCallbackInfo__This(self.handle).?,
-        };
+    pub fn holder(self: *const @This()) Object {
+        return Object.from_opaque(v8__PropertyCallbackInfo__Holder(self));
     }
 
-    pub fn getData(self: Self) Value {
-        return .{
-            .handle = c.v8__PropertyCallbackInfo__Data(self.handle).?,
-        };
+    pub fn retval(self: *const @This()) ReturnValue {
+        return .{ .addr = v8__PropertyCallbackInfo__GetReturnValue(self) };
     }
 
-    pub fn getExternalValue(self: Self) ?*anyopaque {
-        return self.getData().castTo(External).get();
-    }
-};
-
-pub const WeakCallbackInfo = struct {
-    const Self = @This();
-
-    handle: *const c.WeakCallbackInfo,
-
-    pub fn initFromC(val: ?*const c.WeakCallbackInfo) Self {
-        return .{
-            .handle = val.?,
-        };
+    pub fn shouldThrowOnError(self: *const @This()) bool {
+        return v8__PropertyCallbackInfo__ShouldThrowOnError(self);
     }
 
-    pub fn getIsolate(self: Self) Isolate {
-        return .{
-            .handle = c.v8__WeakCallbackInfo__GetIsolate(self.handle).?,
-        };
-    }
-
-    pub fn getParameter(self: Self) *anyopaque {
-        return c.v8__WeakCallbackInfo__GetParameter(self.handle).?;
-    }
-
-    pub fn getInternalField(self: Self, idx: u32) ?*anyopaque {
-        return c.v8__WeakCallbackInfo__GetInternalField(self.handle, @as(c_int, @intCast(idx)));
+    comptime {
+        std.debug.assert(@sizeOf(PropertyCallbackInfo) == binding.sizes.PropertyCallbackInfo);
     }
 };
 
-pub const PromiseRejectMessage = extern struct {
-    const Self = @This();
+pub const AccessorNameGetterCallback = *const fn (Name, *const PropertyCallbackInfo) callconv(.c) void;
+pub const AccessorNameSetterCallback = *const fn (Name, Value, *const PropertyCallbackInfo) callconv(.c) void;
 
-    inner: c.PromiseRejectMessage,
+// https://github.com/denoland/rusty_v8/blob/4d9f92762600fd3475a5632005ecf3721514b8d4/src/property_attribute.rs#L5
+pub const PropertyDescriptor = struct {
+    pub const Opaque = [binding.sizes.PropertyDescriptor]u8;
+    inner: Opaque,
 
-    pub fn initFromC(val: c.PromiseRejectMessage) Self {
-        return .{
-            .inner = val,
-        };
+    extern fn v8__PropertyDescriptor__CONSTRUCT(ptr: *Opaque) void;
+    extern fn v8__PropertyDescriptor__CONSTRUCT__Value(ptr: *Opaque, value: Value) void;
+    extern fn v8__PropertyDescriptor__CONSTRUCT__Value_Writable(ptr: *Opaque, value: Value, writable: bool) void;
+    extern fn v8__PropertyDescriptor__CONSTRUCT__Get_Set(ptr: *Opaque, get: Value, set: Value) void;
+    extern fn v8__PropertyDescriptor__DESTRUCT(ptr: *Opaque) void;
+
+    pub fn init() PropertyDescriptor {
+        var self: PropertyDescriptor = undefined;
+        v8__PropertyDescriptor__CONSTRUCT(&self.inner);
+        return self;
     }
 
-    pub fn getEvent(self: Self) c.PromiseRejectEvent {
-        return c.v8__PromiseRejectMessage__GetEvent(&self.inner);
+    pub fn initValue(value: Value, writable: ?bool) PropertyDescriptor {
+        var self: PropertyDescriptor = undefined;
+        if (writable) |w| {
+            v8__PropertyDescriptor__CONSTRUCT__Value_Writable(&self.inner, value, w);
+        } else {
+            v8__PropertyDescriptor__CONSTRUCT__Value(&self.inner, value);
+        }
+        return self;
     }
 
-    pub fn getPromise(self: Self) Promise {
-        return .{
-            .handle = c.v8__PromiseRejectMessage__GetPromise(&self.inner).?,
-        };
+    pub fn initGetSet(get: Value, set: Value) PropertyDescriptor {
+        var self: PropertyDescriptor = undefined;
+        v8__PropertyDescriptor__CONSTRUCT__Get_Set(&self.inner, get, set);
+        return self;
     }
 
-    pub fn getValue(self: Self) ?Value {
-        const v8_value = c.v8__PromiseRejectMessage__GetValue(&self.inner) orelse return null;
-        return .{
-            .handle = v8_value,
-        };
+    pub fn deinit(self: *PropertyDescriptor) void {
+        v8__PropertyDescriptor__DESTRUCT(&self.inner);
+    }
+};
+
+pub const PropertyAttribute = packed struct(u32) {
+    ReadOnly: bool = false,
+    DontEnum: bool = false,
+    DontDelete: bool = false,
+    _unused: u29 = 0,
+};
+
+pub const Template = extern struct {
+    extern fn v8__Template__Set(self: Template, key: Name, value: Data, attr: PropertyAttribute) void;
+
+    data: Data,
+
+    pub fn from_opaque(o: ?*Address) @This() {
+        return .{ .data = .from_opaque(o) };
+    }
+
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .data = Data.from_opaque_maybe(o) orelse return null };
+    }
+
+    pub fn set(self: @This(), key: Name, value: Data, attr: PropertyAttribute) void {
+        v8__Template__Set(self, key, value, attr);
     }
 };
 
 pub const FunctionCallbackInfo = extern struct {
-    const Self = @This();
+    extern fn v8__FunctionCallbackInfo__Data(this: *const FunctionCallbackInfo) ?*Address;
 
-    handle: *const c.FunctionCallbackInfo,
+    implicit_args: *[binding.consts.FunctionCallbackInfo_kArgsLength]Address,
+    values: [*]Address,
+    length: c_int,
 
-    pub fn initFromV8(val: ?*const c.FunctionCallbackInfo) Self {
-        return .{
-            .handle = val.?,
-        };
+    pub const ImplicitArg = enum(i32) {
+        HolderIndex = 0,
+        IsolateIndex = 1,
+        ContextIndex = 2,
+        ReturnValueIndex = 3,
+        TargetIndex = 4,
+        NewTargetIndex = 5,
+        ArgsLength = 6,
+        _,
+    };
+
+    pub fn data(self: *const @This()) ?Data {
+        return Data.from_opaque_maybe(v8__FunctionCallbackInfo__Data(self));
     }
 
-    pub fn length(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__FunctionCallbackInfo__Length(self.handle)));
+    pub fn get_arg(self: *const @This(), index: c_int) Value {
+        std.debug.assert(index >= 0 and index < self.length);
+        return .from_opaque(&self.values[@as(usize, @intCast(index))]);
     }
 
-    pub fn getIsolate(self: Self) Isolate {
-        return .{
-            .handle = c.v8__FunctionCallbackInfo__GetIsolate(self.handle).?,
-        };
+    pub fn isolate(self: *const @This()) Isolate {
+        return .{ .handle = @ptrCast(self.get_implicit_arg(.IsolateIndex).?) };
     }
 
-    pub fn getArg(self: Self, i: u32) Value {
-        return .{
-            .handle = c.v8__FunctionCallbackInfo__INDEX(self.handle, @as(c_int, @intCast(i))).?,
-        };
+    fn get_implicit_arg(self: *const @This(), index: ImplicitArg) Address {
+        return self.implicit_args[@as(usize, @intCast(@intFromEnum(index)))];
     }
 
-    pub fn getReturnValue(self: Self) ReturnValue {
-        var res: c.ReturnValue = undefined;
-        c.v8__FunctionCallbackInfo__GetReturnValue(self.handle, &res);
-        return .{
-            .inner = res,
-        };
+    fn get_implicit_arg_ptr(self: *const @This(), index: ImplicitArg) *Address {
+        return &self.implicit_args[@as(usize, @intCast(@intFromEnum(index)))];
     }
 
-    pub fn getThis(self: Self) Object {
-        return .{
-            .handle = c.v8__FunctionCallbackInfo__This(self.handle).?,
-        };
+    pub fn retval(self: *const @This()) ReturnValue {
+        return .{ .handle = self.get_implicit_arg_ptr(.ReturnValueIndex) };
     }
 
-    pub fn getData(self: Self) Value {
-        return .{
-            .handle = c.v8__FunctionCallbackInfo__Data(self.handle).?,
-        };
-    }
-
-    pub fn getExternalValue(self: Self) ?*anyopaque {
-        return self.getData().castTo(External).get();
+    comptime {
+        std.debug.assert(@sizeOf(@This()) == binding.sizes.FunctionCallbackInfo);
     }
 };
 
-pub const ReturnValue = struct {
-    const Self = @This();
+pub const FunctionCallback = *const fn (FunctionCallbackInfo) callconv(.c) void;
 
-    inner: c.ReturnValue,
+pub const Signature = extern struct {
+    pub const Opaque = opaque {};
 
-    pub fn set(self: Self, value: anytype) void {
-        c.v8__ReturnValue__Set(self.inner, getValueHandle(value));
-    }
+    handle: *Opaque,
+};
 
-    pub fn setValueHandle(self: Self, ptr: *const c.Value) void {
-        c.v8__ReturnValue__Set(self.inner, ptr);
-    }
+pub const ConstructorBehavior = enum(c_int) { Throw, Allow };
 
-    pub fn get(self: Self) Value {
+pub const SideEffectType = enum(c_int) {
+    HasSideEffect,
+    HasNoSideEffect,
+    HasSideEffectToReceiver,
+};
+
+pub const Function = extern struct {
+    extern fn v8__Function__Call(self: Function, context: Context, recv: Value, argc: c_int, argv: [*]Value) ?*Address;
+    extern fn v8__Function__New(
+        context: Context,
+        callback: FunctionCallback,
+        maybe_data: ?*Address,
+        length: c_int,
+        constructor_behavior: ConstructorBehavior,
+        side_effect_type: SideEffectType,
+    ) ?*Address;
+    extern fn v8__Function__GetName(self: Function) ?*Address;
+    extern fn v8__Function__SetName(self: Function, name: String) void;
+    extern fn v8__Function__GetScriptColumnNumber(self: Function) c_int;
+    extern fn v8__Function__GetScriptLineNumber(self: Function) c_int;
+    extern fn v8__Function__ScriptId(self: Function) c_int;
+    extern fn v8__Function__GetScriptOrigin(self: Function) *Address;
+
+    object: Object,
+
+    pub fn from_opaque(o: ?*Address) @This() {
         return .{
-            .handle = c.v8__ReturnValue__Get(self.inner).?,
+            .object = .from_opaque(o),
         };
+    }
+
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{
+            .object = Object.from_opaque_maybe(o) orelse return null,
+        };
+    }
+
+    pub fn init(
+        context: Context,
+        callback: FunctionCallback,
+        maybe_data: ?Data,
+        length: c_int,
+        constructor_behavior: ConstructorBehavior,
+        side_effect_type: SideEffectType,
+    ) Function {
+        return .from_opaque_maybe(v8__Function__New(
+            context,
+            callback,
+            if (maybe_data) |v| v.handle else null,
+            length,
+            constructor_behavior,
+            side_effect_type,
+        ));
+    }
+
+    pub fn getName(self: @This()) Value {
+        return .from_opaque(v8__Function__GetName(self));
+    }
+
+    pub fn setName(self: @This(), name: String) void {
+        v8__Function__SetName(self, name);
+    }
+
+    pub fn getScriptColumnNumber(self: @This()) c_int {
+        return v8__Function__GetScriptColumnNumber(self);
+    }
+    pub fn getScriptLineNumber(self: @This()) c_int {
+        return v8__Function__GetScriptLineNumber(self);
+    }
+    fn scriptId(self: Function) c_int {
+        return v8__Function__ScriptId(self);
+    }
+    fn getScriptOrigin(self: Function) ScriptOrigin {
+        return .from_opaque(v8__Function__GetScriptOrigin(self));
     }
 };
 
 pub const FunctionTemplate = extern struct {
-    const Self = @This();
+    extern fn v8__FunctionTemplate__New(
+        isolate: ?*Isolate.Opaque,
+        callback: FunctionCallback,
+        maybe_data: ?*Address,
+        maybe_signature: ?*Signature.Opaque,
+        length: c_int,
+        constructor_behavior: ConstructorBehavior,
+        side_effect_type: SideEffectType,
+        c_functions: [*]CFunction,
+        c_functions_len: usize,
+    ) ?*Address;
+    extern fn v8__FunctionTemplate__GetFunction(
+        self: FunctionTemplate,
+        context: Context,
+    ) ?*Address;
 
-    handle: *const c.FunctionTemplate,
+    pub const Builder = struct {
+        data_: ?Data = null,
+        signature_: ?Signature = null,
+        length_: c_int = 0,
+        constructor_behavior_: ConstructorBehavior = .Allow,
+        side_effect_type_: SideEffectType = .HasSideEffect,
 
-    pub fn initDefault(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__FunctionTemplate__New__DEFAULT(isolate.handle).?,
-        };
-    }
-
-    pub fn initCallback(isolate: Isolate, callback: c.FunctionCallback) Self {
-        return .{
-            .handle = c.v8__FunctionTemplate__New__DEFAULT2(isolate.handle, callback).?,
-        };
-    }
-
-    pub fn initCallbackData(isolate: Isolate, callback: c.FunctionCallback, data_val: anytype) Self {
-        return .{
-            .handle = c.v8__FunctionTemplate__New__DEFAULT3(isolate.handle, callback, getValueHandle(data_val)).?,
-        };
-    }
-
-    pub fn inherit(self: Self, parent: FunctionTemplate) void {
-        c.v8__FunctionTemplate__Inherit(self.handle, parent.handle);
-    }
-
-    pub fn setPrototypeProviderTemplate(self: Self, prototype_provider: FunctionTemplate) void {
-        c.v8__FunctionTemplate__SetPrototypeProviderTemplate(self.handle, prototype_provider.handle);
-    }
-
-    /// This is typically used to set class fields.
-    pub fn getInstanceTemplate(self: Self) ObjectTemplate {
-        return .{
-            .handle = c.v8__FunctionTemplate__InstanceTemplate(self.handle).?,
-        };
-    }
-
-    /// This is typically used to set class methods.
-    pub fn getPrototypeTemplate(self: Self) ObjectTemplate {
-        return .{
-            .handle = c.v8__FunctionTemplate__PrototypeTemplate(self.handle).?,
-        };
-    }
-
-    /// There is only one unique function for a FunctionTemplate in a given context.
-    /// The Function can then be used to invoke NewInstance which is equivalent to doing js "new".
-    pub fn getFunction(self: Self, ctx: Context) Function {
-        return .{
-            .handle = c.v8__FunctionTemplate__GetFunction(self.handle, ctx.handle).?,
-        };
-    }
-
-    /// Sets static property on the template.
-    pub fn set(self: Self, key: Name, value: anytype, attr: c.PropertyAttribute) void {
-        c.v8__Template__Set(getTemplateHandle(self), key.handle, getDataHandle(value), attr);
-    }
-
-    pub fn setClassName(self: Self, name: String) void {
-        c.v8__FunctionTemplate__SetClassName(self.handle, name.handle);
-    }
-
-    pub fn setReadOnlyPrototype(self: Self) void {
-        c.v8__FunctionTemplate__ReadOnlyPrototype(self.handle);
-    }
-
-    pub fn setAccessorGetter(self: Self, name: Name, getter: FunctionTemplate) void {
-        c.v8__Template__SetAccessorProperty__DEFAULT(@ptrCast(self.handle), name.handle, getter.handle);
-    }
-};
-
-pub const Function = extern struct {
-    const Self = @This();
-
-    handle: *const c.Function,
-
-    /// Internally, this will create a temporary FunctionTemplate to get a new Function instance.
-    pub fn initDefault(ctx: Context, callback: c.FunctionCallback) Self {
-        return .{
-            .handle = c.v8__Function__New__DEFAULT(ctx.handle, callback).?,
-        };
-    }
-
-    pub fn initWithData(ctx: Context, callback: c.FunctionCallback, data_val: anytype) Self {
-        return .{
-            .handle = c.v8__Function__New__DEFAULT2(ctx.handle, callback, getValueHandle(data_val)).?,
-        };
-    }
-
-    /// receiver_val is "this" in the function context. This is equivalent to calling fn.apply(receiver, args) in JS.
-    /// Returns null if there was an error.
-    pub fn call(self: Self, ctx: Context, receiver_val: anytype, args: []const Value) ?Value {
-        const c_args = @as(?[*]const ?*c.Value, @ptrCast(args.ptr));
-        if (c.v8__Function__Call(self.handle, ctx.handle, getValueHandle(receiver_val), @as(c_int, @intCast(args.len)), c_args)) |ret| {
-            return Value{
-                .handle = ret,
-            };
-        } else return null;
-    }
-
-    // Equivalent to js "new".
-    pub fn initInstance(self: Self, ctx: Context, args: []const Value) ?Object {
-        const c_args = @as(?[*]const ?*c.Value, @ptrCast(args.ptr));
-        if (c.v8__Function__NewInstance(self.handle, ctx.handle, @as(c_int, @intCast(args.len)), c_args)) |ret| {
-            return Object{
-                .handle = ret,
-            };
-        } else return null;
-    }
-
-    pub fn toObject(self: Self) Object {
-        return .{
-            .handle = @as(*const c.Object, @ptrCast(self.handle)),
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{
-            .handle = self.handle,
-        };
-    }
-
-    pub fn getName(self: Self) Value {
-        return .{
-            .handle = c.v8__Function__GetName(self.handle).?,
-        };
-    }
-
-    pub fn setName(self: Self, name: String) void {
-        c.v8__Function__SetName(self.handle, name.handle);
-    }
-};
-
-pub fn Persistent(comptime T: type) type {
-    const HandleType = @FieldType(T, "handle");
-
-    return struct {
-        const Self = @This();
-
-        handle: HandleType,
-
-        /// A new value is created that references the original value.
-        /// A Persistent handle is a pointer just like any other value handles,
-        /// but when creating and operating on it, an indirect pointer is used to represent a c.Persistent struct (v8::Persistent<v8::Value> in C++).
-        pub fn init(isolate: Isolate, data: T) Self {
-            var inner_handle: *c.Data = undefined;
-            c.v8__Persistent__New(isolate.handle, getDataHandle(data), @as(*c.Persistent, @ptrCast(&inner_handle)));
-            return .{
-                .handle = @as(@TypeOf(data.handle), @ptrCast(inner_handle)),
-            };
+        pub fn data(self: *@This(), data_: ?Data) *@This() {
+            self.data_ = data_;
+            return self;
         }
 
-        pub fn deinit(self: *Self) void {
-            c.v8__Persistent__Reset(@as(*c.Persistent, @ptrCast(&self.handle)));
+        pub fn signature(self: *@This(), signature_: ?Signature) *@This() {
+            self.signature_ = signature_;
+            return self;
         }
 
-        pub fn setWeak(self: *Self) void {
-            c.v8__Persistent__SetWeak(@as(*c.Persistent, @ptrCast(&self.handle)));
+        pub fn length(self: *@This(), length_: c_int) *@This() {
+            self.length_ = length_;
+            return self;
         }
 
-        /// An external pointer can be set when cb_type is kParameter or kInternalFields.
-        /// When cb_type is kInternalFields, the object fields are expected to be set with setAlignedPointerInInternalField.
-        /// The pointer value must be a multiple of 2 due to how v8 encodes the pointers.
-        pub fn setWeakFinalizer(self: *Self, finalizer_ctx: *anyopaque, cb: c.WeakCallback, cb_type: WeakCallbackType) void {
-            c.v8__Persistent__SetWeakFinalizer(@as(*c.Persistent, @ptrCast(&self.handle)), finalizer_ctx, cb, @intFromEnum(cb_type));
+        pub fn constructor_behavior(self: *@This(), constructor_behavior_: ConstructorBehavior) *@This() {
+            self.constructor_behavior_ = constructor_behavior_;
+            return self;
         }
 
-        /// Should only be called if you know the underlying type is a v8.Function.
-        pub fn castToFunction(self: Self) Function {
-            return .{
-                .handle = @as(*const c.Function, @ptrCast(self.handle)),
-            };
+        pub fn side_effect_type(self: *@This(), side_effect_type_: SideEffectType) *@This() {
+            self.side_effect_type_ = side_effect_type_;
+            return self;
         }
 
-        /// Should only be called if you know the underlying type is a v8.Object.
-        pub fn castToObject(self: Self) Object {
-            return .{
-                .handle = @as(*const c.Object, @ptrCast(self.handle)),
-            };
-        }
-
-        /// Should only be called if you know the underlying type is a v8.Module.
-        pub fn castToModule(self: Self) Module {
-            return .{
-                .handle = @as(*const c.Module, @ptrCast(self.handle)),
-            };
-        }
-
-        /// Should only be called if you know the underlying type is a v8.PromiseResolver.
-        pub fn castToPromise(self: Self) Promise {
-            return .{
-                .handle = @as(*const c.Promise, @ptrCast(self.handle)),
-            };
-        }
-
-        pub fn castToPromiseResolver(self: Self) PromiseResolver {
-            return .{
-                .handle = @as(*const c.PromiseResolver, @ptrCast(self.handle)),
-            };
-        }
-
-        pub fn castToFunctionTemplate(self: Self) FunctionTemplate {
-            return .{
-                .handle = @as(*const c.FunctionTemplate, @ptrCast(self.handle)),
-            };
-        }
-
-        pub fn castToObjectTemplate(self: Self) ObjectTemplate {
-            return .{
-                .handle = @as(*const c.ObjectTemplate, @ptrCast(self.handle)),
-            };
-        }
-
-        pub fn castToContext(self: Self) Context {
-            return .{
-                .handle = @as(*const c.Context, @ptrCast(self.handle)),
-            };
-        }
-
-        /// recoverCast is not meant to create a new Persistent, but instead to recover one for which we know that it is a Persistent.
-        /// This can be used on an object that has previously been `castTo___`. This allows the user to store and operate on the
-        /// underlying type without needing to extract it from the Persistent. Casting it back to Persistent allows us to reset it.
-        pub fn recoverCast(data: T) Self {
-            return .{
-                .handle = @as(HandleType, @ptrCast(data.handle)),
-            };
-        }
-
-        pub fn toValue(self: Self) Value {
-            return .{
-                .handle = self.handle,
-            };
+        pub fn build(self: @This(), isolate: Isolate, callback: FunctionCallback, c_functions: []CFunction) FunctionTemplate {
+            return .init(isolate, callback, self.data_, self.signature_, self.length_, self.constructor_behavior_, self.side_effect_type_, c_functions);
         }
     };
-}
 
-/// [V8]
-/// kParameter will pass a void* parameter back to the callback, kInternalFields
-/// will pass the first two internal fields back to the callback, kFinalizer
-/// will pass a void* parameter back, but is invoked before the object is
-/// actually collected, so it can be resurrected. In the last case, it is not
-/// possible to request a second pass callback.
-pub const WeakCallbackType = enum(u32) {
-    kParameter = c.kParameter,
-    kInternalFields = c.kInternalFields,
-    kFinalizer = c.kFinalizer,
+    template: Template,
+
+    pub fn from_opaque(o: ?*Address) @This() {
+        return .{
+            .template = Template.from_opaque(o),
+        };
+    }
+
+    pub fn init(
+        isolate: Isolate,
+        callback: FunctionCallback,
+        maybe_data: ?Data,
+        maybe_signature: ?Signature,
+        length: c_int,
+        constructor_behavior: ConstructorBehavior,
+        side_effect_type: SideEffectType,
+        c_functions: []CFunction,
+    ) @This() {
+        return .from_opaque(v8__FunctionTemplate__New(
+            isolate.handle,
+            callback,
+            if (maybe_data) |v| v.handle else null,
+            if (maybe_signature) |v| v.handle else null,
+            length,
+            constructor_behavior,
+            side_effect_type,
+            c_functions.ptr,
+            c_functions.len,
+        ));
+    }
+
+    pub fn getFunction(self: @This(), context: Context) ?Function {
+        return .from_opaque_maybe(v8__FunctionTemplate__GetFunction(self, context));
+    }
 };
 
 pub const ObjectTemplate = extern struct {
-    const Self = @This();
+    extern fn v8__ObjectTemplate__New__DEFAULT(isolate: *Isolate.Opaque) ?*Address;
+    extern fn v8__ObjectTemplate__NewInstance(self: ObjectTemplate, context: Context) ?*Address;
 
-    handle: *const c.ObjectTemplate,
+    template: Template,
 
-    pub fn initDefault(isolate: Isolate) Self {
+    pub fn initDefault(isolate: Isolate) ?@This() {
         return .{
-            .handle = c.v8__ObjectTemplate__New__DEFAULT(isolate.handle).?,
+            .template = Template.from_opaque_maybe(v8__ObjectTemplate__New__DEFAULT(isolate.handle)) orelse return null,
         };
     }
 
-    pub fn init(isolate: Isolate, constructor: FunctionTemplate) Self {
-        return .{
-            .handle = c.v8__ObjectTemplate__New(isolate.handle, constructor.handle).?,
-        };
-    }
-
-    pub fn initInstance(self: Self, ctx: Context) Object {
-        return .{
-            .handle = c.v8__ObjectTemplate__NewInstance(self.handle, ctx.handle).?,
-        };
-    }
-
-    pub fn set(self: Self, key: Name, value: anytype, attr: c.PropertyAttribute) void {
-        c.v8__Template__Set(getTemplateHandle(self), key.handle, getDataHandle(value), attr);
-    }
-
-    pub fn setInternalFieldCount(self: Self, count: u32) void {
-        c.v8__ObjectTemplate__SetInternalFieldCount(self.handle, @as(c_int, @intCast(count)));
-    }
-
-    pub fn setIndexedProperty(self: Self, configuration: IndexedPropertyHandlerConfiguration, data: anytype) void {
-        const conf = c.IndexedPropertyHandlerConfiguration{
-            .getter = configuration.getter orelse null,
-            .setter = configuration.setter orelse null,
-            .query = configuration.query orelse null,
-            .deleter = configuration.deleter orelse null,
-            .enumerator = configuration.enumerator orelse null,
-            .definer = configuration.definer orelse null,
-            .descriptor = configuration.descriptor orelse null,
-            .data = if (@typeInfo(@TypeOf(data)) == .null) null else getDataHandle(data),
-            .flags = configuration.flags,
-        };
-        c.v8__ObjectTemplate__SetIndexedHandler(self.handle, &conf);
-    }
-
-    pub fn setNamedProperty(self: Self, configuration: NamedPropertyHandlerConfiguration, data: anytype) void {
-        const conf = c.NamedPropertyHandlerConfiguration{
-            .getter = configuration.getter orelse null,
-            .setter = configuration.setter orelse null,
-            .query = configuration.query orelse null,
-            .deleter = configuration.deleter orelse null,
-            .enumerator = configuration.enumerator orelse null,
-            .definer = configuration.definer orelse null,
-            .descriptor = configuration.descriptor orelse null,
-            .data = if (@typeInfo(@TypeOf(data)) == .null) null else getDataHandle(data),
-            .flags = configuration.flags,
-        };
-        c.v8__ObjectTemplate__SetNamedHandler(self.handle, &conf);
-    }
-
-    // JS has two types of properties: data and accessors. The data property, what
-    // v8 calls a NativeData property is like a field, obj.x. An access properties
-    // is one or both of a get and set function.
-    // They seem to mostly differ in subtle ways relating to meta programming
-    // and how they're resolve in the prototype chain.
-    // https://tc39.es/ecma262/multipage/ecmascript-data-types-and-values.html#sec-object-type
-    pub fn setNativeGetter(self: Self, key: Name, getter: c.AccessorNameGetterCallback) void {
-        c.v8__ObjectTemplate__SetNativeDataProperty__DEFAULT(self.handle, key.handle, getter);
-    }
-
-    pub fn setNativeGetterAndSetter(self: Self, key: Name, getter: c.AccessorNameGetterCallback, setter: c.AccessorNameSetterCallback) void {
-        c.v8__ObjectTemplate__SetNativeDataProperty__DEFAULT2(self.handle, key.handle, getter, setter);
-    }
-
-    pub fn setAccessorGetter(self: Self, name: Name, getter: FunctionTemplate) void {
-        c.v8__ObjectTemplate__SetAccessorProperty__DEFAULT(self.handle, name.handle, getter.handle);
-    }
-
-    pub fn setAccessorGetterAndSetter(self: Self, name: Name, getter: FunctionTemplate, setter: FunctionTemplate) void {
-        c.v8__ObjectTemplate__SetAccessorProperty__DEFAULT2(self.handle, name.handle, getter.handle, setter.handle);
-    }
-
-    pub fn markAsUndetectable(self: Self) void {
-        c.v8__ObjectTemplate__MarkAsUndetectable(self.handle);
-    }
-
-    pub fn setCallAsFunctionHandler(self: Self, callback: FunctionCallback) void {
-        c.v8__ObjectTemplate__SetCallAsFunctionHandler(self.handle, callback);
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{
-            .handle = self.handle,
-        };
+    pub fn initInstance(self: @This(), context: Context) ?Object {
+        return .from_opaque_maybe(v8__ObjectTemplate__NewInstance(self, context));
     }
 };
 
-pub const Array = extern struct {
+pub const MicrotaskQueue = struct {
+    pub const Opaque = opaque {};
+
+    handle: *Opaque,
+};
+
+pub const Context = extern struct {
+    extern fn v8__Context__New(isolate: *Isolate.Opaque, global_tmpl: ObjectTemplate, global_obj: ?*Address, microtask_queue: ?*MicrotaskQueue.Opaque) ?*Address;
+    extern fn v8__Context__Enter(handle: Context) void;
+    extern fn v8__Context__Exit(handle: Context) void;
+    extern fn v8__Context__Global(handle: Context) ?*Address;
+    extern fn v8__Context__GetEmbedderData(handle: Context, index: c_int) ?*Address;
+    extern fn v8__Context__SetEmbedderData(handle: Context, index: c_int, value: *Value) void;
+
+    data: Data,
+
     const Self = @This();
 
-    handle: *const c.Array,
+    pub fn from_opaque(o: ?*Address) Self {
+        return .{ .data = Data.from_opaque(o) };
+    }
 
-    pub fn init(iso: Isolate, len: u32) Self {
+    pub fn from_opaque_maybe(o: ?*Address) ?Self {
+        return .{ .data = Data.from_opaque_maybe(o) orelse return null };
+    }
+
+    pub fn init(isolate: Isolate, global_tmpl: ?ObjectTemplate, global_obj: ?Value, microtask_queue: ?MicrotaskQueue) Self {
         return .{
-            .handle = c.v8__Array__New(iso.handle, @as(c_int, @intCast(len))).?,
+            .data = .from_opaque(v8__Context__New(
+                isolate.handle,
+                global_tmpl orelse ObjectTemplate.initDefault(isolate).?,
+                if (global_obj) |v| v.data.handle else null,
+                if (microtask_queue) |v| v.handle else null,
+            )),
         };
     }
 
-    pub fn initElements(iso: Isolate, elems: []const Value) Self {
-        const c_elems = @as(?[*]const ?*c.Value, @ptrCast(elems.ptr));
+    pub fn enter(self: Self) void {
+        v8__Context__Enter(self);
+    }
+
+    pub fn exit(self: Self) void {
+        v8__Context__Exit(self);
+    }
+
+    pub fn getGlobal(self: Self) Object {
         return .{
-            .handle = c.v8__Array__New2(iso.handle, c_elems, elems.len).?,
+            .value = .from_opaque(v8__Context__Global(self)),
         };
     }
 
-    pub fn length(self: Self) u32 {
-        return c.v8__Array__Length(self.handle);
+    pub fn getEmbedderData(self: Self, index: u32) Value {
+        return .{
+            .data = .from_opaque(v8__Context__GetEmbedderData(self, @as(c_int, @intCast(index)))),
+        };
     }
 
-    pub fn castTo(self: Self, comptime T: type) T {
-        switch (T) {
-            Object => {
-                return .{
-                    .handle = @as(*const c.Object, @ptrCast(self.handle)),
-                };
-            },
-            else => unreachable,
-        }
+    pub fn setEmbedderData(self: Self, index: u32, value: Data) void {
+        v8__Context__SetEmbedderData(self, @as(c_int, @intCast(index)), value);
+    }
+};
+
+pub const Address = ?*opaque {};
+
+pub const Data = extern struct {
+    handle: if (binding.opts.is_direct_handle) Address else *Address,
+
+    pub fn from_opaque(o: ?*Address) @This() {
+        return .{
+            .handle = @ptrCast(o.?),
+        };
+    }
+
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .handle = @ptrCast(o orelse return null) };
+    }
+};
+
+pub const Value = extern struct {
+    extern fn v8__Value__ToString(self: Value, context: Context) ?*Address;
+
+    data: Data,
+
+    pub fn from_opaque(o: ?*Address) @This() {
+        return .{
+            .data = .from_opaque(o),
+        };
+    }
+
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .data = Data.from_opaque_maybe(o) orelse return null };
+    }
+
+    pub fn toString(self: @This(), context: Context) !String {
+        return String.from_opaque_maybe(v8__Value__ToString(self, context)) orelse return error.JsException;
     }
 };
 
 pub const Object = extern struct {
-    const Self = @This();
+    extern fn v8__Object__New(isolate: *Isolate.Opaque) ?*Address;
+    extern fn v8__Object__New__with_prototype_and_properties(
+        isolate: *Isolate.Opaque,
+        prototype_or_null: ?Value,
+        names: [*]const Name,
+        values: [*]const Value,
+        length: usize,
+    ) ?*Address;
+    extern fn v8__Object__Get(self: Object, context: Context, key: Value) ?*Address;
+    extern fn v8__Object__GetWithReceiver(self: Object, context: Context, key: Value, receiver: Object) ?*Address;
+    extern fn v8__Object__GetIndex(self: Object, context: Context, index: u32) ?*Address;
+    extern fn v8__Object__GetAlignedPointerFromInternalField(self: Object, index: c_int) ?*anyopaque;
+    extern fn v8__Object__SetAlignedPointerInInternalField(self: Object, index: c_int, value: ?*anyopaque) void;
+    extern fn v8__Object__IsApiWrapper(self: Object) bool;
+    extern fn v8__Object__GetPrototype(self: Object) ?*Address;
+    extern fn v8__Object__Set(self: Object, context: Context, key: Value, value: Value) support.MaybeBool;
+    extern fn v8__Object__SetWithReceiver(self: Object, context: Context, key: Value, value: Value, receiver: Object) support.MaybeBool;
+    extern fn v8__Object__SetIndex(self: Object, context: Context, index: u32, value: Value) support.MaybeBool;
+    extern fn v8__Object__SetPrototype(self: Object, context: Context, prototype: Value) support.MaybeBool;
+    extern fn v8__Object__GetConstructorName(self: Object) ?*Address;
+    extern fn v8__Object__CreateDataProperty(self: Object, context: Context, key: Name, value: Value) support.MaybeBool;
+    extern fn v8__Object__DefineOwnProperty(self: Object, context: Context, key: Name, value: Value, attr: PropertyAttribute) support.MaybeBool;
+    extern fn v8__Object__DefineProperty(self: Object, context: Context, key: Name, desc: *PropertyDescriptor.Opaque) support.MaybeBool;
+    extern fn v8__Object__SetAccessor(
+        self: Object,
+        context: Context,
+        key: Name,
+        getter: AccessorNameGetterCallback,
+        setter: ?AccessorNameSetterCallback,
+        data_or_null: ?*const Value,
+        attr: PropertyAttribute,
+    ) support.MaybeBool;
+    extern fn v8__Object__GetIdentityHash(self: Object) c_int;
+    extern fn v8__Object__GetCreationContext(self: Object) ?*Address;
 
-    handle: *const c.Object,
+    value: Value,
 
-    pub fn init(isolate: Isolate) Self {
+    pub fn from_opaque(o: ?*Address) @This() {
         return .{
-            .handle = c.v8__Object__New(isolate.handle).?,
+            .value = .from_opaque(o),
         };
     }
 
-    pub fn getConstructorName(self: Self) !String {
-        return String{
-            .handle = c.v8__Object__GetConstructorName(self.handle) orelse return error.JsException,
-        };
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .value = Value.from_opaque_maybe(o) orelse return null };
     }
 
-    pub fn setInternalField(self: Self, idx: u32, value: anytype) void {
-        c.v8__Object__SetInternalField(self.handle, @as(c_int, @intCast(idx)), getValueHandle(value));
+    pub fn init(isolate: Isolate) Object {
+        return from_opaque(v8__Object__New(isolate.handle));
     }
 
-    pub fn getInternalField(self: Self, idx: u32) Value {
-        return .{
-            .handle = c.v8__Object__GetInternalField(self.handle, @as(c_int, @intCast(idx))).?,
-        };
+    pub fn initWithProperties(
+        isolate: Isolate,
+        prototype: ?Value,
+        names: []const Name,
+        values: []const Value,
+    ) Object {
+        std.debug.assert(names.len == values.len);
+        return from_opaque(v8__Object__New__with_prototype_and_properties(
+            isolate.handle,
+            prototype,
+            names.ptr,
+            values.ptr,
+            names.len,
+        ));
     }
 
-    pub fn internalFieldCount(self: Self) usize {
-        return @intCast(c.v8__Object__InternalFieldCount(self.handle));
+    pub fn get(self: Object, context: Context, key: Value) ?Value {
+        return Value.from_opaque_maybe(v8__Object__Get(self, context, key));
     }
 
-    pub fn setAlignedPointerInInternalField(self: Self, idx: u32, ptr: ?*anyopaque) void {
-        c.v8__Object__SetAlignedPointerInInternalField(self.handle, @as(c_int, @intCast(idx)), ptr);
+    pub fn getWithReceiver(self: Object, context: Context, key: Value, receiver: Object) ?Value {
+        return Value.from_opaque_maybe(v8__Object__GetWithReceiver(self, context, key, receiver));
     }
 
-    // Returns true on success, false on fail.
-    pub fn setValue(self: Self, ctx: Context, key: anytype, value: anytype) bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Object__Set(self.handle, ctx.handle, getValueHandle(key), getValueHandle(value), &out);
-        // Set only returns empty for an error or true.
-        return out.has_value;
+    pub fn getIndex(self: Object, context: Context, index: u32) ?Value {
+        return Value.from_opaque_maybe(v8__Object__GetIndex(self, context, index));
     }
 
-    // Returns true on success, false on fail.
-    pub fn deleteValue(self: Self, ctx: Context, key: anytype) bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Object__Delete(self.handle, ctx.handle, getValueHandle(key), &out);
-        // Set only returns empty for an error or true.
-        return out.has_value;
+    pub fn getAlignedPointerFromInternalField(self: Object, index: u32) ?*anyopaque {
+        return v8__Object__GetAlignedPointerFromInternalField(self, @as(c_int, @intCast(index)));
     }
 
-    pub fn setValueAtIndex(self: Self, ctx: Context, idx: u32, value: anytype) bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Object__SetAtIndex(self.handle, ctx.handle, idx, getValueHandle(value), &out);
-        // Set only returns empty for an error or true.
-        return out.has_value;
+    pub fn setAlignedPointerInInternalField(self: Object, index: u32, value: ?*anyopaque) void {
+        v8__Object__SetAlignedPointerInInternalField(self, @as(c_int, @intCast(index)), value);
     }
 
-    pub fn getValue(self: Self, ctx: Context, key: anytype) !Value {
-        if (c.v8__Object__Get(self.handle, ctx.handle, getValueHandle(key))) |handle| {
-            return Value{
-                .handle = handle,
-            };
-        } else return error.JsException;
+    pub fn isApiWrapper(self: Object) bool {
+        return v8__Object__IsApiWrapper(self);
     }
 
-    pub fn getAtIndex(self: Self, ctx: Context, idx: u32) !Value {
-        if (c.v8__Object__GetIndex(self.handle, ctx.handle, idx)) |handle| {
-            return Value{
-                .handle = handle,
-            };
-        } else return error.JsException;
+    pub fn getPrototype(self: Object) ?Value {
+        return Value.from_opaque_maybe(v8__Object__GetPrototype(self));
     }
 
-    pub fn toValue(self: Self) Value {
-        return .{
-            .handle = self.handle,
-        };
+    pub fn set(self: Object, context: Context, key: Value, value: Value) ?bool {
+        return v8__Object__Set(self, context, key, value).as_maybe_bool();
     }
 
-    pub fn defineOwnProperty(self: Self, ctx: Context, name: Name, value: anytype, attr: c.PropertyAttribute) ?bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Object__DefineOwnProperty(self.handle, ctx.handle, name.handle, getValueHandle(value), attr, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return null;
+    pub fn setWithReceiver(self: Object, context: Context, key: Value, value: Value, receiver: Object) ?bool {
+        return v8__Object__SetWithReceiver(self, context, key, value, receiver).as_maybe_bool();
     }
 
-    pub fn getIsolate(_: Self) Isolate {
-        return .{
-            .handle = c.v8__Isolate__GetCurrent().?,
-        };
+    pub fn setIndex(self: Object, context: Context, index: u32, value: Value) ?bool {
+        return v8__Object__SetIndex(self, context, index, value).as_maybe_bool();
     }
 
-    pub fn getCreationContext(self: Self) Context {
-        return .{
-            .handle = c.v8__Object__GetCreationContext(self.handle).?,
-        };
+    pub fn setPrototype(self: Object, context: Context, prototype: Value) ?bool {
+        return v8__Object__SetPrototype(self, context, prototype).as_maybe_bool();
     }
 
-    pub fn getIdentityHash(self: Self) u32 {
-        return @as(u32, @bitCast(c.v8__Object__GetIdentityHash(self.handle)));
+    pub fn getConstructorName(self: Object) String {
+        return String.from_opaque(v8__Object__GetConstructorName(self));
     }
 
-    pub fn has(self: Self, ctx: Context, key: Value) bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Object__Has(self.handle, ctx.handle, key.handle, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return false;
+    pub fn createDataProperty(self: Object, context: Context, key: Name, value: Value) ?bool {
+        return v8__Object__CreateDataProperty(self, context, key, value).as_maybe_bool();
     }
 
-    pub fn hasIndex(self: Self, ctx: Context, idx: u32) bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Object__Has(self.handle, ctx.handle, idx, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return false;
+    pub fn defineOwnProperty(self: Object, context: Context, key: Name, value: Value, attr: PropertyAttribute) ?bool {
+        return v8__Object__DefineOwnProperty(self, context, key, value, attr).as_maybe_bool();
     }
 
-    pub fn getOwnPropertyNames(self: Self, ctx: Context) Array {
-        return .{
-            .handle = c.v8__Object__GetOwnPropertyNames(self.handle, ctx.handle).?,
-        };
+    pub fn defineProperty(self: Object, context: Context, key: Name, desc: *PropertyDescriptor) ?bool {
+        return v8__Object__DefineProperty(self, context, key, &desc.inner).as_maybe_bool();
     }
 
-    pub fn getPropertyNames(self: Self, ctx: Context) Array {
-        return .{
-            .handle = c.v8__Object__GetPropertyNames(self.handle, ctx.handle).?,
-        };
+    pub fn setAccessor(
+        self: Object,
+        context: Context,
+        key: Name,
+        getter: AccessorNameGetterCallback,
+        setter: ?AccessorNameSetterCallback,
+        data: ?Value,
+        attr: PropertyAttribute,
+    ) ?bool {
+        return v8__Object__SetAccessor(
+            self,
+            context,
+            key,
+            getter,
+            setter,
+            if (data) |*v| v else null,
+            attr,
+        ).as_maybe_bool();
     }
 
-    pub fn getPrototype(self: Self) Value {
-        return .{
-            .handle = c.v8__Object__GetPrototype(self.handle).?,
-        };
+    pub fn getIdentityHash(self: Object) i32 {
+        return @as(i32, @intCast(v8__Object__GetIdentityHash(self)));
     }
 
-    pub fn setPrototype(self: Self, ctx: Context, prototype: Object) bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Object__SetPrototype(self.handle, ctx.handle, prototype.handle, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return false;
+    pub fn getCreationContext(self: Object) ?Context {
+        return Context.from_opaque_maybe(v8__Object__GetCreationContext(self));
     }
 };
 
-pub const External = extern struct {
-    const Self = @This();
+pub const Primitive = extern struct {
+    value: Value,
 
-    handle: *const c.External,
-
-    pub fn init(isolate: Isolate, val: ?*anyopaque) Self {
+    pub fn from_opaque(o: ?*Address) @This() {
         return .{
-            .handle = c.v8__External__New(isolate.handle, val).?,
+            .value = .from_opaque(o),
         };
     }
 
-    pub fn get(self: Self) ?*anyopaque {
-        return c.v8__External__Value(self.handle);
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{
-            .handle = self.handle,
-        };
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .value = Value.from_opaque_maybe(o) orelse return null };
     }
 };
 
-pub const Name = struct {
-    handle: *const c.Name,
-};
+pub const Numeric = extern struct {
+    primitive: Primitive,
 
-pub const Symbol = struct {
-    const Self = @This();
-
-    handle: *const c.Symbol,
-
-    pub fn toName(self: Self) Name {
+    pub fn from_opaque(o: ?*Address) @This() {
         return .{
-            .handle = @as(*const c.Name, @ptrCast(self.handle)),
+            .primitive = .from_opaque(o),
         };
     }
 
-    // well-known symbols
-
-    pub fn getAsyncIterator(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetAsyncIterator(isolate.handle).?,
-        };
-    }
-
-    pub fn getHasInstance(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetHasInstance(isolate.handle).?,
-        };
-    }
-
-    pub fn getIsConcatSpreadable(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetIsConcatSpreadable(isolate.handle).?,
-        };
-    }
-
-    pub fn getIterator(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetIterator(isolate.handle).?,
-        };
-    }
-
-    pub fn getMatch(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetMatch(isolate.handle).?,
-        };
-    }
-
-    pub fn getReplace(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetReplace(isolate.handle).?,
-        };
-    }
-
-    pub fn getSearch(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetSearch(isolate.handle).?,
-        };
-    }
-
-    pub fn getSplit(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetSplit(isolate.handle).?,
-        };
-    }
-
-    pub fn getToPrimitive(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetToPrimitive(isolate.handle).?,
-        };
-    }
-
-    pub fn getToStringTag(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetToStringTag(isolate.handle).?,
-        };
-    }
-
-    pub fn getUnscopables(isolate: Isolate) Self {
-        return .{
-            .handle = c.v8__Symbol__GetUnscopables(isolate.handle).?,
-        };
-    }
-
-    pub fn getDescription(self: Symbol, isolate: Isolate) Value {
-        return .{
-            .handle = c.v8__Symbol__Description(self.handle, isolate.handle).?,
-        };
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .primitive = Primitive.from_opaque_maybe(o) orelse return null };
     }
 };
 
 pub const Number = extern struct {
-    const Self = @This();
+    extern fn v8__Number__New(isolate: *Isolate.Opaque, value: f64) ?*Address;
+    extern fn v8__Number__NewInt(isolate: *Isolate.Opaque, value: i32) ?*Address;
+    extern fn v8__Number__NewUInt(isolate: *Isolate.Opaque, value: u32) ?*Address;
+    extern fn v8__Number__Value(self: Number) f64;
 
-    handle: *const c.Number,
+    numeric: Numeric,
 
-    pub fn init(isolate: Isolate, val: f64) Self {
+    pub fn from_opaque(o: ?*Address) @This() {
         return .{
-            .handle = c.v8__Number__New(isolate.handle, val).?,
+            .numeric = .from_opaque(o),
         };
     }
 
-    pub fn initBitCastedI64(isolate: Isolate, val: i64) Self {
-        return init(isolate, @as(f64, @bitCast(val)));
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .numeric = .from_opaque_maybe(o) orelse return null };
     }
 
-    pub fn initBitCastedU64(isolate: Isolate, val: u64) Self {
-        return init(isolate, @as(f64, @bitCast(val)));
+    pub fn init(isolate: Isolate, value: f64) @This() {
+        return .from_opaque(v8__Number__New(isolate.handle, value));
     }
 
-    pub fn toValue(self: Self) Value {
-        return .{
-            .handle = self.handle,
-        };
+    pub fn initInt(isolate: Isolate, value: i32) @This() {
+        return .from_opaque(v8__Number__NewInt(isolate.handle, value));
+    }
+
+    pub fn initUInt(isolate: Isolate, value: u32) @This() {
+        return .from_opaque(v8__Number__NewUInt(isolate.handle, value));
+    }
+
+    pub fn Value(self: @This()) f64 {
+        return v8__Number__Value(self);
     }
 };
 
-pub const Integer = struct {
-    const Self = @This();
+pub const Name = extern struct {
+    primitive: Primitive,
 
-    handle: *const c.Integer,
-
-    pub fn initI32(isolate: Isolate, val: i32) Self {
+    pub fn from_opaque(o: ?*Address) @This() {
         return .{
-            .handle = c.v8__Integer__New(isolate.handle, val).?,
+            .primitive = .from_opaque(o),
         };
     }
 
-    pub fn initU32(isolate: Isolate, val: u32) Self {
-        return .{
-            .handle = c.v8__Integer__NewFromUnsigned(isolate.handle, val).?,
-        };
-    }
-
-    pub fn getValue(self: Self) u64 {
-        return c.v8__Integer__Value(self.handle);
-    }
-
-    pub fn getValueU32(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__Integer__Value(self.handle)));
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{
-            .handle = self.handle,
-        };
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .primitive = Primitive.from_opaque_maybe(o) orelse return null };
     }
 };
 
-pub const BigInt = extern struct {
-    const Self = @This();
+pub const String = extern struct {
+    pub const NewStringType = enum(c_int) { Normal, Internalized };
 
-    handle: *const c.Integer,
-
-    pub fn initI64(iso: Isolate, val: i64) Self {
-        return .{
-            .handle = c.v8__BigInt__New(iso.handle, val).?,
-        };
-    }
-
-    pub fn initU64(iso: Isolate, val: u64) Self {
-        return .{
-            .handle = c.v8__BigInt__NewFromUnsigned(iso.handle, val).?,
-        };
-    }
-
-    pub fn getUint64(self: Self) u64 {
-        return c.v8__BigInt__Uint64Value(self.handle, null);
-    }
-
-    pub fn getInt64(self: Self) i64 {
-        return c.v8__BigInt__Int64Value(self.handle, null);
-    }
-};
-
-pub inline fn getValue(val: anytype) Value {
-    return .{
-        .handle = getValueHandle(val),
+    pub const WriteFlags = struct {
+        pub const None = @as(c_int, 0);
+        pub const NullTermination = @as(c_int, 1) << 0;
+        pub const PreserveAsciiNull = @as(c_int, 1) << 1;
+        pub const ReplaceInvalidUtf8 = @as(c_int, 1) << 2;
     };
-}
 
-inline fn getValueHandle(val: anytype) *const c.Value {
-    return @as(*const c.Value, @ptrCast(val.handle));
-}
+    extern fn v8__String__NewFromUtf8(isolate: *Isolate.Opaque, data: [*]const u8, new_type: NewStringType, length: c_int) ?*Address;
+    extern fn v8__String__NewFromOneByte(isolate: *Isolate.Opaque, data: [*]const u8, new_type: NewStringType, length: c_int) ?*Address;
+    extern fn v8__String__NewFromTwoByte(isolate: *Isolate.Opaque, data: [*]const u16, new_type: NewStringType, length: c_int) ?*Address;
+    extern fn v8__String__Length(self: String) c_int;
+    extern fn v8__String__Utf8Length(self: String, isolate: *Isolate.Opaque) c_int;
+    extern fn v8__String__WriteUtf8(self: String, isolate: *Isolate.Opaque, buffer: [*]u8, capacity: usize, flags: c_int, processed_characters_return: ?*usize) usize;
+    extern fn v8__String__NewExternalOneByteStatic(isolate: *Isolate.Opaque, data: [*]const u8, length: c_int) ?*Address;
+    extern fn v8__String__NewExternalTwoByteStatic(isolate: *Isolate.Opaque, data: [*]const u16, length: c_int) ?*Address;
 
-inline fn getTemplateHandle(val: anytype) *const c.Template {
-    return @as(*const c.Template, @ptrCast(val.handle));
-}
+    name: Name,
 
-inline fn getDataHandle(val: anytype) *const c.Data {
-    return @as(*const c.Data, @ptrCast(val.handle));
-}
-
-pub const Message = extern struct {
     const Self = @This();
 
-    handle: *const c.Message,
-
-    pub fn getMessage(self: Self) String {
-        return String{
-            .handle = c.v8__Message__Get(self.handle).?,
-        };
-    }
-
-    pub fn getSourceLine(self: Self, ctx: Context) ?String {
-        if (c.v8__Message__GetSourceLine(self.handle, ctx.handle)) |string| {
-            return String{
-                .handle = string,
-            };
-        } else return null;
-    }
-
-    pub fn getScriptResourceName(self: Self) Value {
+    pub fn from_opaque(o: *anyopaque) Self {
         return .{
-            .handle = c.v8__Message__GetScriptResourceName(self.handle).?,
+            .name = .from_opaque(o),
         };
     }
 
-    pub fn getLineNumber(self: Self, ctx: Context) ?u32 {
-        const res = c.v8__Message__GetLineNumber(self.handle, ctx.handle);
-        if (res != -1) {
-            return @as(u32, @intCast(res));
-        } else return null;
+    pub fn from_opaque_maybe(o: ?*Address) ?@This() {
+        return .{ .name = Name.from_opaque_maybe(o) orelse return null };
     }
 
-    pub fn getStartColumn(self: Self) ?u32 {
-        const res = c.v8__Message__GetStartColumn(self.handle);
-        if (res != -1) {
-            return @as(u32, @intCast(res));
-        } else return null;
+    pub fn initUtf8(isolate: Isolate, str: []const u8) Self {
+        return .{
+            .name = .from_opaque(v8__String__NewFromUtf8(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))),
+        };
     }
 
-    pub fn getEndColumn(self: Self) ?u32 {
-        const res = c.v8__Message__GetEndColumn(self.handle);
-        if (res != -1) {
-            return @as(u32, @intCast(res));
-        } else return null;
+    pub fn initOneByte(isolate: Isolate, str: []const u8) Self {
+        return .{
+            .name = .from_opaque(v8__String__NewFromOneByte(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))),
+        };
     }
 
-    /// [v8] Exception stack trace. By default stack traces are not captured for
-    ///      uncaught exceptions. SetCaptureStackTraceForUncaughtExceptions allows
-    ///      to change this option.
-    pub fn getStackTrace(self: Self) ?StackTrace {
-        if (c.v8__Message__GetStackTrace(self.handle)) |trace| {
-            return StackTrace{
-                .handle = trace,
-            };
-        } else return null;
+    pub fn initTwoByte(isolate: Isolate, str: []const u16) Self {
+        return .{
+            .name = .from_opaque(v8__String__NewFromTwoByte(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))),
+        };
+    }
+
+    pub fn initOneByteStatic(isolate: Isolate, str: []const u8) Self {
+        return .{
+            .name = .from_opaque(v8__String__NewExternalOneByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))),
+        };
+    }
+
+    pub fn initTwoByteStatic(isolate: Isolate, str: []const u16) Self {
+        return .{
+            .name = .from_opaque(v8__String__NewExternalTwoByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))),
+        };
+    }
+
+    pub fn len(self: Self) usize {
+        return @as(usize, @intCast(v8__String__Length(self.handle)));
+    }
+
+    pub fn lenUtf8(self: Self, isolate: Isolate) usize {
+        return @as(usize, @intCast(v8__String__Utf8Length(self, isolate.handle)));
+    }
+
+    pub fn writeUtf8(self: Self, isolate: Isolate, buf: []u8) usize {
+        const flags = WriteFlags.ReplaceInvalidUtf8;
+        return v8__String__WriteUtf8(self, isolate.handle, buf.ptr, buf.len, flags, null);
     }
 };
 
-pub const StackTrace = extern struct {
-    const Self = @This();
+pub const Module = extern struct {
+    data: Data,
 
-    handle: *const c.StackTrace,
-
-    pub fn getFrameCount(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__StackTrace__GetFrameCount(self.handle)));
-    }
-
-    pub fn getFrame(self: Self, iso: Isolate, idx: u32) StackFrame {
-        return .{
-            .handle = c.v8__StackTrace__GetFrame(self.handle, iso.handle, idx).?,
-        };
-    }
-
-    pub fn getCurrentStackTrace(iso: Isolate, frame_limit: u32) StackTrace {
-        return .{
-            .handle = c.v8__StackTrace__CurrentStackTrace__STATIC(iso.handle, @as(c_int, @intCast(frame_limit))).?,
-        };
-    }
-
-    pub fn getCurrentScriptNameOrSourceUrl(iso: Isolate) ?String {
-        const handle = c.v8__StackTrace__CurrentScriptNameOrSourceURL__STATIC(iso.handle) orelse return null;
-        return .{
-            .handle = handle,
-        };
-    }
+    // todo
 };
 
-pub const StackFrame = extern struct {
-    const Self = @This();
+pub const ArrayBuffer = extern struct {
+    object: Object,
 
-    handle: *const c.StackFrame,
+    pub const Allocator = extern struct {
+        pub const Opaque = opaque {};
 
-    pub fn getLineNumber(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__StackFrame__GetLineNumber(self.handle)));
-    }
+        handle: *Opaque,
+        extern fn v8__ArrayBuffer__Allocator__NewDefaultAllocator() ?*Opaque;
+        extern fn v8__ArrayBuffer__Allocator__DELETE(handle: *Opaque) void;
 
-    pub fn getColumn(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__StackFrame__GetColumn(self.handle)));
-    }
-
-    pub fn getScriptId(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__StackFrame__GetScriptId(self.handle)));
-    }
-
-    pub fn getScriptName(self: Self) ?String {
-        if (c.v8__StackFrame__GetFunctionName(self.handle)) |ptr| {
+        pub fn initDefault() @This() {
             return .{
-                .handle = ptr,
+                .handle = v8__ArrayBuffer__Allocator__NewDefaultAllocator().?,
             };
-        } else return null;
-    }
+        }
 
-    pub fn getScriptNameOrSourceUrl(self: Self) String {
+        pub fn deinit(self: @This()) void {
+            v8__ArrayBuffer__Allocator__DELETE(self.handle);
+        }
+    };
+};
+
+pub const Script = extern struct {
+    extern fn v8__Script__Compile(context: Context, source: String, origin: ?*const ScriptOrigin.Opaque) ?*Address;
+    extern fn v8__Script__Run(self: Script, context: Context) ?*Address;
+
+    data: Data,
+
+    const Self = @This();
+
+    pub fn from_opaque(o: ?*Address) Self {
         return .{
-            .handle = c.v8__StackFrame__GetScriptNameOrSourceURL(self.handle).?,
+            .data = .from_opaque(o),
         };
     }
 
-    pub fn getFunctionName(self: Self) ?String {
-        if (c.v8__StackFrame__GetFunctionName(self.handle)) |ptr| {
-            return String{
-                .handle = ptr,
-            };
-        } else return null;
+    pub fn from_opaque_maybe(o: ?*Address) ?Self {
+        return .{
+            .data = Data.from_opaque_maybe(o) orelse return null,
+        };
     }
 
-    pub fn isEval(self: Self) bool {
-        return c.v8__StackFrame__IsEval(self.handle);
+    pub fn compile(context: Context, source: String, origin: ?ScriptOrigin) !Self {
+        const ptr = if (origin) |o| &o.inner else null;
+        return @This().from_opaque_maybe(v8__Script__Compile(context, source, ptr)) orelse return error.JsException;
     }
 
-    pub fn isConstructor(self: Self) bool {
-        return c.v8__StackFrame__IsConstructor(self.handle);
-    }
-
-    pub fn isWasm(self: Self) bool {
-        return c.v8__StackFrame__IsWasm(self.handle);
-    }
-
-    pub fn isUserJavascript(self: Self) bool {
-        return c.v8__StackFrame__IsUserJavaScript(self.handle);
+    pub fn run(self: Self, context: Context) !Value {
+        return Value.from_opaque_maybe(v8__Script__Run(self, context)) orelse return error.JsException;
     }
 };
 
-pub const TryCatch = extern struct {
+pub const TryCatch = struct {
+    pub const Opaque = [binding.sizes.TryCatch]u8;
+
+    extern fn v8__TryCatch__CONSTRUCT(ptr: *Opaque, isolate: *Isolate.Opaque) void;
+    extern fn v8__TryCatch__DESTRUCT(ptr: *Opaque) void;
+    extern fn v8__TryCatch__HasCaught(self: *const Opaque) bool;
+    extern fn v8__TryCatch__CanContinue(self: *const Opaque) bool;
+    extern fn v8__TryCatch__HasTerminated(self: *const Opaque) bool;
+    extern fn v8__TryCatch__Exception(self: *const Opaque) ?*Address;
+    extern fn v8__TryCatch__StackTrace(self: *const Opaque, context: Context) ?*Address;
+    extern fn v8__TryCatch__Message(self: *const Opaque) ?*Message.Opaque;
+    extern fn v8__TryCatch__Reset(self: *Opaque) void;
+    extern fn v8__TryCatch__ReThrow(self: *Opaque) ?*Address;
+    extern fn v8__TryCatch__IsVerbose(self: *const Opaque) bool;
+    extern fn v8__TryCatch__SetVerbose(self: *Opaque, value: bool) void;
+    extern fn v8__TryCatch__SetCaptureMessage(self: *Opaque, value: bool) void;
+
+    inner: Opaque,
+
     const Self = @This();
 
-    inner: c.TryCatch,
-
-    // TryCatch is wrapped in a v8::Local so have to initialize in place.
     pub fn init(self: *Self, isolate: Isolate) void {
-        c.v8__TryCatch__CONSTRUCT(&self.inner, isolate.handle);
+        v8__TryCatch__CONSTRUCT(&self.inner, isolate.handle);
     }
 
     pub fn deinit(self: *Self) void {
-        c.v8__TryCatch__DESTRUCT(&self.inner);
+        v8__TryCatch__DESTRUCT(&self.inner);
     }
 
-    pub fn hasCaught(self: Self) bool {
-        return c.v8__TryCatch__HasCaught(&self.inner);
+    pub fn hasCaught(self: *const Self) bool {
+        return v8__TryCatch__HasCaught(&self.inner);
     }
 
-    pub fn getException(self: Self) ?Value {
-        if (c.v8__TryCatch__Exception(&self.inner)) |exception| {
-            return Value{
-                .handle = exception,
-            };
-        } else return null;
+    pub fn canContinue(self: *const Self) bool {
+        return v8__TryCatch__CanContinue(&self.inner);
     }
 
-    pub fn getStackTrace(self: Self, ctx: Context) ?Value {
-        if (c.v8__TryCatch__StackTrace(&self.inner, ctx.handle)) |value| {
-            return Value{
-                .handle = value,
-            };
-        } else return null;
+    pub fn hasTerminated(self: *const Self) bool {
+        return v8__TryCatch__HasTerminated(&self.inner);
     }
 
-    pub fn getMessage(self: Self) ?Message {
-        if (c.v8__TryCatch__Message(&self.inner)) |message| {
-            return Message{
-                .handle = message,
-            };
-        } else return null;
+    pub fn getException(self: *const Self) ?Value {
+        const handle = v8__TryCatch__Exception(&self.inner) orelse return null;
+        return .from_opaque_maybe(handle);
     }
 
-    pub fn isVerbose(self: Self) bool {
-        return c.v8__TryCatch__IsVerbose(&self.inner);
+    pub fn getStackTrace(self: *const Self, context: Context) ?Value {
+        const handle = v8__TryCatch__StackTrace(&self.inner, context) orelse return null;
+        return .from_opaque_maybe(handle);
     }
 
-    pub fn setVerbose(self: *Self, verbose: bool) void {
-        c.v8__TryCatch__SetVerbose(&self.inner, verbose);
+    pub fn getMessage(self: *const Self) ?Message {
+        const handle = v8__TryCatch__Message(&self.inner) orelse return null;
+        return .{ .handle = handle };
     }
 
-    pub fn rethrow(self: *Self) Value {
-        return .{
-            .handle = c.v8__TryCatch__ReThrow(&self.inner).?,
-        };
+    pub fn reset(self: *Self) void {
+        v8__TryCatch__Reset(&self.inner);
+    }
+
+    pub fn reThrow(self: *Self) ?Value {
+        const handle = v8__TryCatch__ReThrow(&self.inner) orelse return null;
+        return .{ .handle = handle };
+    }
+
+    pub fn isVerbose(self: *const Self) bool {
+        return v8__TryCatch__IsVerbose(&self.inner);
+    }
+
+    pub fn setVerbose(self: *Self, value: bool) void {
+        v8__TryCatch__SetVerbose(&self.inner, value);
+    }
+
+    pub fn setCaptureMessage(self: *Self, value: bool) void {
+        v8__TryCatch__SetCaptureMessage(&self.inner, value);
     }
 };
 
-pub const ScriptOrigin = extern struct {
+pub const StackFrame = struct {
+    pub const Opaque = opaque {};
+
+    extern fn v8__StackFrame__GetLineNumber(self: *const Opaque) c_int;
+    extern fn v8__StackFrame__GetColumn(self: *const Opaque) c_int;
+    extern fn v8__StackFrame__GetScriptId(self: *const Opaque) c_int;
+    extern fn v8__StackFrame__GetScriptName(self: *const Opaque) ?*String.Opaque;
+    extern fn v8__StackFrame__GetScriptNameOrSourceURL(self: *const Opaque) ?*String.Opaque;
+    extern fn v8__StackFrame__GetFunctionName(self: *const Opaque) ?*String.Opaque;
+    extern fn v8__StackFrame__IsEval(self: *const Opaque) bool;
+    extern fn v8__StackFrame__IsConstructor(self: *const Opaque) bool;
+    extern fn v8__StackFrame__IsWasm(self: *const Opaque) bool;
+    extern fn v8__StackFrame__IsUserJavaScript(self: *const Opaque) bool;
+
+    handle: *Opaque,
+
     const Self = @This();
 
-    inner: c.ScriptOrigin,
+    pub fn getLineNumber(self: Self) u32 {
+        return @as(u32, @intCast(v8__StackFrame__GetLineNumber(self.handle)));
+    }
+
+    pub fn getColumn(self: Self) u32 {
+        return @as(u32, @intCast(v8__StackFrame__GetColumn(self.handle)));
+    }
+
+    pub fn getScriptId(self: Self) u32 {
+        return @as(u32, @intCast(v8__StackFrame__GetScriptId(self.handle)));
+    }
+
+    pub fn getScriptName(self: Self) ?String {
+        if (v8__StackFrame__GetScriptName(self.handle)) |ptr| {
+            return .{ .handle = ptr };
+        }
+        return null;
+    }
+
+    pub fn getScriptNameOrSourceUrl(self: Self) ?String {
+        if (v8__StackFrame__GetScriptNameOrSourceURL(self.handle)) |ptr| {
+            return .{ .handle = ptr };
+        }
+        return null;
+    }
+
+    pub fn getFunctionName(self: Self) ?String {
+        if (v8__StackFrame__GetFunctionName(self.handle)) |ptr| {
+            return .{ .handle = ptr };
+        }
+        return null;
+    }
+
+    pub fn isEval(self: Self) bool {
+        return v8__StackFrame__IsEval(self.handle);
+    }
+
+    pub fn isConstructor(self: Self) bool {
+        return v8__StackFrame__IsConstructor(self.handle);
+    }
+
+    pub fn isWasm(self: Self) bool {
+        return v8__StackFrame__IsWasm(self.handle);
+    }
+
+    pub fn isUserJavascript(self: Self) bool {
+        return v8__StackFrame__IsUserJavaScript(self.handle);
+    }
+};
+
+pub const StackTrace = struct {
+    pub const Opaque = opaque {};
+
+    extern fn v8__StackTrace__GetFrameCount(self: *const Opaque) c_int;
+    extern fn v8__StackTrace__GetFrame(self: *const Opaque, isolate: *Isolate.Opaque, index: u32) ?*StackFrame.Opaque;
+    extern fn v8__StackTrace__CurrentStackTrace(isolate: *Isolate.Opaque, frame_limit: c_int) ?*Opaque;
+    extern fn v8__StackTrace__CurrentScriptNameOrSourceURL(isolate: *Isolate.Opaque) ?*String.Opaque;
+
+    handle: *Opaque,
+
+    const Self = @This();
+
+    pub fn getFrameCount(self: Self) u32 {
+        return @as(u32, @intCast(v8__StackTrace__GetFrameCount(self.handle)));
+    }
+
+    pub fn getFrame(self: Self, isolate: Isolate, index: u32) StackFrame {
+        return .{
+            .handle = v8__StackTrace__GetFrame(self.handle, isolate.handle, index).?,
+        };
+    }
+
+    pub fn getCurrentStackTrace(isolate: Isolate, frame_limit: u32) StackTrace {
+        return .{
+            .handle = v8__StackTrace__CurrentStackTrace(isolate.handle, @as(c_int, @intCast(frame_limit))).?,
+        };
+    }
+
+    pub fn getCurrentScriptNameOrSourceUrl(isolate: Isolate) ?String {
+        if (v8__StackTrace__CurrentScriptNameOrSourceURL(isolate.handle)) |ptr| {
+            return .{ .handle = ptr };
+        }
+        return null;
+    }
+};
+
+pub const Message = struct {
+    pub const Opaque = opaque {};
+
+    extern fn v8__Message__Get(self: *const Opaque) ?*String.Opaque;
+    extern fn v8__Message__GetSourceLine(self: *const Opaque, context: Context) ?*Address;
+    extern fn v8__Message__GetScriptResourceName(self: *const Opaque) ?*Value.Opaque;
+    extern fn v8__Message__GetLineNumber(self: *const Opaque, context: Context) c_int;
+    extern fn v8__Message__GetStackTrace(self: *const Opaque) ?*StackTrace.Opaque;
+    extern fn v8__Message__GetStartPosition(self: *const Opaque) c_int;
+    extern fn v8__Message__GetEndPosition(self: *const Opaque) c_int;
+    extern fn v8__Message__GetStartColumn(self: *const Opaque) c_int;
+    extern fn v8__Message__GetEndColumn(self: *const Opaque) c_int;
+    extern fn v8__Message__IsSharedCrossOrigin(self: *const Opaque) bool;
+    extern fn v8__Message__GetWasmFunctionIndex(self: *const Opaque) c_int;
+    extern fn v8__Message__ErrorLevel(self: *const Opaque) c_int;
+
+    handle: *Opaque,
+
+    const Self = @This();
+
+    pub fn get(self: Self) String {
+        return .{ .handle = v8__Message__Get(self.handle).? };
+    }
+
+    pub fn getSourceLine(self: Self, context: Context) ?String {
+        const ptr = v8__Message__GetSourceLine(self.handle, context);
+        return .from_opaque_maybe(ptr);
+    }
+
+    pub fn getScriptResourceName(self: Self) Value {
+        return .{ .handle = v8__Message__GetScriptResourceName(self.handle).? };
+    }
+
+    pub fn getLineNumber(self: Self, context: Context) ?u32 {
+        const res = v8__Message__GetLineNumber(self.handle, context.handle);
+        if (res != -1) return @as(u32, @intCast(res));
+        return null;
+    }
+
+    pub fn getStartColumn(self: Self) ?u32 {
+        const res = v8__Message__GetStartColumn(self.handle);
+        if (res != -1) return @as(u32, @intCast(res));
+        return null;
+    }
+
+    pub fn getEndColumn(self: Self) ?u32 {
+        const res = v8__Message__GetEndColumn(self.handle);
+        if (res != -1) return @as(u32, @intCast(res));
+        return null;
+    }
+
+    pub fn getStackTrace(self: Self) ?StackTrace {
+        if (v8__Message__GetStackTrace(self.handle)) |ptr| {
+            return .{ .handle = ptr };
+        }
+        return null;
+    }
+
+    pub fn getStartPosition(self: Self) i32 {
+        return v8__Message__GetStartPosition(self.handle);
+    }
+
+    pub fn getEndPosition(self: Self) i32 {
+        return v8__Message__GetEndPosition(self.handle);
+    }
+
+    pub fn getWasmFunctionIndex(self: Self) i32 {
+        return v8__Message__GetWasmFunctionIndex(self.handle);
+    }
+
+    pub fn getErrorLevel(self: Self) i32 {
+        return v8__Message__ErrorLevel(self.handle);
+    }
+
+    pub fn isSharedCrossOrigin(self: Self) bool {
+        return v8__Message__IsSharedCrossOrigin(self.handle);
+    }
+};
+
+pub const ScriptOrigin = struct {
+    pub const Opaque = [binding.sizes.ScriptOrigin]u8;
+
+    const Self = @This();
+
+    extern fn v8__ScriptOrigin__CONSTRUCT(
+        ptr: *Opaque,
+        resource_name: Value,
+        resource_line_offset: c_int,
+        resource_column_offset: c_int,
+        resource_is_shared_cross_origin: bool,
+        script_id: c_int,
+        source_map_url: ?*Address,
+        resource_is_opaque: bool,
+        is_wasm: bool,
+        is_module: bool,
+        host_defined_options: ?*Address,
+    ) void;
+
+    inner: Opaque,
 
     pub fn initDefault(resource_name: Value) Self {
-        var inner: c.ScriptOrigin = undefined;
-        c.v8__ScriptOrigin__CONSTRUCT(&inner, resource_name.handle);
-        return .{
-            .inner = inner,
-        };
+        return init(
+            resource_name,
+            0,
+            0,
+            false,
+            -1,
+            null,
+            false,
+            false,
+            false,
+            null,
+        );
     }
 
     pub fn init(
@@ -1756,1569 +1468,44 @@ pub const ScriptOrigin = extern struct {
         is_module: bool,
         host_defined_options: ?Data,
     ) Self {
-        var inner: c.ScriptOrigin = undefined;
-        c.v8__ScriptOrigin__CONSTRUCT2(
-            &inner,
-            resource_name.handle,
-            resource_line_offset,
-            resource_column_offset,
+        var res: ScriptOrigin = undefined;
+        v8__ScriptOrigin__CONSTRUCT(
+            &res.inner,
+            resource_name,
+            @as(c_int, @intCast(resource_line_offset)),
+            @as(c_int, @intCast(resource_column_offset)),
             resource_is_shared_cross_origin,
-            script_id,
-            if (source_map_url != null) source_map_url.?.handle else null,
+            @as(c_int, @intCast(script_id)),
+            if (source_map_url) |v| v.data.handle else null,
             resource_is_opaque,
             is_wasm,
             is_module,
-            if (host_defined_options != null) host_defined_options.?.handle else null,
+            if (host_defined_options) |v| v.handle else null,
         );
-        return .{
-            .inner = inner,
-        };
+        return res;
     }
 };
 
-pub const Boolean = extern struct {
-    const Self = @This();
-
-    handle: *const c.Boolean,
-
-    pub fn init(isolate: Isolate, val: bool) Self {
-        return .{
-            .handle = c.v8__Boolean__New(isolate.handle, val).?,
-        };
-    }
+pub const HeapStatistics = extern struct {
+    total_heap_size: usize,
+    total_heap_size_executable: usize,
+    total_physical_size: usize,
+    total_available_size: usize,
+    used_heap_size: usize,
+    heap_size_limit: usize,
+    malloced_memory: usize,
+    external_memory: usize,
+    peak_malloced_memory: usize,
+    does_zap_garbage: bool,
+    number_of_native_contexts: usize,
+    number_of_detached_contexts: usize,
+    total_global_handles_size: usize,
+    used_global_handles_size: usize,
+    total_allocated_bytes: u64,
 };
 
-pub const String = extern struct {
-    const Self = @This();
-
-    handle: *const c.String,
-
-    pub fn initUtf8(isolate: Isolate, str: []const u8) Self {
-        return .{
-            .handle = c.v8__String__NewFromUtf8(isolate.handle, str.ptr, c.kNormal, @as(c_int, @intCast(str.len))).?,
-        };
-    }
-
-    pub fn initOneByte(isolate: Isolate, str: []const u8) Self {
-        return .{
-            .handle = c.v8__String__NewFromOneByte(isolate.handle, str.ptr, c.kNormal, @as(c_int, @intCast(str.len))).?,
-        };
-    }
-
-    pub fn initTwoByte(isolate: Isolate, str: []const u16) Self {
-        return .{
-            .handle = c.v8__String__NewFromTwoByte(isolate.handle, str.ptr, c.kNormal, @as(c_int, @intCast(str.len))).?,
-        };
-    }
-
-    pub fn initExternalOneByte(isolate: Isolate, str: []const u8, deinit_fn: ?*const fn (Isolate, [*c]u8, usize) void) Self {
-        return .{
-            .handle = c.v8__String__NewExternalOneByte(isolate.handle, str.ptr, str.len, deinit_fn),
-        };
-    }
-
-    pub fn initExternalTwoByte(isolate: Isolate, str: []const u8, deinit_fn: ?*const fn (Isolate, [*c]u8, usize) void) Self {
-        return .{
-            .handle = c.v8__String__NewExternalTwoByte(isolate.handle, str.ptr, str.len, deinit_fn),
-        };
-    }
-
-    pub fn initOneByteRef(isolate: Isolate, str: []const u8) Self {
-        return .{
-            .handle = c.v8__String__NewExternalOneByteStatic(isolate.handle, str.ptr, str.len),
-        };
-    }
-
-    pub fn initTwoByteRef(isolate: Isolate, str: []const u8) Self {
-        return .{
-            .handle = c.v8__String__NewExternalTwoByteStatic(isolate.handle, str.ptr, str.len),
-        };
-    }
-
-    // @todo: binding for ExternalStringReference
-    //
-    // pub fn getExternalStringResource(self: Self) c.ExternalStringResource {
-    //     return c.v8__String__GetExternalStringResource(self.handle);
-    // }
-
-    // pub fn getExternalStringResourceBase(self: Self, encoding_out: [*c]c_uint) c.ExternalStringResourceBase {
-    //     return c.v8__String__GetExternalStringResourceBase(self.handle, encoding_out);
-    // }
-
-    pub fn len(self: Self) c_int {
-        return c.v8__String__Length(self.handle);
-    }
-
-    pub fn lenUtf8(self: Self, isolate: Isolate) usize {
-        return c.v8__String__Utf8Length(self.handle, isolate.handle);
-    }
-
-    pub fn writeUtf8(self: String, isolate: Isolate, buf: []u8) usize {
-        const options = c.NO_NULL_TERMINATION | c.REPLACE_INVALID_UTF8;
-        return c.v8__String__WriteUtf8(self.handle, isolate.handle, buf.ptr, buf.len, options, null);
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{
-            .handle = self.handle,
-        };
-    }
-
-    pub fn toName(self: Self) Name {
-        return .{
-            .handle = @as(*const c.Name, @ptrCast(self.handle)),
-        };
-    }
-};
-
-pub const ScriptCompilerSource = extern struct {
-    const Self = @This();
-
-    inner: c.ScriptCompilerSource,
-
-    pub fn init(self: *Self, src: String, mb_origin: ?ScriptOrigin, cached_data: ?ScriptCompilerCachedData) void {
-        const cached_data_ptr = if (cached_data != null) cached_data.?.handle else null;
-        if (mb_origin) |origin| {
-            c.v8__ScriptCompiler__Source__CONSTRUCT2(src.handle, &origin.inner, cached_data_ptr, &self.inner);
-        } else {
-            c.v8__ScriptCompiler__Source__CONSTRUCT(src.handle, cached_data_ptr, &self.inner);
-        }
-    }
-
-    pub fn deinit(self: *Self) void {
-        c.v8__ScriptCompiler__Source__DESTRUCT(&self.inner);
-    }
-};
-
-pub const ScriptCompilerCachedData = extern struct {
-    const Self = @This();
-
-    handle: *c.ScriptCompilerCachedData,
-
-    pub fn init(data: []const u8) Self {
-        return .{
-            .handle = c.v8__ScriptCompiler__CachedData__NEW(data.ptr, @as(c_int, @intCast(data.len))).?,
-        };
-    }
-
-    pub fn deinit(self: Self) void {
-        c.v8__ScriptCompiler__CachedData__DELETE(self.handle);
-    }
-};
-
-pub const ScriptCompiler = struct {
-    const CompileOptions = enum(u32) {
-        kNoCompileOptions = c.kNoCompileOptions,
-        kConsumeCodeCache = c.kConsumeCodeCache,
-        kEagerCompile = c.kEagerCompile,
-    };
-
-    const NoCacheReason = enum(u32) {
-        kNoCacheNoReason = c.kNoCacheNoReason,
-        kNoCacheBecauseCachingDisabled = c.kNoCacheBecauseCachingDisabled,
-        kNoCacheBecauseNoResource = c.kNoCacheBecauseNoResource,
-        kNoCacheBecauseInlineScript = c.kNoCacheBecauseInlineScript,
-        kNoCacheBecauseModule = c.kNoCacheBecauseModule,
-        kNoCacheBecauseStreamingSource = c.kNoCacheBecauseStreamingSource,
-        kNoCacheBecauseInspector = c.kNoCacheBecauseInspector,
-        kNoCacheBecauseScriptTooSmall = c.kNoCacheBecauseScriptTooSmall,
-        kNoCacheBecauseCacheTooCold = c.kNoCacheBecauseCacheTooCold,
-        kNoCacheBecauseV8Extension = c.kNoCacheBecauseV8Extension,
-        kNoCacheBecauseExtensionModule = c.kNoCacheBecauseExtensionModule,
-        kNoCacheBecausePacScript = c.kNoCacheBecausePacScript,
-        kNoCacheBecauseInDocumentWrite = c.kNoCacheBecauseInDocumentWrite,
-        kNoCacheBecauseResourceWithNoCacheHandler = c.kNoCacheBecauseResourceWithNoCacheHandler,
-        kNoCacheBecauseDeferredProduceCodeCache = c.kNoCacheBecauseDeferredProduceCodeCache,
-    };
-
-    /// [v8]
-    /// Compile an ES module, returning a Module that encapsulates the compiled code.
-    /// Corresponds to the ParseModule abstract operation in the ECMAScript specification.
-    pub fn compileModule(iso: Isolate, src: *ScriptCompilerSource, options: ScriptCompiler.CompileOptions, reason: ScriptCompiler.NoCacheReason) !Module {
-        const mb_res = c.v8__ScriptCompiler__CompileModule(
-            iso.handle,
-            &src.inner,
-            @intFromEnum(options),
-            @intFromEnum(reason),
-        );
-        if (mb_res) |res| {
-            return Module{
-                .handle = res,
-            };
-        } else return error.JsException;
-    }
-
-    /// [v8]
-    /// Compiles the specified script (bound to current context).
-    pub fn compile(ctx: Context, src: *ScriptCompilerSource, options: ScriptCompiler.CompileOptions, reason: ScriptCompiler.NoCacheReason) !Script {
-        const mb_res = c.v8__ScriptCompiler__Compile(
-            ctx.handle,
-            &src.inner,
-            @intFromEnum(options),
-            @intFromEnum(reason),
-        );
-        if (mb_res) |res| {
-            return Script{
-                .handle = res,
-            };
-        } else return error.JsException;
-    }
-};
-
-pub const Script = struct {
-    const Self = @This();
-
-    handle: *const c.Script,
-
-    /// [v8]
-    /// A shorthand for ScriptCompiler::Compile().
-    pub fn compile(ctx: Context, src: String, origin: ?ScriptOrigin) !Self {
-        if (c.v8__Script__Compile(ctx.handle, src.handle, if (origin != null) &origin.?.inner else null)) |handle| {
-            return Self{
-                .handle = handle,
-            };
-        } else return error.JsException;
-    }
-
-    pub fn run(self: Self, ctx: Context) !Value {
-        if (c.v8__Script__Run(self.handle, ctx.handle)) |value| {
-            return Value{
-                .handle = value,
-            };
-        } else return error.JsException;
-    }
-};
-
-pub const Module = extern struct {
-    const Self = @This();
-
-    const Status = enum(u32) {
-        kUninstantiated = c.kUninstantiated,
-        kInstantiating = c.kInstantiating,
-        kInstantiated = c.kInstantiated,
-        kEvaluating = c.kEvaluating,
-        kEvaluated = c.kEvaluated,
-        kErrored = c.kErrored,
-    };
-
-    handle: *const c.Module,
-
-    pub fn getStatus(self: Self) Status {
-        return @as(Status, @enumFromInt(c.v8__Module__GetStatus(self.handle)));
-    }
-
-    pub fn getException(self: Self) Value {
-        return .{
-            .handle = c.v8__Module__GetException(self.handle).?,
-        };
-    }
-
-    pub fn getModuleRequests(self: Self) FixedArray {
-        return .{
-            .handle = c.v8__Module__GetModuleRequests(self.handle).?,
-        };
-    }
-
-    /// [v8]
-    /// Instantiates the module and its dependencies.
-    ///
-    /// Returns an empty Maybe<bool> if an exception occurred during
-    /// instantiation. (In the case where the callback throws an exception, that
-    /// exception is propagated.)
-    pub fn instantiate(self: Self, ctx: Context, cb: c.ResolveModuleCallback) !bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Module__InstantiateModule(self.handle, ctx.handle, cb, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return error.JsException;
-    }
-
-    /// Evaluates the module, assumes module has been instantiated.
-    /// [v8]
-    /// Evaluates the module and its dependencies.
-    ///
-    /// If status is kInstantiated, run the module's code and return a Promise
-    /// object. On success, set status to kEvaluated and resolve the Promise with
-    /// the completion value; on failure, set status to kErrored and reject the
-    /// Promise with the error.
-    ///
-    /// If IsGraphAsync() is false, the returned Promise is settled.
-    pub fn evaluate(self: Self, ctx: Context) !Value {
-        const res = c.v8__Module__Evaluate(self.handle, ctx.handle) orelse return error.JsException;
-
-        if (self.getStatus() == .kErrored) {
-            return error.JsException;
-        }
-
-        return Value{
-            .handle = res,
-        };
-    }
-
-    pub fn getIdentityHash(self: Self) u32 {
-        return @as(u32, @bitCast(c.v8__Module__GetIdentityHash(self.handle)));
-    }
-
-    pub fn getModuleNamespace(self: Self) Value {
-        return .{
-            .handle = c.v8__Module__GetModuleNamespace(self.handle).?,
-        };
-    }
-
-    pub fn getScriptId(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__Module__ScriptId(self.handle)));
-    }
-};
-
-pub const ModuleRequest = struct {
-    const Self = @This();
-
-    handle: *const c.ModuleRequest,
-
-    /// Returns the specifier of the import inside the double quotes
-    pub fn getSpecifier(self: Self) String {
-        return .{
-            .handle = c.v8__ModuleRequest__GetSpecifier(self.handle).?,
-        };
-    }
-
-    /// Returns the offset from the start of the source code.
-    pub fn getSourceOffset(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__ModuleRequest__GetSourceOffset(self.handle)));
-    }
-};
-
-pub const Data = struct {
-    const Self = @This();
-
-    handle: *const c.Data,
-
-    /// Should only be called if you know the underlying type.
-    pub fn castTo(self: Self, comptime T: type) T {
-        switch (T) {
-            ModuleRequest => {
-                return .{
-                    .handle = self.handle,
-                };
-            },
-            else => unreachable,
-        }
-    }
-};
-
-pub const Value = extern struct {
-    const Self = @This();
-
-    handle: *const c.Value,
-
-    pub fn typeOf(self: Self, isolate: Isolate) !String {
-        return String{
-            .handle = c.v8__Value__TypeOf(self.handle, isolate.handle) orelse return error.JsException,
-        };
-    }
-
-    pub fn toString(self: Self, ctx: Context) !String {
-        return String{
-            .handle = c.v8__Value__ToString(self.handle, ctx.handle) orelse return error.JsException,
-        };
-    }
-
-    pub fn toDetailString(self: Self, ctx: Context) !String {
-        return String{
-            .handle = c.v8__Value__ToDetailString(self.handle, ctx.handle) orelse return error.JsException,
-        };
-    }
-
-    pub fn toBool(self: Self, isolate: Isolate) bool {
-        return c.v8__Value__BooleanValue(self.handle, isolate.handle);
-    }
-
-    pub fn toI32(self: Self, ctx: Context) !i32 {
-        var out: c.MaybeI32 = undefined;
-        c.v8__Value__Int32Value(self.handle, ctx.handle, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return error.JsException;
-    }
-
-    pub fn toU32(self: Self, ctx: Context) !u32 {
-        var out: c.MaybeU32 = undefined;
-        c.v8__Value__Uint32Value(self.handle, ctx.handle, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return error.JsException;
-    }
-
-    pub fn toF32(self: Self, ctx: Context) !f32 {
-        var out: c.MaybeF64 = undefined;
-        c.v8__Value__NumberValue(self.handle, ctx.handle, &out);
-        if (out.has_value) {
-            return @as(f32, @floatCast(out.value));
-        } else return error.JsException;
-    }
-
-    pub fn toF64(self: Self, ctx: Context) !f64 {
-        var out: c.MaybeF64 = undefined;
-        c.v8__Value__NumberValue(self.handle, ctx.handle, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return error.JsException;
-    }
-
-    pub fn bitCastToI64(self: Self, ctx: Context) !i64 {
-        var out: c.MaybeF64 = undefined;
-        c.v8__Value__NumberValue(self.handle, ctx.handle, &out);
-        if (out.has_value) {
-            return @as(i64, @bitCast(out.value));
-        } else return error.JsException;
-    }
-
-    pub fn bitCastToU64(self: Self, ctx: Context) !u64 {
-        var out: c.MaybeF64 = undefined;
-        c.v8__Value__NumberValue(self.handle, ctx.handle, &out);
-        if (out.has_value) {
-            return @as(u64, @bitCast(out.value));
-        } else return error.JsException;
-    }
-
-    pub fn instanceOf(self: Self, ctx: Context, obj: Object) !bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Value__InstanceOf(self.handle, ctx.handle, obj.handle, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return error.JsException;
-    }
-
-    pub fn isBoolean(self: Self) bool {
-        return c.v8__Value__IsBoolean(self.handle);
-    }
-
-    pub fn isBooleanObject(self: Self) bool {
-        return c.v8__Value__IsBooleanObject(self.handle);
-    }
-
-    pub fn isNumber(self: Self) bool {
-        return c.v8__Value__IsNumber(self.handle);
-    }
-
-    pub fn isNumberObject(self: Self) bool {
-        return c.v8__Value__IsNumberObject(self.handle);
-    }
-
-    pub fn isInt32(self: Self) bool {
-        return c.v8__Value__IsInt32(self.handle);
-    }
-
-    pub fn isUint32(self: Self) bool {
-        return c.v8__Value__IsUint32(self.handle);
-    }
-
-    pub fn isObject(self: Self) bool {
-        return c.v8__Value__IsObject(self.handle);
-    }
-
-    pub fn isString(self: Self) bool {
-        return c.v8__Value__IsString(self.handle);
-    }
-
-    pub fn isSymbol(self: Self) bool {
-        return c.v8__Value__IsSymbol(self.handle);
-    }
-
-    pub fn isFunction(self: Self) bool {
-        return c.v8__Value__IsFunction(self.handle);
-    }
-
-    pub fn isAsyncFunction(self: Self) bool {
-        return c.v8__Value__IsAsyncFunction(self.handle);
-    }
-
-    pub fn isPromise(self: Self) bool {
-        return c.v8__Value__IsPromise(self.handle);
-    }
-
-    pub fn isArray(self: Self) bool {
-        return c.v8__Value__IsArray(self.handle);
-    }
-
-    pub fn isTypedArray(self: Self) bool {
-        return c.v8__Value__IsTypedArray(self.handle);
-    }
-
-    pub fn isUint8Array(self: Self) bool {
-        return c.v8__Value__IsUint8Array(self.handle);
-    }
-
-    pub fn isUint8ClampedArray(self: Self) bool {
-        return c.v8__Value__IsUint8ClampedArray(self.handle);
-    }
-
-    pub fn isInt8Array(self: Self) bool {
-        return c.v8__Value__IsInt8Array(self.handle);
-    }
-
-    pub fn isUint16Array(self: Self) bool {
-        return c.v8__Value__IsUint16Array(self.handle);
-    }
-
-    pub fn isInt16Array(self: Self) bool {
-        return c.v8__Value__IsInt16Array(self.handle);
-    }
-
-    pub fn isUint32Array(self: Self) bool {
-        return c.v8__Value__IsUint32Array(self.handle);
-    }
-
-    pub fn isInt32Array(self: Self) bool {
-        return c.v8__Value__IsInt32Array(self.handle);
-    }
-
-    pub fn isBigInt64Array(self: Self) bool {
-        return c.v8__Value__IsBigInt64Array(self.handle);
-    }
-
-    pub fn isBigUint64Array(self: Self) bool {
-        return c.v8__Value__IsBigUint64Array(self.handle);
-    }
-
-    pub fn isFloat32Array(self: Self) bool {
-        return c.v8__Value__IsFloat32Array(self.handle);
-    }
-
-    pub fn isFloat64Array(self: Self) bool {
-        return c.v8__Value__IsFloat64Array(self.handle);
-    }
-
-    pub fn isArrayBuffer(self: Self) bool {
-        return c.v8__Value__IsArrayBuffer(self.handle);
-    }
-
-    pub fn isArrayBufferView(self: Self) bool {
-        return c.v8__Value__IsArrayBufferView(self.handle);
-    }
-
-    pub fn isExternal(self: Self) bool {
-        return c.v8__Value__IsExternal(self.handle);
-    }
-
-    pub fn isTrue(self: Self) bool {
-        return c.v8__Value__IsTrue(self.handle);
-    }
-
-    pub fn isFalse(self: Self) bool {
-        return c.v8__Value__IsFalse(self.handle);
-    }
-
-    pub fn isUndefined(self: Self) bool {
-        return c.v8__Value__IsUndefined(self.handle);
-    }
-
-    pub fn isNull(self: Self) bool {
-        return c.v8__Value__IsNull(self.handle);
-    }
-
-    pub fn isNullOrUndefined(self: Self) bool {
-        return c.v8__Value__IsNullOrUndefined(self.handle);
-    }
-
-    pub fn isNativeError(self: Self) bool {
-        return c.v8__Value__IsNativeError(self.handle);
-    }
-
-    pub fn isBigInt(self: Self) bool {
-        return c.v8__Value__IsBigInt(self.handle);
-    }
-
-    pub fn isBigIntObject(self: Self) bool {
-        return c.v8__Value__IsBigIntObject(self.handle);
-    }
-
-    /// Should only be called if you know the underlying type.
-    pub fn castTo(self: Self, comptime T: type) T {
-        switch (T) {
-            Object,
-            Function,
-            Array,
-            Promise,
-            External,
-            Integer,
-            BigInt,
-            Boolean,
-            ArrayBuffer,
-            ArrayBufferView,
-            Uint8Array,
-            String,
-            => {
-                return .{
-                    .handle = self.handle,
-                };
-            },
-            else => unreachable,
-        }
-    }
-};
-
-pub const Primitive = extern struct {
-    const Self = @This();
-
-    handle: *const c.Primitive,
-
-    pub fn toValue(self: Self) Value {
-        return .{
-            .handle = self.handle,
-        };
-    }
-};
-
-pub fn initUndefined(isolate: Isolate) Primitive {
-    return .{
-        .handle = c.v8__Undefined(isolate.handle).?,
-    };
-}
-
-pub fn initNull(isolate: Isolate) Primitive {
-    return .{
-        .handle = c.v8__Null(isolate.handle).?,
-    };
-}
-
-pub fn initTrue(isolate: Isolate) Boolean {
-    return .{
-        .handle = c.v8__True(isolate.handle).?,
-    };
-}
-
-pub fn initFalse(isolate: Isolate) Boolean {
-    return .{
-        .handle = c.v8__False(isolate.handle).?,
-    };
-}
-
-pub const Promise = extern struct {
-    const Self = @This();
-
-    pub const State = enum(u32) {
-        kPending = c.kPending,
-        kFulfilled = c.kFulfilled,
-        kRejected = c.kRejected,
-    };
-
-    handle: *const c.Promise,
-
-    /// [V8]
-    /// Register a resolution/rejection handler with a promise.
-    /// The handler is given the respective resolution/rejection value as
-    /// an argument. If the promise is already resolved/rejected, the handler is
-    /// invoked at the end of turn.
-    pub fn onCatch(self: Self, ctx: Context, handler: Function) !Promise {
-        if (c.v8__Promise__Catch(self.handle, ctx.handle, handler.handle)) |handle| {
-            return Promise{ .handle = handle };
-        } else return error.JsException;
-    }
-
-    pub fn then(self: Self, ctx: Context, handler: Function) !Promise {
-        if (c.v8__Promise__Then(self.handle, ctx.handle, handler.handle)) |handle| {
-            return Promise{ .handle = handle };
-        } else return error.JsException;
-    }
-
-    pub fn thenAndCatch(self: Self, ctx: Context, on_fulfilled: Function, on_rejected: Function) !Promise {
-        if (c.v8__Promise__Then2(self.handle, ctx.handle, on_fulfilled.handle, on_rejected.handle)) |handle| {
-            return Promise{ .handle = handle };
-        } else return error.JsException;
-    }
-
-    pub fn getState(self: Self) State {
-        return @as(State, @enumFromInt(c.v8__Promise__State(self.handle)));
-    }
-
-    /// [V8]
-    /// Marks this promise as handled to avoid reporting unhandled rejections.
-    pub fn markAsHandled(self: Self) void {
-        c.v8__Promise__MarkAsHandled(self.handle);
-    }
-
-    pub fn toObject(self: Self) Object {
-        return .{
-            .handle = @as(*const c.Object, @ptrCast(self.handle)),
-        };
-    }
-
-    /// [V8]
-    /// Returns the content of the [[PromiseResult]] field. The Promise must not be pending.
-    pub fn getResult(self: Self) Value {
-        return .{
-            .handle = c.v8__Promise__Result(self.handle).?,
-        };
-    }
-};
-
-pub const PromiseResolver = struct {
-    const Self = @This();
-
-    handle: *const c.PromiseResolver,
-
-    pub fn init(ctx: Context) Self {
-        return .{
-            .handle = c.v8__Promise__Resolver__New(ctx.handle).?,
-        };
-    }
-
-    pub fn getPromise(self: Self) Promise {
-        return .{
-            .handle = c.v8__Promise__Resolver__GetPromise(self.handle).?,
-        };
-    }
-
-    /// Resolve will continue execution of any yielding generators.
-    pub fn resolve(self: Self, ctx: Context, val: Value) ?bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Promise__Resolver__Resolve(self.handle, ctx.handle, val.handle, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return null;
-    }
-
-    /// Reject will continue execution of any yielding generators.
-    pub fn reject(self: Self, ctx: Context, val: Value) ?bool {
-        var out: c.MaybeBool = undefined;
-        c.v8__Promise__Resolver__Reject(self.handle, ctx.handle, val.handle, &out);
-        if (out.has_value) {
-            return out.value;
-        } else return null;
-    }
-};
-
-pub const BackingStore = extern struct {
-    const Self = @This();
-
-    handle: *c.BackingStore,
-
-    /// Underlying handle is initially unmanaged.
-    pub fn init(iso: Isolate, len: usize) Self {
-        return .{
-            .handle = c.v8__ArrayBuffer__NewBackingStore(iso.handle, len).?,
-        };
-    }
-
-    /// Returns null if len is 0.
-    pub fn getData(self: Self) ?*anyopaque {
-        return c.v8__BackingStore__Data(self.handle);
-    }
-
-    pub fn getByteLength(self: Self) usize {
-        return c.v8__BackingStore__ByteLength(self.handle);
-    }
-
-    pub fn isShared(self: Self) bool {
-        return c.v8__BackingStore__IsShared(self.handle);
-    }
-
-    pub fn toSharedPtr(self: Self) SharedPtr {
-        return c.v8__BackingStore__TO_SHARED_PTR(self.handle);
-    }
-
-    pub fn sharedPtrReset(ptr: *SharedPtr) void {
-        c.std__shared_ptr__v8__BackingStore__reset(ptr);
-    }
-
-    pub fn sharedPtrGet(ptr: *const SharedPtr) Self {
-        return .{
-            .handle = c.std__shared_ptr__v8__BackingStore__get(ptr).?,
-        };
-    }
-
-    pub fn sharedPtrUseCount(ptr: *const SharedPtr) u32 {
-        return @as(u32, @intCast(c.std__shared_ptr__v8__BackingStore__use_count(ptr)));
-    }
-};
-
-pub const ArrayBuffer = struct {
-    const Self = @This();
-
-    handle: *const c.ArrayBuffer,
-
-    pub fn init(iso: Isolate, len: usize) Self {
-        return .{
-            .handle = c.v8__ArrayBuffer__New(iso.handle, len).?,
-        };
-    }
-
-    pub fn initWithBackingStore(iso: Isolate, store: *const SharedPtr) Self {
-        return .{
-            .handle = c.v8__ArrayBuffer__New2(iso.handle, store).?,
-        };
-    }
-
-    pub fn getBackingStore(self: Self) SharedPtr {
-        return c.v8__ArrayBuffer__GetBackingStore(self.handle);
-    }
-
-    pub fn getByteLength(self: Self) usize {
-        return c.v8__ArrayBuffer__ByteLength(self.handle);
-    }
-};
-
-pub const ArrayBufferView = extern struct {
-    const Self = @This();
-
-    handle: *const c.ArrayBufferView,
-
-    pub fn getBuffer(self: Self) ArrayBuffer {
-        return .{
-            .handle = c.v8__ArrayBufferView__Buffer(self.handle).?,
-        };
-    }
-
-    pub fn castFrom(val: anytype) Self {
-        switch (@TypeOf(val)) {
-            Uint8Array => return .{
-                .handle = @as(*const c.ArrayBufferView, @ptrCast(val.handle)),
-            },
-            else => unreachable,
-        }
-    }
-
-    pub fn getByteLength(self: Self) usize {
-        return c.v8__ArrayBufferView__ByteLength(self.handle);
-    }
-
-    pub fn getByteOffset(self: Self) usize {
-        return c.v8__ArrayBufferView__ByteOffset(self.handle);
-    }
-};
-
-pub const FixedArray = extern struct {
-    const Self = @This();
-
-    handle: *const c.FixedArray,
-
-    pub fn length(self: Self) u32 {
-        return @as(u32, @intCast(c.v8__FixedArray__Length(self.handle)));
-    }
-
-    pub fn get(self: Self, ctx: Context, idx: u32) Data {
-        return .{
-            .handle = c.v8__FixedArray__Get(self.handle, ctx.handle, @as(c_int, @intCast(idx))).?,
-        };
-    }
-};
-
-pub const Uint8ClampedArray = extern struct {
-    const Self = @This();
-
-    handle: *const c.Uint8ClampedArray,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Uint8ClampedArray__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Uint8Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.Uint8Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Uint8Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Int8Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.Int8Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Int8Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Uint16Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.Uint16Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Uint16Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Int16Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.Int16Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Int16Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Uint32Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.Uint32Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Uint32Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Int32Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.Int32Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Int32Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Float16Array = struct {
-    const Self = @This();
-
-    handle: *const c.Float16Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Float16Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Float32Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.Float32Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Float32Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Float64Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.Float64Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__Float64Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const BigInt64Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.BigInt64Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__BigInt64Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const BigUint64Array = extern struct {
-    const Self = @This();
-
-    handle: *const c.BigUint64Array,
-
-    pub fn init(buf: ArrayBuffer, offset: usize, len: usize) Self {
-        return .{
-            .handle = c.v8__BigUint64Array__New(buf.handle, offset, len).?,
-        };
-    }
-
-    pub fn toValue(self: Self) Value {
-        return .{ .handle = self.handle };
-    }
-};
-
-pub const Json = struct {
-    pub fn parse(ctx: Context, json: String) !Value {
-        return Value{
-            .handle = c.v8__JSON__Parse(ctx.handle, json.handle) orelse return error.JsException,
-        };
-    }
-
-    pub fn stringify(ctx: Context, val: Value, gap: ?String) !String {
-        return String{
-            .handle = c.v8__JSON__Stringify(ctx.handle, val.handle, if (gap != null) gap.?.handle else null) orelse return error.JsException,
-        };
-    }
-};
-
-inline fn ptrCastAlign(comptime Ptr: type, ptr: anytype) Ptr {
-    const alignment = @typeInfo(Ptr).Pointer.alignment;
-    if (alignment == 0) {
-        return @as(Ptr, @ptrCast(ptr));
-    } else {
-        return @as(Ptr, @ptrCast(@as(alignment, @alignCast(ptr))));
-    }
-}
-
-pub fn setDcheckFunction(func: fn (file: [*c]const u8, line: c_int, msg: [*c]const u8) callconv(.c) void) void {
-    c.v8__base__SetDcheckFunction(func);
-}
-
-test "Internals." {
-    // Verify struct sizes.
-    const eq = t.expectEqual;
-    try eq(c.v8__Isolate__CreateParams__SIZEOF(), @sizeOf(c.CreateParams));
-    try eq(c.v8__TryCatch__SIZEOF(), @sizeOf(c.TryCatch));
-    try eq(c.v8__PromiseRejectMessage__SIZEOF(), @sizeOf(c.PromiseRejectMessage));
-    try eq(c.v8__ScriptCompiler__Source__SIZEOF(), @sizeOf(c.ScriptCompilerSource));
-    try eq(c.v8__ScriptCompiler__CachedData__SIZEOF(), @sizeOf(c.ScriptCompilerCachedData));
-    try eq(c.v8__ScriptCompiler__CompilationDetails__SIZEOF(), @sizeOf(c.CompilationDetails));
-    try eq(c.v8__HeapStatistics__SIZEOF(), @sizeOf(c.HeapStatistics));
-}
-
-// Inspector
-
-pub const ClientTrustLevel = enum(u32) {
-    kUntrusted = c.kUntrusted,
-    kFullyTrusted = c.kFullyTrusted,
-};
-
-pub const Inspector = struct {
-    handle: *c.Inspector = undefined,
-
-    client: InspectorClient = undefined,
-    channel: InspectorChannel = undefined,
-
-    rnd: RndGen = RndGen.init(0),
-
-    // The default JS context handle.
-    // Set when a context is created.
-    ctx_handle: ?*const C_Context = null,
-
-    const RndGen = std.Random.DefaultPrng;
-
-    const contextGroupId = 1;
-    const clientTrustLevel = 1;
-
-    pub fn init(
-        self: *Inspector,
-        client: InspectorClient,
-        channel: InspectorChannel,
-        isolate: Isolate,
-    ) void {
-        // NOTE: Inspector self must be created *before*
-        // setting inspector on c.InspectorClient and c.InspectorChannel
-        // to ensure right data is available on corresponding callbacks
-        self.* = Inspector{};
-
-        // client
-        client.setInspector(self);
-        self.client = client;
-
-        // channel
-        channel.setInspector(self);
-        self.channel = channel;
-
-        const inspector = c.v8_inspector__Inspector__Create(isolate.handle, self.client.handle).?;
-        self.handle = inspector;
-    }
-
-    pub fn deinit(self: *Inspector) void {
-        self.client.deinit();
-        self.channel.deinit();
-        c.v8_inspector__Inspector__DELETE(self.handle);
-    }
-
-    fn fromData(data: *anyopaque) *Inspector {
-        const inspector_raw = @as(*align(1) Inspector, @ptrCast(data));
-        return @as(*Inspector, @alignCast(inspector_raw));
-    }
-
-    pub fn connect(self: *Inspector) InspectorSession {
-        const session = c.v8_inspector__Inspector__Connect(self.handle, contextGroupId, self.channel.handle, clientTrustLevel).?;
-        return InspectorSession{ .handle = session };
-    }
-
-    pub fn contextCreated(
-        self: *Inspector,
-        ctx: Context,
-        name: []const u8,
-        origin: []const u8,
-        aux_data: ?[]const u8,
-        is_default: bool,
-    ) void {
-        var auxData_ptr: [*c]const u8 = undefined;
-        var auxData_len: usize = undefined;
-        if (aux_data) |data| {
-            auxData_ptr = data.ptr;
-            auxData_len = data.len;
-        } else {
-            auxData_ptr = null;
-            auxData_len = 0;
-        }
-        c.v8_inspector__Inspector__ContextCreated(
-            self.handle,
-            name.ptr,
-            name.len,
-            origin.ptr,
-            origin.len,
-            auxData_ptr,
-            auxData_len,
-            contextGroupId,
-            ctx.handle,
-        );
-        if (is_default) self.ctx_handle = ctx.handle;
-    }
-};
-
-// InspectorClient
-
-pub const InspectorClient = struct {
-    handle: *c.InspectorClientImpl,
-
-    pub fn init() InspectorClient {
-        return .{ .handle = c.v8_inspector__Client__IMPL__CREATE() };
-    }
-
-    pub fn deinit(self: InspectorClient) void {
-        c.v8_inspector__Client__IMPL__DELETE(self.handle);
-    }
-
-    fn setInspector(self: InspectorClient, inspector: *Inspector) void {
-        c.v8_inspector__Client__IMPL__SET_DATA(self.handle, inspector);
-    }
-};
-
-pub export fn v8_inspector__Client__IMPL__generateUniqueId(
-    _: *c.InspectorClientImpl,
-    data: *anyopaque,
-) callconv(.c) i64 {
-    const inspector = Inspector.fromData(data);
-    return inspector.rnd.random().int(i64);
-}
-
-pub export fn v8_inspector__Client__IMPL__runMessageLoopOnPause(
-    _: *c.InspectorClientImpl,
-    data: *anyopaque,
-    contextGroupId: c_int,
-) callconv(.c) void {
-    const inspector = Inspector.fromData(data);
-    inspector.channel.onRunMessageLoopOnPause(inspector.channel.ctx, @intCast(contextGroupId));
-}
-
-pub export fn v8_inspector__Client__IMPL__quitMessageLoopOnPause(
-    _: *c.InspectorClientImpl,
-    data: *anyopaque,
-) callconv(.c) void {
-    const inspector = Inspector.fromData(data);
-    inspector.channel.onQuitMessageLoopOnPause(inspector.channel.ctx);
-}
-
-pub export fn v8_inspector__Client__IMPL__runIfWaitingForDebugger(
-    _: *c.InspectorClientImpl,
-    data: *anyopaque,
-    contextGroupId: c_int,
-) callconv(.c) void {
-    _ = contextGroupId;
-    const inspector = Inspector.fromData(data);
-    _ = inspector;
-    // TODO
-}
-
-// TODO: move params to C types
-pub export fn v8_inspector__Client__IMPL__consoleAPIMessage(
-    _: *c.InspectorClientImpl,
-    data: *anyopaque,
-    contextGroupId: c_int,
-    _: c.MessageErrorLevel,
-    _: *c.StringView,
-    _: *c.StringView,
-    _: c_uint,
-    _: c_uint,
-    _: *c.StackTrace,
-) callconv(.c) void {
-    _ = contextGroupId;
-    const inspector = Inspector.fromData(data);
-    _ = inspector;
-    // TODO
-}
-
-pub export fn v8_inspector__Client__IMPL__ensureDefaultContextInGroup(
-    _: *c.InspectorClientImpl,
-    data: *anyopaque,
-) callconv(.c) ?*const C_Context {
-    const inspector = Inspector.fromData(data);
-    return inspector.ctx_handle;
-}
-
-comptime {
-    _ = @import("inspector_subtypes.zig");
-}
-// InspectorChannel
-
-pub const InspectorChannel = struct {
-    handle: *c.InspectorChannelImpl,
-
-    // callbacks
-    ctx: *anyopaque,
-    onNotif: onNotifFn = undefined,
-    onResp: onRespFn = undefined,
-    onRunMessageLoopOnPause: onRunMessageLoopOnPauseFn = undefined,
-    onQuitMessageLoopOnPause: onQuitMessageLoopOnPauseFn = undefined,
-
-    pub const onNotifFn = *const fn (ctx: *anyopaque, msg: []const u8) void;
-    pub const onRespFn = *const fn (ctx: *anyopaque, call_id: u32, msg: []const u8) void;
-    pub const onRunMessageLoopOnPauseFn = *const fn (ctx: *anyopaque, context_group_id: u32) void;
-    pub const onQuitMessageLoopOnPauseFn = *const fn (ctx: *anyopaque) void;
-
-    pub fn init(
-        ctx: *anyopaque,
-        onResp: onRespFn,
-        onNotif: onNotifFn,
-        onRunMessageLoopOnPause: onRunMessageLoopOnPauseFn,
-        onQuitMessageLoopOnPause: onQuitMessageLoopOnPauseFn,
-        isolate: Isolate,
-    ) InspectorChannel {
-        const handle = c.v8_inspector__Channel__IMPL__CREATE(isolate.handle);
-        return .{
-            .handle = handle,
-            .ctx = ctx,
-            .onResp = onResp,
-            .onNotif = onNotif,
-            .onRunMessageLoopOnPause = onRunMessageLoopOnPause,
-            .onQuitMessageLoopOnPause = onQuitMessageLoopOnPause,
-        };
-    }
-
-    pub fn deinit(self: InspectorChannel) void {
-        c.v8_inspector__Channel__IMPL__DELETE(self.handle);
-    }
-
-    fn setInspector(self: InspectorChannel, inspector: *Inspector) void {
-        c.v8_inspector__Channel__IMPL__SET_DATA(self.handle, inspector);
-    }
-
-    fn resp(self: InspectorChannel, call_id: u32, msg: []const u8) void {
-        self.onResp(self.ctx, call_id, msg);
-    }
-
-    fn notif(self: InspectorChannel, msg: []const u8) void {
-        self.onNotif(self.ctx, msg);
-    }
-};
-
-pub export fn v8_inspector__Channel__IMPL__sendResponse(
-    _: *c.InspectorChannelImpl,
-    data: *anyopaque,
-    call_id: c_int,
-    msg: [*c]u8,
-    length: usize,
-) callconv(.c) void {
-    const inspector = Inspector.fromData(data);
-    inspector.channel.resp(@as(u32, @intCast(call_id)), msg[0..length]);
-}
-
-pub export fn v8_inspector__Channel__IMPL__sendNotification(
-    _: *c.InspectorChannelImpl,
-    data: *anyopaque,
-    msg: [*c]u8,
-    length: usize,
-) callconv(.c) void {
-    const inspector = Inspector.fromData(data);
-    inspector.channel.notif(msg[0..length]);
-}
-
-pub export fn v8_inspector__Channel__IMPL__flushProtocolNotifications(
-    _: *c.InspectorChannelImpl,
-    data: *anyopaque,
-) callconv(.c) void {
-    const inspector = Inspector.fromData(data);
-    _ = inspector;
-    // TODO
-}
-
-// InspectorSession
-
-pub const InspectorSession = struct {
-    handle: *c.InspectorSession,
-
-    pub fn deinit(self: InspectorSession) void {
-        c.v8_inspector__Session__DELETE(self.handle);
-    }
-
-    pub fn dispatchProtocolMessage(
-        self: InspectorSession,
-        isolate: Isolate,
-        msg: []const u8,
-    ) void {
-        c.v8_inspector__Session__dispatchProtocolMessage(
-            self.handle,
-            isolate.handle,
-            msg.ptr,
-            msg.len,
-        );
-    }
-
-    pub fn wrapObject(self: InspectorSession, isolate: Isolate, ctx: Context, val: Value, grpname: []const u8, generatepreview: bool) !RemoteObject {
-        const remote_object = c.v8_inspector__Session__wrapObject(
-            self.handle,
-            isolate.handle,
-            ctx.handle,
-            val.handle,
-            grpname.ptr,
-            grpname.len,
-            generatepreview,
-        ).?;
-        return RemoteObject{ .handle = remote_object };
-    }
-
-    pub fn unwrapObject(self: InspectorSession, allocator: std.mem.Allocator, object_id: []const u8) !UnwrappedObject {
-        const in_object_id = c.CZigString{
-            .ptr = object_id.ptr,
-            .len = object_id.len,
-        };
-        var out_error: c.CZigString = .{ .ptr = null, .len = 0 };
-        var out_value_handle: ?*c.Value = null;
-        var out_context_handle: ?*c.Context = null;
-        var out_object_group: c.CZigString = .{ .ptr = null, .len = 0 };
-
-        const result = c.v8_inspector__Session__unwrapObject(
-            self.handle,
-            &allocator,
-            &out_error,
-            in_object_id,
-            &out_value_handle,
-            &out_context_handle,
-            &out_object_group,
-        );
-        if (!result) {
-            if (cZigStringToString(out_error)) |err| {
-                if (std.mem.eql(u8, err, "Invalid remote object id")) return error.InvalidRemoteObjectId;
-                if (std.mem.eql(u8, err, "Cannot find context with specified id")) return error.CannotFindContextWithSpecifiedId;
-                if (std.mem.eql(u8, err, "Could not find object with given id")) return error.CouldNotFindObjectWithGivenId;
-                return error.NewUnwrapErrorPleaseReport;
-            }
-            return error.V8AllocFailed;
-        }
-        return .{
-            .value = Value{ .handle = out_value_handle.? },
-            .context = Context{ .handle = out_context_handle.? },
-            .object_group = cZigStringToString(out_object_group),
-        };
-    }
-};
-
-pub fn cZigStringToString(slice: c.CZigString) ?[]const u8 {
-    return if (slice.ptr == null) null else slice.ptr[0..slice.len];
-}
-
-pub const UnwrappedObject = struct {
-    value: Value,
-    context: Context,
-    object_group: ?[]const u8,
-};
-
-pub const CpuProfiler = struct {
-    handle: *c.CpuProfiler,
-
-    pub fn init(isolate: Isolate) CpuProfiler {
-        return .{
-            .handle = c.v8__CpuProfiler__Get(isolate.handle).?,
-        };
-    }
-
-    pub fn startProfiling(self: CpuProfiler, title: String) void {
-        c.v8__CpuProfiler__StartProfiling(self.handle, title.handle);
-    }
-
-    pub fn stopProfiling(self: CpuProfiler, title: String) ?CpuProfile {
-        if (c.v8__CpuProfiler__StopProfiling(self.handle, title.handle)) |handle| {
-            return .{ .handle = handle };
-        }
-        return null;
-    }
-
-    pub fn useDetailedSourcePositionsForProfiling(isolate: Isolate) void {
-        c.v8__CpuProfiler__UseDetailedSourcePositionsForProfiling(isolate.handle);
-    }
-};
-
-pub const CpuProfile = struct {
-    handle: *const c.CpuProfile,
-
-    pub fn deinit(self: CpuProfile) void {
-        c.v8__CpuProfile__Delete(self.handle);
-    }
-
-    pub fn getTopDownRoot(self: CpuProfile) ?CpuProfileNode {
-        if (c.v8__CpuProfile__GetTopDownRoot(self.handle)) |handle| {
-            return .{ .handle = handle };
-        }
-        return null;
-    }
-
-    /// Serializes the profile to JSON format and returns it as a String.
-    pub fn serialize(self: CpuProfile, isolate: Isolate) ?String {
-        if (c.v8__CpuProfile__Serialize(self.handle, isolate.handle)) |handle| {
-            return String{ .handle = handle };
-        }
-        return null;
-    }
-};
-
-/// Represents a node in the CPU profile tree.
-pub const CpuProfileNode = struct {
-    handle: *const c.CpuProfileNode,
-};
-
-/// Note: Some getters return owned memory (strings), while others return memory owned by V8 (objects).
-/// The getters short-circuit if the default values is not available as converting the defaults to V8 causes unnecessary overhead.
-///
-/// https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-RemoteObject
-pub const RemoteObject = struct {
-    handle: *c.RemoteObject,
-
-    pub fn deinit(self: RemoteObject) void {
-        c.v8_inspector__RemoteObject__DELETE(self.handle);
-    }
-
-    pub fn getType(self: RemoteObject, allocator: std.mem.Allocator) ![]const u8 {
-        var ctype_: c.CZigString = .{ .ptr = null, .len = 0 };
-        if (!c.v8_inspector__RemoteObject__getType(self.handle, &allocator, &ctype_)) return error.V8AllocFailed;
-        return cZigStringToString(ctype_) orelse return error.InvalidType;
-    }
-    pub fn getSubtype(self: RemoteObject, allocator: std.mem.Allocator) !?[]const u8 {
-        if (!c.v8_inspector__RemoteObject__hasSubtype(self.handle)) return null;
-
-        var csubtype: c.CZigString = .{ .ptr = null, .len = 0 };
-        if (!c.v8_inspector__RemoteObject__getSubtype(self.handle, &allocator, &csubtype)) return error.V8AllocFailed;
-        return cZigStringToString(csubtype);
-    }
-    pub fn getClassName(self: RemoteObject, allocator: std.mem.Allocator) !?[]const u8 {
-        if (!c.v8_inspector__RemoteObject__hasClassName(self.handle)) return null;
-
-        var cclass_name: c.CZigString = .{ .ptr = null, .len = 0 };
-        if (!c.v8_inspector__RemoteObject__getClassName(self.handle, &allocator, &cclass_name)) return error.V8AllocFailed;
-        return cZigStringToString(cclass_name);
-    }
-    pub fn getDescription(self: RemoteObject, allocator: std.mem.Allocator) !?[]const u8 {
-        if (!c.v8_inspector__RemoteObject__hasDescription(self.handle)) return null;
-
-        var description: c.CZigString = .{ .ptr = null, .len = 0 };
-        if (!c.v8_inspector__RemoteObject__getDescription(self.handle, &allocator, &description)) return error.V8AllocFailed;
-        return cZigStringToString(description);
-    }
-    pub fn getObjectId(self: RemoteObject, allocator: std.mem.Allocator) !?[]const u8 {
-        if (!c.v8_inspector__RemoteObject__hasObjectId(self.handle)) return null;
-
-        var cobject_id: c.CZigString = .{ .ptr = null, .len = 0 };
-        if (!c.v8_inspector__RemoteObject__getObjectId(self.handle, &allocator, &cobject_id)) return error.V8AllocFailed;
-        return cZigStringToString(cobject_id);
-    }
-};
-
-/// Enables C to allocate using the given Zig allocator
-pub export fn zigAlloc(self: *anyopaque, bytes: usize) callconv(.c) ?[*]u8 {
-    const allocator: *std.mem.Allocator = @ptrCast(@alignCast(self));
-    const allocated_bytes = allocator.alloc(u8, bytes) catch return null;
-    return allocated_bytes.ptr;
-}
-
-pub const StartupData = c.StartupData;
-
-pub const SnapshotCreator = struct {
-    handle: *c.SnapshotCreator = undefined,
-
-    pub fn init(self: *SnapshotCreator, params: *const c.CreateParams) void {
-        self.handle = c.v8__SnapshotCreator__CREATE(params).?;
-    }
-
-    pub fn getIsolate(self: *SnapshotCreator) Isolate {
-        return .{
-            .handle = c.v8__SnapshotCreator__getIsolate(self.handle).?,
-        };
-    }
-
-    pub fn setDefaultContext(self: *SnapshotCreator, context: Context) void {
-        c.v8__SnapshotCreator__setDefaultContext(self.handle, context.handle);
-    }
-
-    pub fn addData(self: *SnapshotCreator, data: *const c.Data) usize {
-        return c.v8__SnapshotCreator__AddData(self.handle, data);
-    }
-
-    pub fn addDataWithContext(self: *SnapshotCreator, ctx: Context, data: *const c.Data) usize {
-        return c.v8__SnapshotCreator__AddData2(self.handle, ctx.handle, data);
-    }
-
-    pub fn createBlob(self: *SnapshotCreator, function_code_handling: c_uint) StartupData {
-        return c.v8__SnapshotCreator__createBlob(self.handle, function_code_handling);
-    }
-
-    pub fn deinit(self: *SnapshotCreator) void {
-        c.v8__SnapshotCreator__DESTRUCT(self.handle);
-    }
-
-    pub fn startupDataIsValid(data: StartupData) bool {
-        return c.v8__StartupData__IsValid(data);
-    }
+pub const MicrotasksPolicy = enum(u32) {
+    Explicit = 0,
+    Scoped = 1,
+    Auto = 2,
 };

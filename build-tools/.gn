@@ -44,6 +44,9 @@ default_args = {
 
   v8_imminent_deprecation_warnings = false
 
+  # Enable direct handle
+  # v8_enable_direct_handle = true
+
   # This flag speeds up the performance of fork/execve on Linux systems for
   # embedders which use it (like Node.js). It works by marking the pages that
   # V8 allocates as MADV_DONTFORK. Without MADV_DONTFORK, the Linux kernel
@@ -76,7 +79,7 @@ default_args = {
   # V8 11.6 hardcoded an assumption in `mksnapshot` that shared RO heap
   # is enabled. In our case it's disabled so without this flag we can't
   # compile.
-  v8_enable_verify_heap = false
+  v8_enable_verify_heap = true
 
   # Enable V8 object print for debugging.
   # v8_enable_object_print = true

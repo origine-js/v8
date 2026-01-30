@@ -1,4 +1,4 @@
-// https://github.com/denoland/rusty_v8/blob/main/src/binding.cc
+// https://github.com/denoland/rusty_v8/blob/main/src/binding.cc#b35ce299eb4bda70924d6cb9bf1d8aa6e1f00ceb
 // Copyright 2019-2021 the Deno authors. All rights reserved. MIT license.
 
 #include <algorithm>
@@ -71,9 +71,6 @@ static_assert(
                          align_to<int64_t>(sizeof(size_t)) +
                          sizeof(v8::ScriptCompiler::CompilationDetails)),
     "Source size mismatch");
-
-static_assert(sizeof(v8::FunctionCallbackInfo<v8::Value>) == sizeof(size_t) * 3,
-              "FunctionCallbackInfo size mismatch");
 
 static_assert(sizeof(v8::ReturnValue<v8::Value>) == sizeof(size_t) * 1,
               "ReturnValue size mismatch");
@@ -433,10 +430,6 @@ size_t v8__ScriptCompiler__Source__SIZEOF() {
 
 size_t v8__PromiseRejectMessage__SIZEOF() {
   return sizeof(v8::PromiseRejectMessage);
-}
-
-size_t v8__FunctionCallbackInfo__SIZEOF() {
-  return sizeof(v8::FunctionCallbackInfo<v8::Value>);
 }
 
 size_t v8__PropertyCallbackInfo__SIZEOF() {
@@ -2096,14 +2089,14 @@ void v8__Context__SetAlignedPointerInEmbedderData(v8::Context& self, int index,
   ptr_to_local(&self)->SetAlignedPointerInEmbedderData(index, value);
 }
 
-const v8::Value* v8__Context__GetEmbedderData(const v8::Context& self,
+const v8::Data* v8__Context__GetEmbedderData(const v8::Context& self,
                                               int index) {
-  return local_to_ptr(ptr_to_local(&self)->GetEmbedderData(index));
+  return local_to_ptr(ptr_to_local(&self)->GetEmbedderDataV2(index));
 }
 
 void v8__Context__SetEmbedderData(v8::Context& self, int index,
-                                  const v8::Value* value) {
-  ptr_to_local(&self)->SetEmbedderData(index, ptr_to_local(value));
+                                  const v8::Data* value) {
+  ptr_to_local(&self)->SetEmbedderDataV2(index, ptr_to_local(value));
 }
 
 const v8::Data* v8__Context__GetDataFromSnapshotOnce(v8::Context& self,
@@ -2406,11 +2399,46 @@ const v8::ObjectTemplate* v8__FunctionTemplate__InstanceTemplate(
   return local_to_ptr(ptr_to_local(&self)->InstanceTemplate());
 }
 
-const extern int v8__FunctionCallbackInfo__kArgsLength = support::Robber<FunctionCallbackInfo_kArgsLength, 6>::captured_value;
+
+v8::Isolate* v8__FunctionCallbackInfo__GetIsolate(
+    const v8::FunctionCallbackInfo<v8::Value>& self) {
+  return self.GetIsolate();
+}
 
 const v8::Value* v8__FunctionCallbackInfo__Data(
     const v8::FunctionCallbackInfo<v8::Value>& self) {
   return local_to_ptr(self.Data());
+}
+
+const v8::Value* v8__FunctionCallbackInfo__NewTarget(
+    const v8::FunctionCallbackInfo<v8::Value>& self) {
+  return local_to_ptr(self.NewTarget());
+}
+
+const v8::Object* v8__FunctionCallbackInfo__This(
+    const v8::FunctionCallbackInfo<v8::Value>& self) {
+  return local_to_ptr(self.This());
+}
+
+const v8::Value* v8__FunctionCallbackInfo__Get(
+    const v8::FunctionCallbackInfo<v8::Value>& self, int index) {
+  return local_to_ptr(self[index]);
+}
+
+int v8__FunctionCallbackInfo__Length(
+    const v8::FunctionCallbackInfo<v8::Value>& self) {
+  return self.Length();
+}
+
+bool v8__FunctionCallbackInfo__IsConstructCall(
+    const v8::FunctionCallbackInfo<v8::Value>& self) {
+  return self.IsConstructCall();
+}
+
+uintptr_t* v8__FunctionCallbackInfo__GetReturnValue(
+    const v8::FunctionCallbackInfo<v8::Value>& self) {
+  v8::ReturnValue<v8::Value> rv = self.GetReturnValue();
+  return *reinterpret_cast<uintptr_t**>(&rv);
 }
 
 v8::Isolate* v8__PropertyCallbackInfo__GetIsolate(

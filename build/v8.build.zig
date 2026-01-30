@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const V8_VERSION: []const u8 = "14.3.127.17";
+const V8_VERSION: []const u8 = "14.5.201.4";
 
 const LazyPath = std.Build.LazyPath;
 
@@ -216,11 +216,13 @@ fn bootstrapV8(
             const copy_build_gn = b.addSystemCommand(&.{"cp"});
             copy_build_gn.addFileArg(b.path("build-tools/BUILD.gn"));
             copy_build_gn.addArg(b.fmt("{s}/zig/BUILD.gn", .{v8_dir}));
+            copy_build_gn.step.addWatchInput(b.path("build-tools/BUILD.gn")) catch unreachable;
             copy_build_gn.step.dependOn(&mkdir_zig.step);
 
             const copy_gn = b.addSystemCommand(&.{"cp"});
             copy_gn.addFileArg(b.path("build-tools/.gn"));
             copy_gn.addArg(b.fmt("{s}/zig/.gn", .{v8_dir}));
+            copy_gn.step.addWatchInput(b.path("build-tools/.gn")) catch unreachable;
             copy_gn.step.dependOn(&mkdir_zig.step);
 
             const update_marker = b.addSystemCommand(&.{ "touch", marker_file });
@@ -279,6 +281,7 @@ fn bootstrapV8(
     });
     gclient_sync.setCwd(.{ .cwd_relative = v8_dir });
     addDepotToolsToPath(gclient_sync, depot_tools_dir);
+    gclient_sync.step.dependOn(&copy_build_gn.step);
     gclient_sync.step.dependOn(&copy_gn.step);
 
     const clang_update = b.addSystemCommand(&.{

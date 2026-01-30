@@ -1,11 +1,16 @@
 const std = @import("std");
 const v8 = @import("v8.zig");
+const m = @import("./managed.zig");
 
 // Demo js repl.
 
 // comptime {
 //     _ = @import("./alloc.zig");
 // }
+
+fn double(x: i32) i32 {
+    return x + x;
+}
 
 pub fn main() !void {
     repl();
@@ -18,44 +23,20 @@ fn hello_fn(info: v8.FunctionCallbackInfo) callconv(.c) void {
     // var hscope: v8.HandleScope = undefined;
     // hscope.init(info.isolate());
     // defer hscope.deinit();
-    std.debug.print("arg length: {}\n", .{info.length});
+    const arg_length = info.length();
+    std.debug.print("arg length: {}\n", .{arg_length});
     const isolate = info.isolate();
     const ctx = isolate.getCurrentContext();
     var idx: c_int = 0;
     var arr: std.ArrayList(u8) = .empty;
     defer arr.deinit(std.heap.smp_allocator);
-    while (idx < info.length) : (idx += 1) {
+    while (idx < arg_length) : (idx += 1) {
         arr.clearRetainingCapacity();
         const s = appendValueAsUtf8(std.heap.smp_allocator, &arr, isolate, ctx, info.get_arg(idx));
         std.debug.print("arg {} = {s}\n", .{ idx, s });
     }
     var retval = info.retval();
     retval.setBool(true);
-}
-
-fn read_file_fn(info: v8.FunctionCallbackInfo) callconv(.c) void {
-    const l = info.length;
-    const isolate = info.isolate();
-    if (l != 1) {
-        _ = info.isolate().throwException(v8.String.initOneByteStatic(isolate, "bad args").name.primitive.value);
-        return;
-    }
-    const val = info.get_arg(0);
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(std.heap.smp_allocator);
-    const st = appendValueAsUtf8(std.heap.smp_allocator, &buf, isolate, isolate.getCurrentContext(), val);
-    var file = std.fs.cwd().openFile(st, .{}) catch {
-        _ = info.isolate().throwException(v8.String.initOneByteStatic(isolate, "open failed").name.primitive.value);
-        return;
-    };
-    var writer: std.Io.Writer.Allocating = .init(std.heap.smp_allocator);
-    defer writer.deinit();
-
-    var reader = file.reader(runtime.io(), buf.allocatedSlice());
-    _ = reader.interface.streamRemaining(&writer.writer) catch unreachable;
-    const result = v8.String.initUtf8(isolate, writer.toOwnedSlice() catch unreachable);
-    var rv = info.retval();
-    rv.set(result.name.primitive.value);
 }
 
 fn create_api(isolate: v8.Isolate) v8.ObjectTemplate {
@@ -67,10 +48,6 @@ fn create_api(isolate: v8.Isolate) v8.ObjectTemplate {
     // });
     var builder: v8.FunctionTemplate.Builder = .{};
     _ = impl.template.set(v8.String.initOneByte(isolate, "inspect").name, builder.build(isolate, &hello_fn, &.{}).template.data, .{
-        .DontDelete = true,
-        .ReadOnly = true,
-    });
-    _ = impl.template.set(v8.String.initOneByte(isolate, "read_file").name, builder.build(isolate, &read_file_fn, &.{}).template.data, .{
         .DontDelete = true,
         .ReadOnly = true,
     });
@@ -103,26 +80,23 @@ fn repl() void {
     v8.V8.initialize();
     defer _ = v8.V8.dispose();
 
-    var params: v8.Isolate.CreateParams = .init();
-    params.array_buffer_allocator = v8.ArrayBuffer.Allocator.initDefault();
-    defer v8.ArrayBuffer.Allocator.deinit(params.array_buffer_allocator);
-    var isolate = v8.Isolate.init(&params);
-    defer isolate.deinit();
+    var rt: m.Runtime = .init(alloc);
+    defer rt.deinit();
 
-    isolate.enter();
-    defer isolate.exit();
+    rt.isolate.enter();
+    defer rt.isolate.exit();
 
     var hscope: v8.HandleScope = undefined;
-    hscope.init(isolate);
+    hscope.init(rt.isolate);
     defer hscope.deinit();
 
-    var context: v8.Context = .init(isolate, null, null, null);
+    var context: v8.Context = rt.context();
     context.enter();
     defer context.exit();
 
-    setup_global(isolate, context);
+    setup_global(rt.isolate, context);
 
-    const origin = v8.String.initUtf8(isolate, "(shell)");
+    const origin = v8.String.initUtf8(rt.isolate, "(shell)");
 
     printFmt(
         \\JS Repl
@@ -143,14 +117,14 @@ fn repl() void {
 
             var res: ExecuteResult = undefined;
             defer res.deinit();
-            executeString(alloc, isolate, input, origin, &res);
+            executeString(alloc, &rt, input, origin, &res);
             if (res.success) {
                 printFmt("{s}", .{res.result.?});
             } else {
                 printFmt("{s}", .{res.err.?});
             }
 
-            while (platform.pumpMessageLoop(isolate, false)) {
+            while (platform.pumpMessageLoop(rt.isolate, false)) {
                 continue;
             }
         } else {
@@ -198,32 +172,42 @@ pub const ExecuteResult = struct {
     }
 };
 
-pub fn executeString(alloc: std.mem.Allocator, isolate: v8.Isolate, src: []const u8, src_origin: v8.String, result: *ExecuteResult) void {
+pub fn executeString(alloc: std.mem.Allocator, rt: *m.Runtime, src: []const u8, src_origin: v8.String, result: *ExecuteResult) void {
     var hscope: v8.HandleScope = undefined;
-    hscope.init(isolate);
+    hscope.init(rt.isolate);
     defer hscope.deinit();
 
     var tc_scope: v8.TryCatch = undefined;
-    tc_scope.init(isolate);
+    tc_scope.init(rt.isolate);
     defer tc_scope.deinit();
 
-    const origin = v8.ScriptOrigin.initDefault(src_origin.name.primitive.value);
+    const origin = rt.script_origin(
+        src_origin.name.primitive.value,
+        0,
+        0,
+        false,
+        -1,
+        null,
+        false,
+        false,
+        false,
+    );
 
-    const context = isolate.getCurrentContext();
+    const context = rt.isolate.getCurrentContext();
 
-    const js_src = v8.String.initUtf8(isolate, src);
+    const js_src = v8.String.initUtf8(rt.isolate, src);
 
-    const script = v8.Script.compile(context, js_src, origin) catch {
-        setResultError(alloc, isolate, tc_scope, result);
+    const script = v8.Script.compile(context, js_src, origin) orelse {
+        setResultError(alloc, rt.isolate, tc_scope, result);
         return;
     };
-    const script_res = script.run(context) catch {
-        setResultError(alloc, isolate, tc_scope, result);
+    const script_res = script.run(context) orelse {
+        setResultError(alloc, rt.isolate, tc_scope, result);
         return;
     };
     result.* = .{
         .alloc = alloc,
-        .result = valueToUtf8Alloc(alloc, isolate, context, script_res),
+        .result = valueToUtf8Alloc(alloc, rt.isolate, context, script_res),
         .err = null,
         .success = true,
     };
@@ -239,7 +223,7 @@ fn setResultError(alloc: std.mem.Allocator, isolate: v8.Isolate, try_catch: v8.T
 }
 
 pub fn valueToUtf8Alloc(alloc: std.mem.Allocator, isolate: v8.Isolate, ctx: v8.Context, val: v8.Value) []const u8 {
-    const str = val.toString(ctx) catch unreachable;
+    const str = val.toString(ctx) orelse unreachable;
     const len = str.lenUtf8(isolate);
     const buf = alloc.alloc(u8, len) catch unreachable;
     _ = str.writeUtf8(isolate, buf);
@@ -289,7 +273,7 @@ pub fn getTryCatchErrorString(alloc: std.mem.Allocator, isolate: v8.Isolate, tc_
 }
 
 pub fn appendValueAsUtf8(alloc: std.mem.Allocator, arr: *std.ArrayList(u8), isolate: v8.Isolate, ctx: v8.Context, val: v8.Value) []const u8 {
-    const str = val.toString(ctx) catch unreachable;
+    const str = val.toString(ctx) orelse unreachable;
     const len = str.lenUtf8(isolate);
     arr.ensureTotalCapacityPrecise(alloc, len) catch unreachable;
     const buf = arr.addManyAsSliceAssumeCapacity(len);

@@ -20,29 +20,16 @@ static_assert(sizeof(bool) == sizeof(uint8_t), "");
 static_assert(sizeof(std::unique_ptr<void>) == sizeof(void*), "");
 
 namespace support {
-    template<typename Tag, typename Tag::type Value>
-    struct Robber {
-        static inline typename Tag::type captured_value;
-        struct Shoplifter {
-            Shoplifter() { captured_value = Value; }
-            // This dummy call ensures the constructor runs at startup
-            void use() const {}
-        };
-        static inline Shoplifter shoplifter;
-    };
 
-    struct FunctionCallbackInfo_kArgsLength {
-        typedef int type;
+template <std::size_t Len, std::size_t Align>
+struct aligned_storage {
+    struct type {
+    alignas(Align) unsigned char data[Len];
     };
-
-    // Explicit instantiation: Access control is bypassed here
-    template struct Robber<
-        FunctionCallbackInfo_kArgsLength,
-        v8::FunctionCallbackInfo<v8::Value>::kArgsLength
-    >;
+};
 
 template <class T>
-using uninit_t = typename std::aligned_storage<sizeof(T), alignof(T)>::type;
+using uninit_t = typename aligned_storage<sizeof(T), alignof(T)>::type;
 
 template <class T, class... Args>
 class construct_in_place_helper {

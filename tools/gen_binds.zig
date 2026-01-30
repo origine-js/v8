@@ -6,13 +6,11 @@ extern fn v8__TryCatch__SIZEOF() usize;
 extern fn v8__ScriptOrigin__SIZEOF() usize;
 extern fn v8__ScriptCompiler__Source__SIZEOF() usize;
 extern fn v8__PromiseRejectMessage__SIZEOF() usize;
-extern fn v8__FunctionCallbackInfo__SIZEOF() usize;
 extern fn v8__PropertyCallbackInfo__SIZEOF() usize;
 extern fn v8__ReturnValue__SIZEOF() usize;
 extern fn v8__Location__SIZEOF() usize;
 extern fn v8__StartupData__SIZEOF() usize;
 extern fn v8__PropertyDescriptor__SIZEOF() usize;
-extern var v8__FunctionCallbackInfo__kArgsLength: c_int;
 
 pub fn main() !void {
     var buf: [4096]u8 = undefined;
@@ -27,17 +25,12 @@ pub fn main() !void {
     try stdout.interface.print("    pub const ScriptOrigin = {};\n", .{v8__ScriptOrigin__SIZEOF()});
     try stdout.interface.print("    pub const ScriptCompiler_Source = {};\n", .{v8__ScriptCompiler__Source__SIZEOF()});
     try stdout.interface.print("    pub const PromiseRejectMessage = {};\n", .{v8__PromiseRejectMessage__SIZEOF()});
-    try stdout.interface.print("    pub const FunctionCallbackInfo = {};\n", .{v8__FunctionCallbackInfo__SIZEOF()});
     try stdout.interface.print("    pub const PropertyCallbackInfo = {};\n", .{v8__PropertyCallbackInfo__SIZEOF()});
     try stdout.interface.print("    pub const ReturnValue = {};\n", .{v8__ReturnValue__SIZEOF()});
     try stdout.interface.print("    pub const Location = {};\n", .{v8__Location__SIZEOF()});
     try stdout.interface.print("    pub const StartupData = {};\n", .{v8__StartupData__SIZEOF()});
     try stdout.interface.print("    pub const PropertyDescriptor = {};\n", .{v8__PropertyDescriptor__SIZEOF()});
 
-    try stdout.interface.print("}};\n", .{});
-
-    try stdout.interface.print("pub const consts = struct {{\n", .{});
-    try stdout.interface.print("    pub const FunctionCallbackInfo_kArgsLength = {};\n", .{v8__FunctionCallbackInfo__kArgsLength});
     try stdout.interface.print("}};\n", .{});
 
     try stdout.interface.print("pub const opts = struct {{\n", .{});

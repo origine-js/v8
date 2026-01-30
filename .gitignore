@@ -1,3 +1,3 @@
-/.zig-cache/
-/.lp-cache/
-/zig-out/
+/.zig-cache
+/.lp-cache
+/zig-out

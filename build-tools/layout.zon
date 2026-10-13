@@ -1,0 +1,43 @@
+// Source of truth for the C++ layout facts the Zig side depends on.
+//
+// `zig build gen` measures these with V8's own clang (using the exact flags of
+// binding.cc) and regenerates:
+//   * src/binding.zig         - the constants Zig reads
+//   * binding/layout.gen.h    - static_asserts so a V8 upgrade breaks the C++
+//                               build loudly instead of corrupting memory
+.{
+    // Headers needed to name the types below.
+    .includes = .{
+        "v8.h",
+        "v8-fast-api-calls.h",
+    },
+
+    // sizeof(cpp) -> binding.sizes.<name>
+    .sizes = .{
+        .{ .name = "Isolate_CreateParams", .cpp = "v8::Isolate::CreateParams" },
+        .{ .name = "HandleScope", .cpp = "v8::HandleScope" },
+        .{ .name = "TryCatch", .cpp = "v8::TryCatch" },
+        .{ .name = "ScriptOrigin", .cpp = "v8::ScriptOrigin" },
+        .{ .name = "ScriptCompiler_Source", .cpp = "v8::ScriptCompiler::Source" },
+        .{ .name = "PromiseRejectMessage", .cpp = "v8::PromiseRejectMessage" },
+        .{ .name = "FunctionCallbackInfo", .cpp = "v8::FunctionCallbackInfo<v8::Value>" },
+        .{ .name = "PropertyCallbackInfo", .cpp = "v8::PropertyCallbackInfo<v8::Value>" },
+        .{ .name = "ReturnValue", .cpp = "v8::ReturnValue<v8::Value>" },
+        .{ .name = "Location", .cpp = "v8::Location" },
+        .{ .name = "StartupData", .cpp = "v8::StartupData" },
+        .{ .name = "PropertyDescriptor", .cpp = "v8::PropertyDescriptor" },
+    },
+
+    // Integral constant expressions -> binding.consts.<name>.
+    // Private members are fine: the shim target is built with -fno-access-control
+    // (build-tools/BUILD.gn), and the probe reuses those exact flags.
+    .consts = .{
+        .{ .name = "FunctionCallbackInfo_kArgsLength", .expr = "v8::FunctionCallbackInfo<v8::Value>::kArgsLength" },
+    },
+
+    // Build options that change the ABI, detected from the macro GN defines
+    // (never hard-code these: toggle them with `-Dv8_enable_direct_handle=true`).
+    .flags = .{
+        .{ .name = "is_direct_handle", .define = "V8_ENABLE_DIRECT_HANDLE" },
+    },
+}

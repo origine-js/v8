@@ -27,4 +27,14 @@ If V8 fails to compile against your newest macOS SDK (e.g. ICU: `use of undeclar
 
 Once complete, you can find v8 in: `zig-out/libv8_zig.a`
 
-`zig build gen` writes the generated struct sizes to `zig-out/binding.zig`; merge it into `src/binding.zig` by hand.
+## Generated bindings
+`zig build gen` asks V8's own clang (with the exact flags used for `binding.cc`) and regenerates, in place:
+
+| Output | Source of truth | Purpose |
+| --- | --- | --- |
+| `src/binding.zig` | `build-tools/layout.zon` | struct sizes / constants read by Zig |
+| `binding/layout.gen.h` | `build-tools/layout.zon` | `static_assert`s: a V8 upgrade breaks the C++ build until you re-run `gen` |
+| `src/externs.gen.zig` | `binding/binding.cc` + `build-tools/typemap.zon` | an ABI-exact `extern fn` for every `v8__*` shim |
+
+The outputs are committed. Run `gen` after changing `layout.zon`, `typemap.zon`, `binding.cc` or upgrading V8.
+Types the generator cannot map with certainty are listed at the end of `externs.gen.zig`; add an entry to `typemap.zon` to enable them.

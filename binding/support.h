@@ -115,14 +115,20 @@ inline static v8::Maybe<bool> maybe_bool_to_maybe(MaybeBool maybe) {
   }
 }
 
+// Handles cross the C ABI as plain pointers, and "no handle" is always nullptr.
+// That is not what an empty Local looks like with V8_ENABLE_DIRECT_HANDLE
+// (there it is the tagged value 1, kTaggedNullAddress), so the helpers below
+// translate empty <-> nullptr in both directions. With indirect handles an
+// empty Local already is nullptr and these checks change nothing.
 template <class T>
 inline static T* local_to_ptr(v8::Local<T> local) {
-  return *local;
+  return local.IsEmpty() ? nullptr : *local;
 }
 
 template <class T>
 inline static const v8::Local<T> ptr_to_local(const T* ptr) {
   static_assert(sizeof(v8::Local<T>) == sizeof(T*), "");
+  if (ptr == nullptr) return v8::Local<T>();
   auto local = *reinterpret_cast<const v8::Local<T>*>(&ptr);
   assert(*local == ptr);
   return local;
@@ -139,12 +145,13 @@ inline static v8::Local<T>* const_ptr_array_to_local_array(
 
 template <class T>
 inline static T* maybe_local_to_ptr(v8::MaybeLocal<T> local) {
-  return *local.FromMaybe(v8::Local<T>());
+  return local_to_ptr(local.FromMaybe(v8::Local<T>()));
 }
 
 template <class T>
 inline static const v8::MaybeLocal<T> ptr_to_maybe_local(const T* ptr) {
   static_assert(sizeof(v8::MaybeLocal<T>) == sizeof(T*), "");
+  if (ptr == nullptr) return v8::MaybeLocal<T>();
   return *reinterpret_cast<const v8::MaybeLocal<T>*>(&ptr);
 }
 

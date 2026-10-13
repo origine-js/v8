@@ -1,7 +1,8 @@
 const std = @import("std");
 const binding = @import("./binding.zig");
+const e = @import("./externs.gen.zig");
 
-const support = struct {
+pub const support = struct {
     pub fn Maybe(comptime T: type) type {
         return extern struct {
             has_value: bool,
@@ -45,9 +46,6 @@ const support = struct {
 pub const Platform = struct {
     pub const Opaque = opaque {};
 
-    extern fn v8__Platform__NewDefaultPlatform(thread_pool_size: c_int, idle_task_support: bool) ?*Opaque;
-    extern fn v8__Platform__DELETE(handle: *Opaque) void;
-    extern fn v8__Platform__PumpMessageLoop(platform: *Opaque, isolate: *Isolate.Opaque, wait_for_work: bool) bool;
 
     handle: *Opaque,
 
@@ -58,50 +56,45 @@ pub const Platform = struct {
     /// If 0, a suitable default based on the processors will be chosen.
     pub fn initDefault(thread_pool_size: u32, idle_task_support: bool) Self {
         return .{
-            .handle = v8__Platform__NewDefaultPlatform(@as(c_int, @intCast(thread_pool_size)), idle_task_support).?,
+            .handle = e.v8__Platform__NewDefaultPlatform(@as(c_int, @intCast(thread_pool_size)), idle_task_support).?,
         };
     }
 
     pub fn deinit(self: Self) void {
-        v8__Platform__DELETE(self.handle);
+        e.v8__Platform__DELETE(self.handle);
     }
 
     /// Pumps the message loop for the given isolate.
     pub fn pumpMessageLoop(self: Self, isolate: Isolate, wait_for_work: bool) bool {
-        return v8__Platform__PumpMessageLoop(self.handle, isolate.handle, wait_for_work);
+        return e.v8__Platform__PumpMessageLoop(self.handle, isolate.handle, wait_for_work);
     }
 };
 
 pub const V8 = struct {
-    extern fn v8__V8__Initialize() void;
-    extern fn v8__V8__InitializePlatform(platform: *Platform.Opaque) void;
-    extern fn v8__V8__InitializeICU() void;
-    extern fn v8__V8__Dispose() void;
-    extern fn v8__V8__DisposePlatform() void;
 
     /// Initializes V8. This function needs to be called before the first Isolate is created.
     pub fn initialize() void {
-        v8__V8__Initialize();
+        e.v8__V8__Initialize();
     }
 
     /// Sets the v8::Platform to use. This should be invoked before V8 is initialized.
     pub fn initializePlatform(platform: Platform) void {
-        v8__V8__InitializePlatform(platform.handle);
+        e.v8__V8__InitializePlatform(platform.handle);
     }
 
     /// Initializes the ICU bundled with v8.
-    pub fn initializeICU() void {
-        v8__V8__InitializeICU();
+    pub fn initializeICU() bool {
+        return e.v8__V8__InitializeICU();
     }
 
     /// Releases any resources used by v8 and stops any utility thread that may be running.
     pub fn dispose() void {
-        v8__V8__Dispose();
+        _ = e.v8__V8__Dispose();
     }
 
     /// Clears all references to the v8::Platform. This should be invoked after V8 was disposed.
     pub fn disposePlatform() void {
-        v8__V8__DisposePlatform();
+        e.v8__V8__DisposePlatform();
     }
 };
 
@@ -116,70 +109,61 @@ pub const ResourceConstraints = extern struct {
 };
 
 pub const FixedArray = extern struct {
-    extern fn v8__FixedArray__Length(self: FixedArray) c_int;
-    extern fn v8__FixedArray__Get(self: FixedArray, idx: c_int) ?Handle;
 
     data: Data,
 
     pub fn len(self: @This()) c_int {
-        return v8__FixedArray__Length(self);
+        return e.v8__FixedArray__Length(self);
     }
 
-    pub fn get(self: @This(), idx: c_int) Data {
-        return .from_opaque(v8__FixedArray__Get(self, idx));
+    pub fn get(self: @This(), idx: c_int) ?Data {
+        return .from_opaque(e.v8__FixedArray__Get(self, idx));
     }
 };
 
 pub const PrimitiveArray = extern struct {
-    extern fn v8__PrimitiveArray__New(isolate: *Isolate.Opaque, length: c_int) Handle;
-    extern fn v8__PrimitiveArray__Length(self: PrimitiveArray) c_int;
-    extern fn v8__PrimitiveArray__Set(self: PrimitiveArray, isolate: *Isolate.Opaque, index: c_int, primitive: Primitive) void;
-    extern fn v8__PrimitiveArray__Get(self: PrimitiveArray, isolate: *Isolate.Opaque, index: c_int) Handle;
 
     data: Data,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{
             .data = Data.from_opaque(o) orelse return null,
         };
     }
 
     pub fn init(isolate: Isolate, length: c_int) @This() {
-        return @This().from_opaque(v8__PrimitiveArray__New(isolate.handle, length)).?;
+        return @This().from_opaque(e.v8__PrimitiveArray__New(isolate.handle, length)).?;
     }
 
     pub fn set(self: @This(), isolate: Isolate, index: c_int, primitive: Primitive) void {
-        v8__PrimitiveArray__Set(self, isolate.handle, index, primitive);
+        e.v8__PrimitiveArray__Set(self, isolate.handle, index, primitive);
     }
 
     pub fn get(self: @This(), isolate: Isolate, index: c_int) Primitive {
-        return Primitive.from_opaque(v8__PrimitiveArray__Get(self, isolate.handle, index)).?;
+        return Primitive.from_opaque(e.v8__PrimitiveArray__Get(self, isolate.handle, index)).?;
     }
 };
 
 pub const Array = extern struct {
-    extern fn v8__Array__New(isolate: *Isolate.Opaque, length: c_int) Handle;
-    extern fn v8__Array__New_with_elements(isolate: *Isolate.Opaque, elements: [*]const Value, length: usize) ?Handle;
-    extern fn v8__Array__Length(self: Array) u32;
 
     object: Object,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{
             .object = Object.from_opaque(o) orelse return null,
         };
     }
 
     pub fn init(isolate: Isolate, length: c_int) @This() {
-        return @This().from_opaque(v8__Array__New(isolate.handle, length)).?;
+        return @This().from_opaque(e.v8__Array__New(isolate.handle, length)).?;
     }
 
     pub fn with_elements(isolate: Isolate, elements: []const Value) ?@This() {
-        return @This().from_opaque(v8__Array__New_with_elements(isolate.handle, elements.ptr, elements.len));
+        return @This().from_opaque(e.v8__Array__New_with_elements(isolate.handle, @ptrCast(elements.ptr), elements.len));
     }
 
     pub fn len(self: @This()) u32 {
-        return v8__Array__Length(self);
+        return e.v8__Array__Length(self);
     }
 };
 
@@ -196,30 +180,8 @@ pub const HostImportModuleWithPhaseDynamicallyCallback = *const fn (Context, hos
 pub const Isolate = extern struct {
     pub const Opaque = opaque {};
 
-    extern fn v8__Isolate__New(params: *const CreateParams) ?*Opaque;
-    extern fn v8__Isolate__Enter(handle: *Opaque) void;
-    extern fn v8__Isolate__Exit(handle: *Opaque) void;
-    extern fn v8__Isolate__Dispose(handle: *Opaque) void;
-    extern fn v8__Isolate__GetCurrent() *Opaque;
-    extern fn v8__Isolate__GetCurrentContext(handle: *Opaque) ?Handle;
-    extern fn v8__Isolate__ThrowException(handle: *Opaque, value: Value) ?Handle;
-    extern fn v8__Isolate__SetData(handle: *Opaque, slot: u32, data: ?*anyopaque) void;
-    extern fn v8__Isolate__GetData(handle: *Opaque, slot: u32) ?*anyopaque;
-    extern fn v8__Isolate__PerformMicrotaskCheckpoint(handle: *Opaque) void;
-    extern fn v8__Isolate__GetMicrotasksPolicy(handle: *Opaque) MicrotasksPolicy;
-    extern fn v8__Isolate__SetMicrotasksPolicy(handle: *Opaque, policy: MicrotasksPolicy) void;
-    extern fn v8__Isolate__LowMemoryNotification(handle: *Opaque) void;
-    extern fn v8__Isolate__TerminateExecution(handle: *Opaque) void;
-    extern fn v8__Isolate__IsExecutionTerminating(handle: *Opaque) bool;
-    extern fn v8__Isolate__CancelTerminateExecution(handle: *Opaque) void;
-    extern fn v8__Isolate__SetCaptureStackTraceForUncaughtExceptions(handle: *Opaque, capture: bool, frame_limit: c_int) void;
-    extern fn v8__Isolate__GetHeapStatistics(handle: *Opaque, statistics: *HeapStatistics) void;
-    extern fn v8__Isolate__SetHostInitializeImportMetaObjectCallback(handle: *Opaque, callback: HostInitializeImportMetaObjectCallback) void;
-    extern fn v8__Isolate__SetHostImportModuleDynamicallyCallback(handle: *Opaque, callback: HostImportModuleDynamicallyCallback) void;
-    extern fn v8__Isolate__SetHostImportModuleWithPhaseDynamicallyCallback(handle: *Opaque, callback: HostImportModuleWithPhaseDynamicallyCallback) void;
 
     pub const CreateParams = extern struct {
-        pub extern fn v8__Isolate__CreateParams__CONSTRUCT(ptr: *@This()) void;
 
         code_event_handler: ?*const anyopaque = null,
         constraints: ResourceConstraints = std.mem.zeroes(ResourceConstraints),
@@ -231,8 +193,6 @@ pub const Isolate = extern struct {
         array_buffer_allocator_shared: [2]?*anyopaque = .{ null, null },
         external_references: ?*const isize = null,
         allow_atomics_wait: bool = true,
-        embedder_wrapper_type_index: c_int = -1,
-        embedder_wrapper_object_index: c_int = -1,
         _fatal_error_handler: ?*const anyopaque = null,
         _oom_error_handler: ?*const anyopaque = null,
         cpp_heap: ?*const anyopaque = null,
@@ -244,7 +204,7 @@ pub const Isolate = extern struct {
                 }
             }
             var params: CreateParams = undefined;
-            v8__Isolate__CreateParams__CONSTRUCT(&params);
+            e.v8__Isolate__CreateParams__CONSTRUCT(&params);
             return params;
         }
     };
@@ -255,113 +215,111 @@ pub const Isolate = extern struct {
 
     pub fn init(params: *const CreateParams) Self {
         return .{
-            .handle = v8__Isolate__New(params).?,
+            .handle = e.v8__Isolate__New(params).?,
         };
     }
 
     pub fn deinit(self: Self) void {
-        v8__Isolate__Dispose(self.handle);
+        e.v8__Isolate__Dispose(self.handle);
     }
 
     pub fn enter(self: Self) void {
-        v8__Isolate__Enter(self.handle);
+        e.v8__Isolate__Enter(self.handle);
     }
 
     pub fn exit(self: Self) void {
-        v8__Isolate__Exit(self.handle);
+        e.v8__Isolate__Exit(self.handle);
     }
 
     pub fn getCurrent() Self {
         return .{
-            .handle = v8__Isolate__GetCurrent(),
+            .handle = e.v8__Isolate__GetCurrent().?,
         };
     }
 
     pub fn getCurrentContext(self: Self) Context {
         return .{
-            .data = Data.from_opaque(v8__Isolate__GetCurrentContext(self.handle)).?,
+            .data = Data.from_opaque(e.v8__Isolate__GetCurrentContext(self.handle)).?,
         };
     }
 
-    pub fn throwException(self: Self, value: Value) Value {
-        return .from_opaque(v8__Isolate__ThrowException(self.handle, value));
+    pub fn throwException(self: Self, value: Value) ?Value {
+        return .from_opaque(e.v8__Isolate__ThrowException(self.handle, value));
     }
 
     pub fn setData(self: Self, slot: u32, data: ?*anyopaque) void {
-        v8__Isolate__SetData(self.handle, slot, data);
+        e.v8__Isolate__SetData(self.handle, slot, data);
     }
 
     pub fn getData(self: Self, slot: u32) ?*anyopaque {
-        return v8__Isolate__GetData(self.handle, slot);
+        return e.v8__Isolate__GetData(self.handle, slot);
     }
 
     pub fn performMicrotasksCheckpoint(self: Self) void {
-        v8__Isolate__PerformMicrotaskCheckpoint(self.handle);
+        e.v8__Isolate__PerformMicrotaskCheckpoint(self.handle);
     }
 
     pub fn getMicrotasksPolicy(self: Self) MicrotasksPolicy {
-        return v8__Isolate__GetMicrotasksPolicy(self.handle);
+        return e.v8__Isolate__GetMicrotasksPolicy(self.handle);
     }
 
     pub fn setMicrotasksPolicy(self: Self, policy: MicrotasksPolicy) void {
-        v8__Isolate__SetMicrotasksPolicy(self.handle, policy);
+        e.v8__Isolate__SetMicrotasksPolicy(self.handle, policy);
     }
 
     pub fn lowMemoryNotification(self: Self) void {
-        v8__Isolate__LowMemoryNotification(self.handle);
+        e.v8__Isolate__LowMemoryNotification(self.handle);
     }
 
     pub fn terminateExecution(self: Self) void {
-        v8__Isolate__TerminateExecution(self.handle);
+        e.v8__Isolate__TerminateExecution(self.handle);
     }
 
     pub fn isExecutionTerminating(self: Self) bool {
-        return v8__Isolate__IsExecutionTerminating(self.handle);
+        return e.v8__Isolate__IsExecutionTerminating(self.handle);
     }
 
     pub fn cancelTerminateExecution(self: Self) void {
-        v8__Isolate__CancelTerminateExecution(self.handle);
+        e.v8__Isolate__CancelTerminateExecution(self.handle);
     }
 
     pub fn getHeapStatistics(self: Self) HeapStatistics {
         var res: HeapStatistics = undefined;
-        v8__Isolate__GetHeapStatistics(self.handle, &res);
+        e.v8__Isolate__GetHeapStatistics(self.handle, &res);
         return res;
     }
 
     pub fn setCaptureStackTraceForUncaughtExceptions(self: Self, capture: bool, frame_limit: c_int) void {
-        v8__Isolate__SetCaptureStackTraceForUncaughtExceptions(self.handle, capture, frame_limit);
+        e.v8__Isolate__SetCaptureStackTraceForUncaughtExceptions(self.handle, capture, frame_limit);
     }
 
     pub fn setHostInitializeImportMetaObjectCallback(self: Self, callback: HostInitializeImportMetaObjectCallback) void {
-        v8__Isolate__SetHostInitializeImportMetaObjectCallback(self.handle, callback);
+        e.v8__Isolate__SetHostInitializeImportMetaObjectCallback(self.handle, callback);
     }
 
     pub fn setHostImportModuleDynamicallyCallback(self: Self, callback: HostImportModuleDynamicallyCallback) void {
-        v8__Isolate__SetHostImportModuleDynamicallyCallback(self.handle, callback);
+        e.v8__Isolate__SetHostImportModuleDynamicallyCallback(self.handle, callback);
     }
 
     pub fn setHostImportModuleWithPhaseDynamicallyCallback(self: Self, callback: HostImportModuleWithPhaseDynamicallyCallback) void {
-        v8__Isolate__SetHostImportModuleWithPhaseDynamicallyCallback(self.handle, callback);
+        e.v8__Isolate__SetHostImportModuleWithPhaseDynamicallyCallback(self.handle, callback);
     }
 };
 
 pub const HandleScope = struct {
     pub const Opaque = [binding.sizes.HandleScope]u8;
 
-    extern fn v8__HandleScope__CONSTRUCT(ptr: *Opaque, isolate: *Isolate.Opaque) void;
-    extern fn v8__HandleScope__DESTRUCT(ptr: *Opaque) void;
 
     inner: Opaque,
 
     const Self = @This();
 
     pub fn init(self: *Self, isolate: Isolate) void {
-        v8__HandleScope__CONSTRUCT(&self.inner, isolate.handle);
+        e.v8__HandleScope__CONSTRUCT(&self.inner, isolate.handle);
     }
 
     pub fn deinit(self: *Self) void {
-        v8__HandleScope__DESTRUCT(&self.inner);
+        e.v8__HandleScope__DESTRUCT(&self.inner);
     }
 };
 
@@ -379,7 +337,7 @@ pub const CTypeInfo = extern struct {
         Pointer = 10,
         V8Value = 11,
     },
-    flags: packed struct {
+    flags: packed struct(u32) {
         AllowSharedBit: bool,
         EnforceRangeBit: bool,
         ClampBit: bool,
@@ -412,89 +370,74 @@ pub const CFunction = extern struct {
 };
 
 pub const ReturnValue = extern struct {
-    extern fn v8__ReturnValue__Value__Set(self: *ReturnValue, value: Value) void;
-    extern fn v8__ReturnValue__Value__Set__Bool(self: *ReturnValue, i: bool) void;
-    extern fn v8__ReturnValue__Value__Set__Int32(self: *ReturnValue, i: i32) void;
-    extern fn v8__ReturnValue__Value__Set__Uint32(self: *ReturnValue, i: u32) void;
-    extern fn v8__ReturnValue__Value__Set__Double(self: *ReturnValue, i: f64) void;
-    extern fn v8__ReturnValue__Value__SetNull(self: *ReturnValue) void;
-    extern fn v8__ReturnValue__Value__SetUndefined(self: *ReturnValue) void;
-    extern fn v8__ReturnValue__Value__SetEmptyString(self: *ReturnValue) void;
-    extern fn v8__ReturnValue__Value__Get(self: *const ReturnValue) ?Handle;
 
     addr: usize,
 
     pub fn set(self: *@This(), value: Value) void {
-        v8__ReturnValue__Value__Set(self, value);
+        e.v8__ReturnValue__Value__Set(self, value);
     }
 
     pub fn setBool(self: *@This(), i: bool) void {
-        v8__ReturnValue__Value__Set__Bool(self, i);
+        e.v8__ReturnValue__Value__Set__Bool(self, i);
     }
 
     pub fn setInt32(self: *@This(), i: i32) void {
-        v8__ReturnValue__Value__Set__Int32(self, i);
+        e.v8__ReturnValue__Value__Set__Int32(self, i);
     }
 
     pub fn setUint32(self: *@This(), i: u32) void {
-        v8__ReturnValue__Value__Set__Uint32(self, i);
+        e.v8__ReturnValue__Value__Set__Uint32(self, i);
     }
 
     pub fn setDouble(self: *@This(), i: f64) void {
-        v8__ReturnValue__Value__Set__Double(self, i);
+        e.v8__ReturnValue__Value__Set__Double(self, i);
     }
 
     pub fn setNull(self: *@This()) void {
-        v8__ReturnValue__Value__SetNull(self);
+        e.v8__ReturnValue__Value__SetNull(self);
     }
 
     pub fn setUndefined(self: *@This()) void {
-        v8__ReturnValue__Value__SetUndefined(self);
+        e.v8__ReturnValue__Value__SetUndefined(self);
     }
 
     pub fn setEmptyString(self: *@This()) void {
-        v8__ReturnValue__Value__SetEmptyString(self);
+        e.v8__ReturnValue__Value__SetEmptyString(self);
     }
 
     pub fn get(self: *const @This()) ?Value {
-        return Value.from_opaque(v8__ReturnValue__Value__Get(self));
+        return Value.from_opaque(e.v8__ReturnValue__Value__Get(self));
     }
 };
 
 pub const PropertyCallbackInfo = extern struct {
     pub const Opaque = [binding.sizes.PropertyCallbackInfo]u8;
 
-    extern fn v8__PropertyCallbackInfo__GetIsolate(self: *const PropertyCallbackInfo) *Isolate.Opaque;
-    extern fn v8__PropertyCallbackInfo__Data(self: *const PropertyCallbackInfo) ?Handle;
-    extern fn v8__PropertyCallbackInfo__This(self: *const PropertyCallbackInfo) ?Handle;
-    extern fn v8__PropertyCallbackInfo__Holder(self: *const PropertyCallbackInfo) ?Handle;
-    extern fn v8__PropertyCallbackInfo__GetReturnValue(self: *const PropertyCallbackInfo) Handle;
-    extern fn v8__PropertyCallbackInfo__ShouldThrowOnError(self: *const PropertyCallbackInfo) bool;
 
     inner: Opaque,
 
     pub fn isolate(self: *const @This()) Isolate {
-        return .{ .handle = v8__PropertyCallbackInfo__GetIsolate(self) };
+        return .{ .handle = e.v8__PropertyCallbackInfo__GetIsolate(self).? };
     }
 
     pub fn data(self: *const @This()) ?Data {
-        return Data.from_opaque(v8__PropertyCallbackInfo__Data(self));
+        return Data.from_opaque(e.v8__PropertyCallbackInfo__Data(self));
     }
 
     pub fn this(self: *const @This()) Object {
-        return Object.from_opaque(v8__PropertyCallbackInfo__This(self));
+        return Object.from_opaque(e.v8__PropertyCallbackInfo__This(self)).?;
     }
 
     pub fn holder(self: *const @This()) Object {
-        return Object.from_opaque(v8__PropertyCallbackInfo__Holder(self));
+        return Object.from_opaque(e.v8__PropertyCallbackInfo__Holder(self)).?;
     }
 
     pub fn retval(self: *const @This()) ReturnValue {
-        return .{ .addr = v8__PropertyCallbackInfo__GetReturnValue(self) };
+        return .{ .addr = @intFromPtr(e.v8__PropertyCallbackInfo__GetReturnValue(self)) };
     }
 
     pub fn shouldThrowOnError(self: *const @This()) bool {
-        return v8__PropertyCallbackInfo__ShouldThrowOnError(self);
+        return e.v8__PropertyCallbackInfo__ShouldThrowOnError(self);
     }
 
     comptime {
@@ -506,40 +449,35 @@ pub const AccessorNameGetterCallback = *const fn (Name, *const PropertyCallbackI
 pub const AccessorNameSetterCallback = *const fn (Name, Value, *const PropertyCallbackInfo) callconv(.c) void;
 
 // https://github.com/denoland/rusty_v8/blob/4d9f92762600fd3475a5632005ecf3721514b8d4/src/property_attribute.rs#L5
-pub const PropertyDescriptor = struct {
+pub const PropertyDescriptor = extern struct {
     pub const Opaque = [binding.sizes.PropertyDescriptor]u8;
     inner: Opaque,
 
-    extern fn v8__PropertyDescriptor__CONSTRUCT(ptr: *Opaque) void;
-    extern fn v8__PropertyDescriptor__CONSTRUCT__Value(ptr: *Opaque, value: Value) void;
-    extern fn v8__PropertyDescriptor__CONSTRUCT__Value_Writable(ptr: *Opaque, value: Value, writable: bool) void;
-    extern fn v8__PropertyDescriptor__CONSTRUCT__Get_Set(ptr: *Opaque, get: Value, set: Value) void;
-    extern fn v8__PropertyDescriptor__DESTRUCT(ptr: *Opaque) void;
 
     pub fn init() PropertyDescriptor {
         var self: PropertyDescriptor = undefined;
-        v8__PropertyDescriptor__CONSTRUCT(&self.inner);
+        e.v8__PropertyDescriptor__CONSTRUCT(&self.inner);
         return self;
     }
 
     pub fn initValue(value: Value, writable: ?bool) PropertyDescriptor {
         var self: PropertyDescriptor = undefined;
         if (writable) |w| {
-            v8__PropertyDescriptor__CONSTRUCT__Value_Writable(&self.inner, value, w);
+            e.v8__PropertyDescriptor__CONSTRUCT__Value_Writable(&self.inner, value, w);
         } else {
-            v8__PropertyDescriptor__CONSTRUCT__Value(&self.inner, value);
+            e.v8__PropertyDescriptor__CONSTRUCT__Value(&self.inner, value);
         }
         return self;
     }
 
     pub fn initGetSet(get: Value, set: Value) PropertyDescriptor {
         var self: PropertyDescriptor = undefined;
-        v8__PropertyDescriptor__CONSTRUCT__Get_Set(&self.inner, get, set);
+        e.v8__PropertyDescriptor__CONSTRUCT__Get_Set(&self.inner, get, set);
         return self;
     }
 
     pub fn deinit(self: *PropertyDescriptor) void {
-        v8__PropertyDescriptor__DESTRUCT(&self.inner);
+        e.v8__PropertyDescriptor__DESTRUCT(&self.inner);
     }
 };
 
@@ -551,51 +489,42 @@ pub const PropertyAttribute = packed struct(u32) {
 };
 
 pub const Template = extern struct {
-    extern fn v8__Template__Set(self: Template, key: Name, value: Data, attr: PropertyAttribute) void;
 
     data: Data,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{ .data = Data.from_opaque(o) orelse return null };
     }
 
     pub fn set(self: @This(), key: Name, value: Data, attr: PropertyAttribute) void {
-        v8__Template__Set(self, key, value, attr);
+        e.v8__Template__Set(self, key, value, attr);
     }
 };
 
 pub const FunctionCallbackInfo = extern struct {
     pub const Opaque = opaque {};
 
-    extern fn v8__FunctionCallbackInfo__Data(self: FunctionCallbackInfo) ?Handle;
-    extern fn v8__FunctionCallbackInfo__GetIsolate(self: FunctionCallbackInfo) *Isolate.Opaque;
-    extern fn v8__FunctionCallbackInfo__NewTarget(self: FunctionCallbackInfo) Handle;
-    extern fn v8__FunctionCallbackInfo__This(self: FunctionCallbackInfo) Handle;
-    extern fn v8__FunctionCallbackInfo__IsConstructCall(self: FunctionCallbackInfo) bool;
-    extern fn v8__FunctionCallbackInfo__Length(self: FunctionCallbackInfo) c_int;
-    extern fn v8__FunctionCallbackInfo__Get(self: FunctionCallbackInfo, index: c_int) Handle;
-    extern fn v8__FunctionCallbackInfo__GetReturnValue(self: FunctionCallbackInfo) usize;
 
     inner: *Opaque,
 
     pub fn data(self: @This()) ?Data {
-        return Data.from_opaque(v8__FunctionCallbackInfo__Data(self));
+        return Data.from_opaque(e.v8__FunctionCallbackInfo__Data(self));
     }
 
     pub fn length(self: @This()) c_int {
-        return v8__FunctionCallbackInfo__Length(self);
+        return e.v8__FunctionCallbackInfo__Length(self);
     }
 
     pub fn get_arg(self: @This(), index: c_int) Value {
-        return Value.from_opaque(v8__FunctionCallbackInfo__Get(self, index)).?;
+        return Value.from_opaque(e.v8__FunctionCallbackInfo__Get(self, index)).?;
     }
 
     pub fn isolate(self: @This()) Isolate {
-        return .{ .handle = v8__FunctionCallbackInfo__GetIsolate(self) };
+        return .{ .handle = e.v8__FunctionCallbackInfo__GetIsolate(self).? };
     }
 
     pub fn retval(self: @This()) ReturnValue {
-        return .{ .addr = v8__FunctionCallbackInfo__GetReturnValue(self) };
+        return .{ .addr = @intFromPtr(e.v8__FunctionCallbackInfo__GetReturnValue(self)) };
     }
 };
 
@@ -616,25 +545,10 @@ pub const SideEffectType = enum(c_int) {
 };
 
 pub const Function = extern struct {
-    extern fn v8__Function__Call(self: Function, context: Context, recv: Value, argc: c_int, argv: [*]Value) ?Handle;
-    extern fn v8__Function__New(
-        context: Context,
-        callback: FunctionCallback,
-        maybe_data: ?Handle,
-        length: c_int,
-        constructor_behavior: ConstructorBehavior,
-        side_effect_type: SideEffectType,
-    ) ?Handle;
-    extern fn v8__Function__GetName(self: Function) ?Handle;
-    extern fn v8__Function__SetName(self: Function, name: String) void;
-    extern fn v8__Function__GetScriptColumnNumber(self: Function) c_int;
-    extern fn v8__Function__GetScriptLineNumber(self: Function) c_int;
-    extern fn v8__Function__ScriptId(self: Function) c_int;
-    extern fn v8__Function__GetScriptOrigin(self: Function) Handle;
 
     object: Object,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{
             .object = Object.from_opaque(o) orelse return null,
         };
@@ -648,54 +562,39 @@ pub const Function = extern struct {
         constructor_behavior: ConstructorBehavior,
         side_effect_type: SideEffectType,
     ) Function {
-        return .from_opaque(v8__Function__New(
+        return Function.from_opaque(e.v8__Function__New(
             context,
             callback,
             if (maybe_data) |v| v.handle else null,
             length,
             constructor_behavior,
             side_effect_type,
-        ));
+        )).?;
     }
 
     pub fn getName(self: @This()) Value {
-        return .from_opaque(v8__Function__GetName(self));
+        return Value.from_opaque(e.v8__Function__GetName(self)).?;
     }
 
     pub fn setName(self: @This(), name: String) void {
-        v8__Function__SetName(self, name);
+        e.v8__Function__SetName(self, name);
     }
 
     pub fn getScriptColumnNumber(self: @This()) c_int {
-        return v8__Function__GetScriptColumnNumber(self);
+        return e.v8__Function__GetScriptColumnNumber(self);
     }
     pub fn getScriptLineNumber(self: @This()) c_int {
-        return v8__Function__GetScriptLineNumber(self);
+        return e.v8__Function__GetScriptLineNumber(self);
     }
     fn scriptId(self: Function) c_int {
-        return v8__Function__ScriptId(self);
+        return e.v8__Function__ScriptId(self);
     }
     fn getScriptOrigin(self: Function) ScriptOrigin {
-        return .from_opaque(v8__Function__GetScriptOrigin(self));
+        return .from_opaque(e.v8__Function__GetScriptOrigin(self));
     }
 };
 
 pub const FunctionTemplate = extern struct {
-    extern fn v8__FunctionTemplate__New(
-        isolate: ?*Isolate.Opaque,
-        callback: FunctionCallback,
-        maybe_data: ?Handle,
-        maybe_signature: ?*Signature.Opaque,
-        length: c_int,
-        constructor_behavior: ConstructorBehavior,
-        side_effect_type: SideEffectType,
-        c_functions: [*]CFunction,
-        c_functions_len: usize,
-    ) ?Handle;
-    extern fn v8__FunctionTemplate__GetFunction(
-        self: FunctionTemplate,
-        context: Context,
-    ) ?Handle;
 
     pub const Builder = struct {
         data_: ?Data = null,
@@ -736,7 +635,7 @@ pub const FunctionTemplate = extern struct {
 
     template: Template,
 
-    pub fn from_opaque(o: ?Handle) @This() {
+    pub fn from_opaque(o: MaybeHandle) @This() {
         return .{
             .template = Template.from_opaque(o).?,
         };
@@ -752,7 +651,7 @@ pub const FunctionTemplate = extern struct {
         side_effect_type: SideEffectType,
         c_functions: []CFunction,
     ) @This() {
-        return .from_opaque(v8__FunctionTemplate__New(
+        return .from_opaque(e.v8__FunctionTemplate__New(
             isolate.handle,
             callback,
             if (maybe_data) |v| v.handle else null,
@@ -760,30 +659,28 @@ pub const FunctionTemplate = extern struct {
             length,
             constructor_behavior,
             side_effect_type,
-            c_functions.ptr,
+            @ptrCast(c_functions.ptr),
             c_functions.len,
         ));
     }
 
     pub fn getFunction(self: @This(), context: Context) ?Function {
-        return .from_opaque(v8__FunctionTemplate__GetFunction(self, context));
+        return .from_opaque(e.v8__FunctionTemplate__GetFunction(self, context));
     }
 };
 
 pub const ObjectTemplate = extern struct {
-    extern fn v8__ObjectTemplate__New__DEFAULT(isolate: *Isolate.Opaque) ?Handle;
-    extern fn v8__ObjectTemplate__NewInstance(self: ObjectTemplate, context: Context) ?Handle;
 
     template: Template,
 
     pub fn initDefault(isolate: Isolate) ?@This() {
         return .{
-            .template = Template.from_opaque(v8__ObjectTemplate__New__DEFAULT(isolate.handle)) orelse return null,
+            .template = Template.from_opaque(e.v8__ObjectTemplate__New__DEFAULT(isolate.handle)) orelse return null,
         };
     }
 
     pub fn initInstance(self: @This(), context: Context) ?Object {
-        return .from_opaque(v8__ObjectTemplate__NewInstance(self, context));
+        return .from_opaque(e.v8__ObjectTemplate__NewInstance(self, context));
     }
 };
 
@@ -794,26 +691,20 @@ pub const MicrotaskQueue = struct {
 };
 
 pub const Context = extern struct {
-    extern fn v8__Context__New(isolate: *Isolate.Opaque, global_tmpl: ObjectTemplate, global_obj: ?Handle, microtask_queue: ?*MicrotaskQueue.Opaque) ?Handle;
-    extern fn v8__Context__Enter(handle: Context) void;
-    extern fn v8__Context__Exit(handle: Context) void;
-    extern fn v8__Context__Global(handle: Context) ?Handle;
-    extern fn v8__Context__GetEmbedderData(handle: Context, index: c_int) ?Handle;
-    extern fn v8__Context__SetEmbedderData(handle: Context, index: c_int, data: Data) void;
 
     data: Data,
 
     const Self = @This();
 
-    pub fn from_opaque(o: ?Handle) ?Self {
+    pub fn from_opaque(o: MaybeHandle) ?Self {
         return .{ .data = Data.from_opaque(o) orelse return null };
     }
 
     pub fn init(isolate: Isolate, global_tmpl: ?ObjectTemplate, global_obj: ?Value, microtask_queue: ?MicrotaskQueue) Self {
         return .{
-            .data = Data.from_opaque(v8__Context__New(
+            .data = Data.from_opaque(e.v8__Context__New(
                 isolate.handle,
-                global_tmpl orelse ObjectTemplate.initDefault(isolate).?,
+                (global_tmpl orelse ObjectTemplate.initDefault(isolate).?).template.data.handle,
                 if (global_obj) |v| v.data.handle else null,
                 if (microtask_queue) |v| v.handle else null,
             )).?,
@@ -821,25 +712,25 @@ pub const Context = extern struct {
     }
 
     pub fn enter(self: Self) void {
-        v8__Context__Enter(self);
+        e.v8__Context__Enter(self);
     }
 
     pub fn exit(self: Self) void {
-        v8__Context__Exit(self);
+        e.v8__Context__Exit(self);
     }
 
     pub fn getGlobal(self: Self) Object {
         return .{
-            .value = Value.from_opaque(v8__Context__Global(self)).?,
+            .value = Value.from_opaque(e.v8__Context__Global(self)).?,
         };
     }
 
     pub fn getEmbedderData(self: Self, index: c_int) Data {
-        return Data.from_opaque(v8__Context__GetEmbedderData(self, index)).?;
+        return Data.from_opaque(e.v8__Context__GetEmbedderData(self, index)).?;
     }
 
     pub fn setEmbedderData(self: Self, index: u32, value: Data) void {
-        v8__Context__SetEmbedderData(self, @as(c_int, @intCast(index)), value);
+        e.v8__Context__SetEmbedderData(self, @as(c_int, @intCast(index)), value.handle);
     }
 };
 
@@ -847,20 +738,46 @@ pub const Address = ?*opaque {};
 
 pub const Handle = if (binding.opts.is_direct_handle) Address else *Address;
 
+/// A handle that may be empty. The C ABI uses nullptr for "no handle" in both
+/// configurations (see local_to_ptr in binding/support.h). With indirect handles
+/// that is an optional pointer; with direct handles `Address` is already nullable,
+/// and `?Address` would be an optional of an optional - not a pointer at all.
+pub const MaybeHandle = if (binding.opts.is_direct_handle) Handle else ?Handle;
+
+/// How V8 itself spells an empty `Local`/`MaybeLocal`: nullptr normally, but the
+/// tagged value 1 (kTaggedNullAddress) with direct handles. Handles returned by the
+/// shims are already normalized to null (see binding/support.h); only values that V8
+/// hands to a Zig callback, or that a Zig callback returns to V8, use this encoding.
+pub const raw_empty_local: usize = if (binding.opts.is_direct_handle) 1 else 0;
+
+/// Encodes a handle for a callback return value or argument V8 will read directly.
+pub fn toRawLocal(h: MaybeHandle) usize {
+    const bits = @intFromPtr(h);
+    return if (bits == 0) raw_empty_local else bits;
+}
+
+/// Decodes a `Local`/`MaybeLocal` that V8 passed to a callback.
+pub fn fromRawLocal(bits: usize) MaybeHandle {
+    return if (bits == raw_empty_local) null else @ptrFromInt(bits);
+}
+
+comptime {
+    // Local<T> must stay a single pointer-sized value for any of this to hold.
+    std.debug.assert(@sizeOf(Handle) == @sizeOf(usize));
+}
+
 pub const Global = extern struct {
-    extern fn v8__Global__New(isolate: *Isolate.Opaque, data: Data) Handle;
-    extern fn v8__Global__Reset(handle: Handle) void;
 
     handle: Handle,
 
     pub fn new(isolate: Isolate, handle: Data) @This() {
         return .{
-            .handle = v8__Global__New(isolate.handle, handle),
+            .handle = e.v8__Global__New(isolate.handle, handle).?,
         };
     }
 
     pub fn deinit(self: @This()) void {
-        v8__Global__Reset(self.handle);
+        e.v8__Global__Reset(self.handle);
     }
 
     pub fn Of(T: type) type {
@@ -897,7 +814,7 @@ pub const Weak = extern struct {
 pub const Data = extern struct {
     handle: Handle,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{
             .handle = @ptrCast(o orelse return null),
         };
@@ -905,86 +822,48 @@ pub const Data = extern struct {
 };
 
 pub const Value = extern struct {
-    extern fn v8__Value__ToString(self: Value, context: Context) ?Handle;
-    extern fn v8__Value__IsNumber(self: Value) bool;
-    extern fn v8__Value__Uint32Value(self: Value, context: Context, out: *support.Maybe(u32)) void;
-    extern fn v8__Value__Int32Value(self: Value, context: Context, out: *support.Maybe(i32)) void;
 
     data: Data,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{
             .data = Data.from_opaque(o) orelse return null,
         };
     }
 
     pub fn toString(self: @This(), context: Context) ?String {
-        return String.from_opaque(v8__Value__ToString(self, context));
+        return String.from_opaque(e.v8__Value__ToString(self, context));
     }
 
     pub fn isNumber(self: @This()) bool {
-        return v8__Value__IsNumber(self);
+        return e.v8__Value__IsNumber(self);
     }
 
     pub fn u32Value(self: @This(), context: Context) ?u32 {
         var out: support.Maybe(u32) = undefined;
-        v8__Value__Uint32Value(self, context, &out);
+        e.v8__Value__Uint32Value(self, context, &out);
         return out.as_optional();
     }
 
-    pub fn i32Value(self: @This(), context: Context) i32 {
+    pub fn i32Value(self: @This(), context: Context) ?i32 {
         var out: support.Maybe(i32) = undefined;
-        v8__Value__Int32Value(self, context, &out);
+        e.v8__Value__Int32Value(self, context, &out);
         return out.as_optional();
     }
 };
 
 pub const Object = extern struct {
-    extern fn v8__Object__New(isolate: *Isolate.Opaque) ?Handle;
-    extern fn v8__Object__New__with_prototype_and_properties(
-        isolate: *Isolate.Opaque,
-        prototype_or_null: ?Value,
-        names: [*]const Name,
-        values: [*]const Value,
-        length: usize,
-    ) ?Handle;
-    extern fn v8__Object__Get(self: Object, context: Context, key: Value) ?Handle;
-    extern fn v8__Object__GetWithReceiver(self: Object, context: Context, key: Value, receiver: Object) ?Handle;
-    extern fn v8__Object__GetIndex(self: Object, context: Context, index: u32) ?Handle;
-    extern fn v8__Object__GetAlignedPointerFromInternalField(self: Object, index: c_int) ?*anyopaque;
-    extern fn v8__Object__SetAlignedPointerInInternalField(self: Object, index: c_int, value: ?*anyopaque) void;
-    extern fn v8__Object__IsApiWrapper(self: Object) bool;
-    extern fn v8__Object__GetPrototype(self: Object) ?Handle;
-    extern fn v8__Object__Set(self: Object, context: Context, key: Value, value: Value) support.MaybeBool;
-    extern fn v8__Object__SetWithReceiver(self: Object, context: Context, key: Value, value: Value, receiver: Object) support.MaybeBool;
-    extern fn v8__Object__SetIndex(self: Object, context: Context, index: u32, value: Value) support.MaybeBool;
-    extern fn v8__Object__SetPrototype(self: Object, context: Context, prototype: Value) support.MaybeBool;
-    extern fn v8__Object__GetConstructorName(self: Object) ?Handle;
-    extern fn v8__Object__CreateDataProperty(self: Object, context: Context, key: Name, value: Value) support.MaybeBool;
-    extern fn v8__Object__DefineOwnProperty(self: Object, context: Context, key: Name, value: Value, attr: PropertyAttribute) support.MaybeBool;
-    extern fn v8__Object__DefineProperty(self: Object, context: Context, key: Name, desc: *PropertyDescriptor.Opaque) support.MaybeBool;
-    extern fn v8__Object__SetAccessor(
-        self: Object,
-        context: Context,
-        key: Name,
-        getter: AccessorNameGetterCallback,
-        setter: ?AccessorNameSetterCallback,
-        data_or_null: ?*const Value,
-        attr: PropertyAttribute,
-    ) support.MaybeBool;
-    extern fn v8__Object__GetIdentityHash(self: Object) c_int;
-    extern fn v8__Object__GetCreationContext(self: Object) ?Handle;
 
     value: Value,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{
             .value = Value.from_opaque(o) orelse return null,
         };
     }
 
     pub fn init(isolate: Isolate) Object {
-        return from_opaque(v8__Object__New(isolate.handle)).?;
+        return from_opaque(e.v8__Object__New(isolate.handle)).?;
     }
 
     pub fn initWithProperties(
@@ -994,73 +873,74 @@ pub const Object = extern struct {
         values: []const Value,
     ) Object {
         std.debug.assert(names.len == values.len);
-        return from_opaque(v8__Object__New__with_prototype_and_properties(
+        return from_opaque(e.v8__Object__New__with_prototype_and_properties(
             isolate.handle,
-            prototype,
-            names.ptr,
-            values.ptr,
+            if (prototype) |p| p.data.handle else null,
+            // Name/Value are one-pointer wrappers, layout-identical to a handle array.
+            @ptrCast(names.ptr),
+            @ptrCast(values.ptr),
             names.len,
-        ));
+        )).?;
     }
 
     pub fn get(self: Object, context: Context, key: Value) ?Value {
-        return Value.from_opaque(v8__Object__Get(self, context, key));
+        return Value.from_opaque(e.v8__Object__Get(self, context, key));
     }
 
     pub fn getWithReceiver(self: Object, context: Context, key: Value, receiver: Object) ?Value {
-        return Value.from_opaque(v8__Object__GetWithReceiver(self, context, key, receiver));
+        return Value.from_opaque(e.v8__Object__GetWithReceiver(self, context, key, receiver));
     }
 
     pub fn getIndex(self: Object, context: Context, index: u32) ?Value {
-        return Value.from_opaque(v8__Object__GetIndex(self, context, index));
+        return Value.from_opaque(e.v8__Object__GetIndex(self, context, index));
     }
 
     pub fn getAlignedPointerFromInternalField(self: Object, index: c_int) ?*anyopaque {
-        return v8__Object__GetAlignedPointerFromInternalField(self, index);
+        return e.v8__Object__GetAlignedPointerFromInternalField(self, index);
     }
 
     pub fn setAlignedPointerInInternalField(self: Object, index: c_int, value: ?*anyopaque) void {
-        v8__Object__SetAlignedPointerInInternalField(self, index, value);
+        e.v8__Object__SetAlignedPointerInInternalField(self, index, value);
     }
 
     pub fn isApiWrapper(self: Object) bool {
-        return v8__Object__IsApiWrapper(self);
+        return e.v8__Object__IsApiWrapper(self);
     }
 
     pub fn getPrototype(self: Object) ?Value {
-        return Value.from_opaque(v8__Object__GetPrototype(self));
+        return Value.from_opaque(e.v8__Object__GetPrototype(self));
     }
 
     pub fn set(self: Object, context: Context, key: Value, value: Value) ?bool {
-        return v8__Object__Set(self, context, key, value).as_optional();
+        return e.v8__Object__Set(self, context, key, value).as_optional();
     }
 
     pub fn setWithReceiver(self: Object, context: Context, key: Value, value: Value, receiver: Object) ?bool {
-        return v8__Object__SetWithReceiver(self, context, key, value, receiver).as_optional();
+        return e.v8__Object__SetWithReceiver(self, context, key, value, receiver).as_optional();
     }
 
     pub fn setIndex(self: Object, context: Context, index: u32, value: Value) ?bool {
-        return v8__Object__SetIndex(self, context, index, value).as_optional();
+        return e.v8__Object__SetIndex(self, context, index, value).as_optional();
     }
 
     pub fn setPrototype(self: Object, context: Context, prototype: Value) ?bool {
-        return v8__Object__SetPrototype(self, context, prototype).as_optional();
+        return e.v8__Object__SetPrototype(self, context, prototype).as_optional();
     }
 
     pub fn getConstructorName(self: Object) String {
-        return String.from_opaque(v8__Object__GetConstructorName(self)).?;
+        return String.from_opaque(e.v8__Object__GetConstructorName(self)).?;
     }
 
     pub fn createDataProperty(self: Object, context: Context, key: Name, value: Value) ?bool {
-        return v8__Object__CreateDataProperty(self, context, key, value).as_optional();
+        return e.v8__Object__CreateDataProperty(self, context, key, value).as_optional();
     }
 
     pub fn defineOwnProperty(self: Object, context: Context, key: Name, value: Value, attr: PropertyAttribute) ?bool {
-        return v8__Object__DefineOwnProperty(self, context, key, value, attr).as_optional();
+        return e.v8__Object__DefineOwnProperty(self, context, key, value, attr).as_optional();
     }
 
     pub fn defineProperty(self: Object, context: Context, key: Name, desc: *PropertyDescriptor) ?bool {
-        return v8__Object__DefineProperty(self, context, key, &desc.inner).as_optional();
+        return e.v8__Object__DefineProperty(self, context, key, desc).as_optional();
     }
 
     pub fn setAccessor(
@@ -1072,49 +952,47 @@ pub const Object = extern struct {
         data: ?Value,
         attr: PropertyAttribute,
     ) ?bool {
-        return v8__Object__SetAccessor(
+        return e.v8__Object__SetAccessor(
             self,
             context,
             key,
             getter,
             setter,
-            if (data) |*v| v else null,
+            if (data) |v| v.data.handle else null,
             attr,
         ).as_optional();
     }
 
     pub fn getIdentityHash(self: Object) c_int {
-        return v8__Object__GetIdentityHash(self);
+        return e.v8__Object__GetIdentityHash(self);
     }
 
     pub fn getCreationContext(self: Object) ?Context {
-        return Context.from_opaque(v8__Object__GetCreationContext(self));
+        return Context.from_opaque(e.v8__Object__GetCreationContext(self));
     }
 };
 
 pub const External = extern struct {
-    extern fn v8__External__New(isolate: *Isolate.Opaque, value: ?*anyopaque) Handle;
-    extern fn v8__External__Value(self: External) ?*anyopaque;
 
     value: Value,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{ .value = Value.from_opaque(o) orelse return null };
     }
 
     pub fn init(isolate: Isolate, ptr: ?*anyopaque) @This() {
-        return External.from_opaque(v8__External__New(isolate.handle, ptr)).?;
+        return External.from_opaque(e.v8__External__New(isolate.handle, ptr)).?;
     }
 
     pub fn pointer(self: @This()) ?*anyopaque {
-        return v8__External__Value(self);
+        return e.v8__External__Value(self);
     }
 };
 
 pub const Primitive = extern struct {
     value: Value,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{
             .value = Value.from_opaque(o) orelse return null,
         };
@@ -1122,96 +1000,86 @@ pub const Primitive = extern struct {
 };
 
 pub const Promise = extern struct {
-    extern fn v8__Promise__Result(self: Promise) ?Handle;
-    extern fn v8__Promise__State(self: Promise) PromiseState;
 
     object: Object,
 
     pub const PromiseState = enum(c_int) { Pending, Fulfilled, Rejected };
 
     pub const Resolver = extern struct {
-        extern fn v8__Promise__Resolver__New(context: Context) ?Handle;
-        extern fn v8__Promise__Resolver__GetPromise(self: Resolver) ?Handle;
-        extern fn v8__Promise__Resolver__Resolve(self: Resolver, context: Context, value: Value) support.MaybeBool;
-        extern fn v8__Promise__Resolver__Reject(self: Resolver, context: Context, value: Value) support.MaybeBool;
 
         object: Object,
 
-        pub fn from_opaque(o: ?Handle) ?@This() {
+        pub fn from_opaque(o: MaybeHandle) ?@This() {
             return .{ .object = Object.from_opaque(o) orelse return null };
         }
 
         pub fn init(context: Context) ?@This() {
-            return .from_opaque(v8__Promise__Resolver__New(context));
+            return .from_opaque(e.v8__Promise__Resolver__New(context));
         }
 
         pub fn getPromise(self: @This()) Promise {
-            return Promise.from_opaque(v8__Promise__Resolver__GetPromise(self)).?;
+            return Promise.from_opaque(e.v8__Promise__Resolver__GetPromise(self)).?;
         }
 
         pub fn resolve(self: @This(), context: Context, value: Value) ?bool {
-            return v8__Promise__Resolver__Resolve(self, context, value).as_optional();
+            return e.v8__Promise__Resolver__Resolve(self, context, value).as_optional();
         }
 
         pub fn reject(self: @This(), context: Context, value: Value) ?bool {
-            return v8__Promise__Resolver__Reject(self, context, value).as_optional();
+            return e.v8__Promise__Resolver__Reject(self, context, value).as_optional();
         }
     };
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{ .object = Object.from_opaque(o) orelse return null };
     }
 
     pub fn result(self: @This()) Value {
-        return .from_opaque(v8__Promise__Result(self));
+        return Value.from_opaque(e.v8__Promise__Result(self)).?;
     }
 
     pub fn state(self: @This()) PromiseState {
-        return v8__Promise__State(self);
+        return e.v8__Promise__State(self);
     }
 };
 
 pub const Numeric = extern struct {
     primitive: Primitive,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{ .primitive = Primitive.from_opaque(o) orelse return null };
     }
 };
 
 pub const Number = extern struct {
-    extern fn v8__Number__New(isolate: *Isolate.Opaque, value: f64) ?Handle;
-    extern fn v8__Number__NewInt(isolate: *Isolate.Opaque, value: i32) ?Handle;
-    extern fn v8__Number__NewUInt(isolate: *Isolate.Opaque, value: u32) ?Handle;
-    extern fn v8__Number__Value(self: Number) f64;
 
     numeric: Numeric,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{ .numeric = Numeric.from_opaque(o) orelse return null };
     }
 
     pub fn init(isolate: Isolate, value: f64) @This() {
-        return @This().from_opaque(v8__Number__New(isolate.handle, value)).?;
+        return @This().from_opaque(e.v8__Number__New(isolate.handle, value)).?;
     }
 
     pub fn initInt(isolate: Isolate, value: i32) @This() {
-        return @This().from_opaque(v8__Number__NewInt(isolate.handle, value)).?;
+        return @This().from_opaque(e.v8__Number__NewInt(isolate.handle, value)).?;
     }
 
     pub fn initUInt(isolate: Isolate, value: u32) @This() {
-        return @This().from_opaque(v8__Number__NewUInt(isolate.handle, value)).?;
+        return @This().from_opaque(e.v8__Number__NewUInt(isolate.handle, value)).?;
     }
 
     pub fn Value(self: @This()) f64 {
-        return v8__Number__Value(self);
+        return e.v8__Number__Value(self);
     }
 };
 
 pub const Name = extern struct {
     primitive: Primitive,
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{ .primitive = Primitive.from_opaque(o) orelse return null };
     }
 };
@@ -1226,64 +1094,56 @@ pub const String = extern struct {
         pub const ReplaceInvalidUtf8 = @as(c_int, 1) << 2;
     };
 
-    extern fn v8__String__NewFromUtf8(isolate: *Isolate.Opaque, data: [*]const u8, new_type: NewStringType, length: c_int) ?Handle;
-    extern fn v8__String__NewFromOneByte(isolate: *Isolate.Opaque, data: [*]const u8, new_type: NewStringType, length: c_int) ?Handle;
-    extern fn v8__String__NewFromTwoByte(isolate: *Isolate.Opaque, data: [*]const u16, new_type: NewStringType, length: c_int) ?Handle;
-    extern fn v8__String__Length(self: String) c_int;
-    extern fn v8__String__Utf8Length(self: String, isolate: *Isolate.Opaque) usize;
-    extern fn v8__String__WriteUtf8(self: String, isolate: *Isolate.Opaque, buffer: [*]u8, capacity: usize, flags: c_int, processed_characters_return: ?*usize) usize;
-    extern fn v8__String__NewExternalOneByteStatic(isolate: *Isolate.Opaque, data: [*]const u8, length: c_int) ?Handle;
-    extern fn v8__String__NewExternalTwoByteStatic(isolate: *Isolate.Opaque, data: [*]const u16, length: c_int) ?Handle;
 
     name: Name,
 
     const Self = @This();
 
-    pub fn from_opaque(o: ?Handle) ?@This() {
+    pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{ .name = Name.from_opaque(o) orelse return null };
     }
 
     pub fn initUtf8(isolate: Isolate, str: []const u8) Self {
         return .{
-            .name = Name.from_opaque(v8__String__NewFromUtf8(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewFromUtf8(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
         };
     }
 
     pub fn initOneByte(isolate: Isolate, str: []const u8) Self {
         return .{
-            .name = Name.from_opaque(v8__String__NewFromOneByte(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewFromOneByte(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
         };
     }
 
     pub fn initTwoByte(isolate: Isolate, str: []const u16) Self {
         return .{
-            .name = Name.from_opaque(v8__String__NewFromTwoByte(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewFromTwoByte(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
         };
     }
 
     pub fn initOneByteStatic(isolate: Isolate, str: []const u8) Self {
         return .{
-            .name = Name.from_opaque(v8__String__NewExternalOneByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewExternalOneByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))).?,
         };
     }
 
     pub fn initTwoByteStatic(isolate: Isolate, str: []const u16) Self {
         return .{
-            .name = Name.from_opaque(v8__String__NewExternalTwoByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewExternalTwoByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))).?,
         };
     }
 
     pub fn len(self: Self) c_int {
-        return v8__String__Length(self.handle);
+        return e.v8__String__Length(self);
     }
 
     pub fn lenUtf8(self: Self, isolate: Isolate) usize {
-        return v8__String__Utf8Length(self, isolate.handle);
+        return e.v8__String__Utf8Length(self, isolate.handle);
     }
 
     pub fn writeUtf8(self: Self, isolate: Isolate, buf: []u8) usize {
         const flags = WriteFlags.ReplaceInvalidUtf8;
-        return v8__String__WriteUtf8(self, isolate.handle, buf.ptr, buf.len, flags, null);
+        return e.v8__String__WriteUtf8(self, isolate.handle, buf.ptr, buf.len, flags, null);
     }
 };
 
@@ -1300,30 +1160,26 @@ pub const ArrayBuffer = extern struct {
         pub const Opaque = opaque {};
 
         handle: *Opaque,
-        extern fn v8__ArrayBuffer__Allocator__NewDefaultAllocator() ?*Opaque;
-        extern fn v8__ArrayBuffer__Allocator__DELETE(handle: *Opaque) void;
 
         pub fn initDefault() @This() {
             return .{
-                .handle = v8__ArrayBuffer__Allocator__NewDefaultAllocator().?,
+                .handle = e.v8__ArrayBuffer__Allocator__NewDefaultAllocator().?,
             };
         }
 
         pub fn deinit(self: @This()) void {
-            v8__ArrayBuffer__Allocator__DELETE(self.handle);
+            e.v8__ArrayBuffer__Allocator__DELETE(self.handle);
         }
     };
 };
 
 pub const Script = extern struct {
-    extern fn v8__Script__Compile(context: Context, source: String, origin: ?*const ScriptOrigin.Opaque) ?Handle;
-    extern fn v8__Script__Run(self: Script, context: Context) ?Handle;
 
     data: Data,
 
     const Self = @This();
 
-    pub fn from_opaque(o: ?Handle) ?Self {
+    pub fn from_opaque(o: MaybeHandle) ?Self {
         return .{
             .data = Data.from_opaque(o) orelse return null,
         };
@@ -1331,191 +1187,164 @@ pub const Script = extern struct {
 
     pub fn compile(context: Context, source: String, origin: ?ScriptOrigin) ?Self {
         const ptr = if (origin) |o| &o.inner else null;
-        return @This().from_opaque(v8__Script__Compile(context, source, ptr));
+        return @This().from_opaque(e.v8__Script__Compile(context, source, ptr));
     }
 
     pub fn run(self: Self, context: Context) ?Value {
-        return Value.from_opaque(v8__Script__Run(self, context));
+        return Value.from_opaque(e.v8__Script__Run(self, context));
     }
 };
 
 pub const TryCatch = struct {
     pub const Opaque = [binding.sizes.TryCatch]u8;
 
-    extern fn v8__TryCatch__CONSTRUCT(ptr: *Opaque, isolate: *Isolate.Opaque) void;
-    extern fn v8__TryCatch__DESTRUCT(ptr: *Opaque) void;
-    extern fn v8__TryCatch__HasCaught(self: *const Opaque) bool;
-    extern fn v8__TryCatch__CanContinue(self: *const Opaque) bool;
-    extern fn v8__TryCatch__HasTerminated(self: *const Opaque) bool;
-    extern fn v8__TryCatch__Exception(self: *const Opaque) ?Handle;
-    extern fn v8__TryCatch__StackTrace(self: *const Opaque, context: Context) ?Handle;
-    extern fn v8__TryCatch__Message(self: *const Opaque) ?*Message.Opaque;
-    extern fn v8__TryCatch__Reset(self: *Opaque) void;
-    extern fn v8__TryCatch__ReThrow(self: *Opaque) ?Handle;
-    extern fn v8__TryCatch__IsVerbose(self: *const Opaque) bool;
-    extern fn v8__TryCatch__SetVerbose(self: *Opaque, value: bool) void;
-    extern fn v8__TryCatch__SetCaptureMessage(self: *Opaque, value: bool) void;
 
     inner: Opaque,
 
     const Self = @This();
 
     pub fn init(self: *Self, isolate: Isolate) void {
-        v8__TryCatch__CONSTRUCT(&self.inner, isolate.handle);
+        e.v8__TryCatch__CONSTRUCT(&self.inner, isolate.handle);
     }
 
     pub fn deinit(self: *Self) void {
-        v8__TryCatch__DESTRUCT(&self.inner);
+        e.v8__TryCatch__DESTRUCT(&self.inner);
     }
 
     pub fn hasCaught(self: *const Self) bool {
-        return v8__TryCatch__HasCaught(&self.inner);
+        return e.v8__TryCatch__HasCaught(&self.inner);
     }
 
     pub fn canContinue(self: *const Self) bool {
-        return v8__TryCatch__CanContinue(&self.inner);
+        return e.v8__TryCatch__CanContinue(&self.inner);
     }
 
     pub fn hasTerminated(self: *const Self) bool {
-        return v8__TryCatch__HasTerminated(&self.inner);
+        return e.v8__TryCatch__HasTerminated(&self.inner);
     }
 
     pub fn getException(self: *const Self) ?Value {
-        const handle = v8__TryCatch__Exception(&self.inner) orelse return null;
+        const handle = e.v8__TryCatch__Exception(&self.inner) orelse return null;
         return .from_opaque(handle);
     }
 
     pub fn getStackTrace(self: *const Self, context: Context) ?Value {
-        const handle = v8__TryCatch__StackTrace(&self.inner, context) orelse return null;
+        const handle = e.v8__TryCatch__StackTrace(&self.inner, context) orelse return null;
         return .from_opaque(handle);
     }
 
     pub fn getMessage(self: *const Self) ?Message {
-        const handle = v8__TryCatch__Message(&self.inner) orelse return null;
+        const handle = e.v8__TryCatch__Message(&self.inner) orelse return null;
         return .{ .handle = handle };
     }
 
     pub fn reset(self: *Self) void {
-        v8__TryCatch__Reset(&self.inner);
+        e.v8__TryCatch__Reset(&self.inner);
     }
 
     pub fn reThrow(self: *Self) ?Value {
-        const handle = v8__TryCatch__ReThrow(&self.inner) orelse return null;
-        return .{ .handle = handle };
+        const handle = e.v8__TryCatch__ReThrow(&self.inner) orelse return null;
+        return .from_opaque(handle);
     }
 
     pub fn isVerbose(self: *const Self) bool {
-        return v8__TryCatch__IsVerbose(&self.inner);
+        return e.v8__TryCatch__IsVerbose(&self.inner);
     }
 
     pub fn setVerbose(self: *Self, value: bool) void {
-        v8__TryCatch__SetVerbose(&self.inner, value);
+        e.v8__TryCatch__SetVerbose(&self.inner, value);
     }
 
     pub fn setCaptureMessage(self: *Self, value: bool) void {
-        v8__TryCatch__SetCaptureMessage(&self.inner, value);
+        e.v8__TryCatch__SetCaptureMessage(&self.inner, value);
     }
 };
 
 pub const StackFrame = struct {
     pub const Opaque = opaque {};
 
-    extern fn v8__StackFrame__GetLineNumber(self: *const Opaque) c_int;
-    extern fn v8__StackFrame__GetColumn(self: *const Opaque) c_int;
-    extern fn v8__StackFrame__GetScriptId(self: *const Opaque) c_int;
-    extern fn v8__StackFrame__GetScriptName(self: *const Opaque) ?*String.Opaque;
-    extern fn v8__StackFrame__GetScriptNameOrSourceURL(self: *const Opaque) ?*String.Opaque;
-    extern fn v8__StackFrame__GetFunctionName(self: *const Opaque) ?*String.Opaque;
-    extern fn v8__StackFrame__IsEval(self: *const Opaque) bool;
-    extern fn v8__StackFrame__IsConstructor(self: *const Opaque) bool;
-    extern fn v8__StackFrame__IsWasm(self: *const Opaque) bool;
-    extern fn v8__StackFrame__IsUserJavaScript(self: *const Opaque) bool;
 
-    handle: *Opaque,
+    handle: *const Opaque,
 
     const Self = @This();
 
     pub fn getLineNumber(self: Self) c_int {
-        return v8__StackFrame__GetLineNumber(self.handle);
+        return e.v8__StackFrame__GetLineNumber(self.handle);
     }
 
     pub fn getColumn(self: Self) c_int {
-        return v8__StackFrame__GetColumn(self.handle);
+        return e.v8__StackFrame__GetColumn(self.handle);
     }
 
     pub fn getScriptId(self: Self) c_int {
-        return v8__StackFrame__GetScriptId(self.handle);
+        return e.v8__StackFrame__GetScriptId(self.handle);
     }
 
     pub fn getScriptName(self: Self) ?String {
-        if (v8__StackFrame__GetScriptName(self.handle)) |ptr| {
-            return .{ .handle = ptr };
+        if (e.v8__StackFrame__GetScriptName(self.handle)) |ptr| {
+            return String.from_opaque(ptr);
         }
         return null;
     }
 
     pub fn getScriptNameOrSourceUrl(self: Self) ?String {
-        if (v8__StackFrame__GetScriptNameOrSourceURL(self.handle)) |ptr| {
-            return .{ .handle = ptr };
+        if (e.v8__StackFrame__GetScriptNameOrSourceURL(self.handle)) |ptr| {
+            return String.from_opaque(ptr);
         }
         return null;
     }
 
     pub fn getFunctionName(self: Self) ?String {
-        if (v8__StackFrame__GetFunctionName(self.handle)) |ptr| {
-            return .{ .handle = ptr };
+        if (e.v8__StackFrame__GetFunctionName(self.handle)) |ptr| {
+            return String.from_opaque(ptr);
         }
         return null;
     }
 
     pub fn isEval(self: Self) bool {
-        return v8__StackFrame__IsEval(self.handle);
+        return e.v8__StackFrame__IsEval(self.handle);
     }
 
     pub fn isConstructor(self: Self) bool {
-        return v8__StackFrame__IsConstructor(self.handle);
+        return e.v8__StackFrame__IsConstructor(self.handle);
     }
 
     pub fn isWasm(self: Self) bool {
-        return v8__StackFrame__IsWasm(self.handle);
+        return e.v8__StackFrame__IsWasm(self.handle);
     }
 
     pub fn isUserJavascript(self: Self) bool {
-        return v8__StackFrame__IsUserJavaScript(self.handle);
+        return e.v8__StackFrame__IsUserJavaScript(self.handle);
     }
 };
 
 pub const StackTrace = struct {
     pub const Opaque = opaque {};
 
-    extern fn v8__StackTrace__GetFrameCount(self: *const Opaque) c_int;
-    extern fn v8__StackTrace__GetFrame(self: *const Opaque, isolate: *Isolate.Opaque, index: u32) ?*StackFrame.Opaque;
-    extern fn v8__StackTrace__CurrentStackTrace(isolate: *Isolate.Opaque, frame_limit: c_int) ?*Opaque;
-    extern fn v8__StackTrace__CurrentScriptNameOrSourceURL(isolate: *Isolate.Opaque) ?*String.Opaque;
 
-    handle: *Opaque,
+    handle: *const Opaque,
 
     const Self = @This();
 
     pub fn getFrameCount(self: Self) c_int {
-        return v8__StackTrace__GetFrameCount(self.handle);
+        return e.v8__StackTrace__GetFrameCount(self.handle);
     }
 
     pub fn getFrame(self: Self, isolate: Isolate, index: u32) StackFrame {
         return .{
-            .handle = v8__StackTrace__GetFrame(self.handle, isolate.handle, index).?,
+            .handle = e.v8__StackTrace__GetFrame(self.handle, isolate.handle, index).?,
         };
     }
 
     pub fn getCurrentStackTrace(isolate: Isolate, frame_limit: c_int) StackTrace {
         return .{
-            .handle = v8__StackTrace__CurrentStackTrace(isolate.handle, frame_limit).?,
+            .handle = e.v8__StackTrace__CurrentStackTrace(isolate.handle, frame_limit).?,
         };
     }
 
     pub fn getCurrentScriptNameOrSourceUrl(isolate: Isolate) ?String {
-        if (v8__StackTrace__CurrentScriptNameOrSourceURL(isolate.handle)) |ptr| {
-            return .{ .handle = ptr };
+        if (e.v8__StackTrace__CurrentScriptNameOrSourceURL(isolate.handle)) |ptr| {
+            return String.from_opaque(ptr);
         }
         return null;
     }
@@ -1524,79 +1353,67 @@ pub const StackTrace = struct {
 pub const Message = struct {
     pub const Opaque = opaque {};
 
-    extern fn v8__Message__Get(self: *const Opaque) ?*String.Opaque;
-    extern fn v8__Message__GetSourceLine(self: *const Opaque, context: Context) ?Handle;
-    extern fn v8__Message__GetScriptResourceName(self: *const Opaque) ?*Value.Opaque;
-    extern fn v8__Message__GetLineNumber(self: *const Opaque, context: Context) c_int;
-    extern fn v8__Message__GetStackTrace(self: *const Opaque) ?*StackTrace.Opaque;
-    extern fn v8__Message__GetStartPosition(self: *const Opaque) c_int;
-    extern fn v8__Message__GetEndPosition(self: *const Opaque) c_int;
-    extern fn v8__Message__GetStartColumn(self: *const Opaque) c_int;
-    extern fn v8__Message__GetEndColumn(self: *const Opaque) c_int;
-    extern fn v8__Message__IsSharedCrossOrigin(self: *const Opaque) bool;
-    extern fn v8__Message__GetWasmFunctionIndex(self: *const Opaque) c_int;
-    extern fn v8__Message__ErrorLevel(self: *const Opaque) c_int;
 
-    handle: *Opaque,
+    handle: *const Opaque,
 
     const Self = @This();
 
     pub fn get(self: Self) String {
-        return .{ .handle = v8__Message__Get(self.handle).? };
+        return String.from_opaque(e.v8__Message__Get(self.handle)).?;
     }
 
     pub fn getSourceLine(self: Self, context: Context) ?String {
-        const ptr = v8__Message__GetSourceLine(self.handle, context);
+        const ptr = e.v8__Message__GetSourceLine(self.handle, context);
         return .from_opaque(ptr);
     }
 
     pub fn getScriptResourceName(self: Self) Value {
-        return .{ .handle = v8__Message__GetScriptResourceName(self.handle).? };
+        return Value.from_opaque(e.v8__Message__GetScriptResourceName(self.handle)).?;
     }
 
     pub fn getLineNumber(self: Self, context: Context) ?c_uint {
-        const res = v8__Message__GetLineNumber(self.handle, context.handle);
+        const res = e.v8__Message__GetLineNumber(self.handle, context);
         if (res != -1) return @intCast(res);
         return null;
     }
 
     pub fn getStartColumn(self: Self) ?c_uint {
-        const res = v8__Message__GetStartColumn(self.handle);
+        const res = e.v8__Message__GetStartColumn(self.handle);
         if (res != -1) return @intCast(res);
         return null;
     }
 
     pub fn getEndColumn(self: Self) ?c_uint {
-        const res = v8__Message__GetEndColumn(self.handle);
+        const res = e.v8__Message__GetEndColumn(self.handle);
         if (res != -1) return @intCast(res);
         return null;
     }
 
     pub fn getStackTrace(self: Self) ?StackTrace {
-        if (v8__Message__GetStackTrace(self.handle)) |ptr| {
+        if (e.v8__Message__GetStackTrace(self.handle)) |ptr| {
             return .{ .handle = ptr };
         }
         return null;
     }
 
     pub fn getStartPosition(self: Self) i32 {
-        return v8__Message__GetStartPosition(self.handle);
+        return e.v8__Message__GetStartPosition(self.handle);
     }
 
     pub fn getEndPosition(self: Self) i32 {
-        return v8__Message__GetEndPosition(self.handle);
+        return e.v8__Message__GetEndPosition(self.handle);
     }
 
     pub fn getWasmFunctionIndex(self: Self) i32 {
-        return v8__Message__GetWasmFunctionIndex(self.handle);
+        return e.v8__Message__GetWasmFunctionIndex(self.handle);
     }
 
     pub fn getErrorLevel(self: Self) i32 {
-        return v8__Message__ErrorLevel(self.handle);
+        return e.v8__Message__ErrorLevel(self.handle);
     }
 
     pub fn isSharedCrossOrigin(self: Self) bool {
-        return v8__Message__IsSharedCrossOrigin(self.handle);
+        return e.v8__Message__IsSharedCrossOrigin(self.handle);
     }
 };
 
@@ -1605,19 +1422,6 @@ pub const ScriptOrigin = struct {
 
     const Self = @This();
 
-    extern fn v8__ScriptOrigin__CONSTRUCT(
-        ptr: *Opaque,
-        resource_name: Value,
-        resource_line_offset: c_int,
-        resource_column_offset: c_int,
-        resource_is_shared_cross_origin: bool,
-        script_id: c_int,
-        source_map_url: ?Handle,
-        resource_is_opaque: bool,
-        is_wasm: bool,
-        is_module: bool,
-        host_defined_options: ?Handle,
-    ) void;
 
     inner: Opaque,
 
@@ -1649,7 +1453,7 @@ pub const ScriptOrigin = struct {
         host_defined_options: ?Data,
     ) Self {
         var place: ScriptOrigin = undefined;
-        v8__ScriptOrigin__CONSTRUCT(
+        e.v8__ScriptOrigin__CONSTRUCT(
             &place.inner,
             resource_name,
             resource_line_offset,
@@ -1689,3 +1493,25 @@ pub const MicrotasksPolicy = enum(u32) {
     Scoped = 1,
     Auto = 2,
 };
+
+// Zig only analyzes what is used, so reference every declaration explicitly:
+// this is what proves the wrappers still match the generated externs.
+/// Zig only analyzes what is used, so reference every declaration of `T` and of
+/// the types nested in it (depth-limited: wrappers alias themselves via `Self`).
+fn refAllNested(comptime T: type, comptime depth: u8) void {
+    if (depth == 0) return;
+    switch (@typeInfo(T)) {
+        .@"struct", .@"enum", .@"union", .@"opaque" => {},
+        else => return,
+    }
+    std.testing.refAllDecls(T);
+    inline for (comptime std.meta.declarations(T)) |decl| {
+        const value = @field(T, decl);
+        if (@TypeOf(value) == type) refAllNested(value, depth - 1);
+    }
+}
+
+test "wrappers type-check against the generated externs" {
+    std.testing.refAllDecls(e);
+    refAllNested(@This(), 3);
+}

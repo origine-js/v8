@@ -41,6 +41,11 @@ config("v8_zig_config") {
     cflags += [
       "-fcolor-diagnostics",
       "-fansi-escape-codes",
+
+      # Access control is a front-end check only (no ABI effect). Disabling it
+      # lets the shim, and the layout probe built from these same flags, reach
+      # private V8 members such as FunctionCallbackInfo::kArgsLength.
+      "-fno-access-control",
     ]
   }
 }

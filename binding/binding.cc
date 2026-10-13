@@ -26,6 +26,7 @@
 #include "../../src/libplatform/default-platform.h"
 
 #include "binding.hpp"
+#include "layout.gen.h"
 
 using namespace support;
 
@@ -152,6 +153,8 @@ void v8__V8__InitializePlatform(v8::Platform* platform) {
 }
 
 void v8__V8__Initialize() { v8::V8::Initialize(); }
+
+bool v8__V8__InitializeICU() { return v8::V8::InitializeICU(); }
 
 bool v8__V8__Dispose() { return v8::V8::Dispose(); }
 
@@ -980,10 +983,7 @@ const v8::Boolean* v8__Boolean__New(v8::Isolate* isolate, bool value) {
 
 int v8__FixedArray__Length(const v8::FixedArray& self) { return self.Length(); }
 
-const v8::Data* v8__FixedArray__Get(const v8::FixedArray& self,
-                                    const v8::Context& context, int index) {
-  // As of V8 14.7 FixedArray::Get no longer takes a context.
-  (void)context;
+const v8::Data* v8__FixedArray__Get(const v8::FixedArray& self, int index) {
   return local_to_ptr(ptr_to_local(&self)->Get(index));
 }
 
@@ -1154,7 +1154,7 @@ const v8::String* v8__String__NewFromTwoByte(v8::Isolate* isolate,
 
 int v8__String__Length(const v8::String& self) { return self.Length(); }
 
-int v8__String__Utf8Length(const v8::String& self, v8::Isolate* isolate) {
+size_t v8__String__Utf8Length(const v8::String& self, v8::Isolate* isolate) {
   return self.Utf8LengthV2(isolate);
 }
 
@@ -1464,10 +1464,10 @@ const v8::Object* v8__Object__New(v8::Isolate* isolate) {
 }
 
 const v8::Object* v8__Object__New__with_prototype_and_properties(
-    v8::Isolate* isolate, const v8::Value& prototype_or_null,
+    v8::Isolate* isolate, const v8::Value* prototype_or_null,
     const v8::Name* const names[], const v8::Value* const values[],
     size_t length) {
-  return local_to_ptr(v8::Object::New(isolate, ptr_to_local(&prototype_or_null),
+  return local_to_ptr(v8::Object::New(isolate, ptr_to_local(prototype_or_null),
                                       const_ptr_array_to_local_array(names),
                                       const_ptr_array_to_local_array(values),
                                       length));
@@ -2697,10 +2697,10 @@ EACH_TYPED_ARRAY(V)
 
 const v8::Script* v8__Script__Compile(const v8::Context& context,
                                       const v8::String& source,
-                                      const v8::ScriptOrigin& origin) {
+                                      const v8::ScriptOrigin* origin) {
   return maybe_local_to_ptr(
       v8::Script::Compile(ptr_to_local(&context), ptr_to_local(&source),
-                          const_cast<v8::ScriptOrigin*>(&origin)));
+                          const_cast<v8::ScriptOrigin*>(origin)));
 }
 
 const v8::UnboundScript* v8__Script__GetUnboundScript(

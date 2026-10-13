@@ -13,6 +13,10 @@ pub const version = "14.7.173.20";
 pub const V8 = struct {
     /// `libv8_zig.a`, a complete static library containing V8 and the shim.
     lib: LazyPath,
+    /// GN output directory (holds compile_commands.json). Null for prebuilt libraries.
+    build_dir: ?[]const u8 = null,
+    /// Finishes once GN has generated `build_dir`. Null for prebuilt libraries.
+    gn_step: ?*std.Build.Step = null,
 };
 
 /// Files copied into the V8 checkout. `src` is relative to this repository,
@@ -21,6 +25,7 @@ const shims = [_]struct { src: []const u8, dest: []const u8 }{
     .{ .src = "binding/binding.cc", .dest = "zig/binding/binding.cc" },
     .{ .src = "binding/binding.hpp", .dest = "zig/binding/binding.hpp" },
     .{ .src = "binding/support.h", .dest = "zig/binding/support.h" },
+    .{ .src = "binding/layout.gen.h", .dest = "zig/binding/layout.gen.h" },
     .{ .src = "build-tools/BUILD.gn", .dest = "zig/BUILD.gn" },
     .{ .src = "build-tools/.gn", .dest = "zig/.gn" },
 };
@@ -31,6 +36,10 @@ const GnArgs = struct {
     is_asan: bool,
     is_tsan: bool,
     v8_enable_sandbox: bool,
+    /// Pass V8 handles as direct object addresses. This changes the C ABI, so
+    /// `zig build gen` must be re-run after toggling it (src/binding.zig and
+    /// binding/layout.gen.h record the configuration).
+    v8_enable_direct_handle: bool,
     /// macOS SDK to compile against; GN picks the newest installed one when null.
     mac_sdk_path: ?[]const u8,
 
@@ -48,6 +57,8 @@ const GnArgs = struct {
         lines.append(a, b.fmt("is_asan={}", .{self.is_asan})) catch @panic("OOM");
         lines.append(a, b.fmt("is_tsan={}", .{self.is_tsan})) catch @panic("OOM");
         lines.append(a, b.fmt("v8_enable_sandbox={}", .{self.v8_enable_sandbox})) catch @panic("OOM");
+        // Only spelled out when enabled so the default configuration keeps its build directory.
+        if (self.v8_enable_direct_handle) lines.append(a, "v8_enable_direct_handle=true") catch @panic("OOM");
 
         if (self.mac_sdk_path) |path| {
             lines.append(a, b.fmt("mac_sdk_path=\"{s}\"", .{path})) catch @panic("OOM");
@@ -105,6 +116,7 @@ pub fn add(
         .is_asan = b.option(bool, "is_asan", "Build V8 with AddressSanitizer") orelse false,
         .is_tsan = b.option(bool, "is_tsan", "Build V8 with ThreadSanitizer") orelse false,
         .v8_enable_sandbox = b.option(bool, "v8_enable_sandbox", "Enable the V8 sandbox") orelse false,
+        .v8_enable_direct_handle = b.option(bool, "v8_enable_direct_handle", "Use V8 direct handles (changes the C ABI; re-run `zig build gen`)") orelse false,
         .mac_sdk_path = b.option([]const u8, "mac_sdk_path", "macOS SDK directory to build V8 against (e.g. an older SDK when V8 does not build with the newest)"),
     };
     const cache_root = b.option([]const u8, "cache_root", "Directory holding the V8 and depot_tools checkouts") orelse b.root.joinString(b.allocator, ".lp-cache") catch @panic("OOM");
@@ -149,6 +161,8 @@ pub fn add(
         "--dotfile=zig/.gn",
         "gen",
         out_dir,
+        // Lets tools/bindgen reuse the exact compiler flags of binding.cc.
+        "--export-compile-commands=v8_zig",
         b.fmt("--args={s}", .{args}),
     });
     gn.setCwd(.{ .cwd_relative = v8_dir });
@@ -173,5 +187,9 @@ pub fn add(
     const step = b.step("build-v8", "Fetch and build V8");
     step.dependOn(&out.step);
 
-    return .{ .lib = lib };
+    return .{
+        .lib = lib,
+        .build_dir = b.fmt("{s}/{s}", .{ v8_dir, out_dir }),
+        .gn_step = &gn.step,
+    };
 }

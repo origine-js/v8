@@ -10,6 +10,7 @@
 #include <new>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "cppgc/name-provider.h"
 #include "v8-cppgc.h"
@@ -122,25 +123,78 @@ inline static v8::Maybe<bool> maybe_bool_to_maybe(MaybeBool maybe) {
 // empty Local already is nullptr and these checks change nothing.
 template <class T>
 inline static T* local_to_ptr(v8::Local<T> local) {
-  return local.IsEmpty() ? nullptr : *local;
+  if (local.IsEmpty()) return nullptr;
+  auto ptr = *local;
+#ifdef V8_ENABLE_DIRECT_HANDLE
+  // Smi zero has a null address. Tag 3 cannot represent a strong Local value:
+  // Smis are even and aligned heap objects use the strong pointer tag 1.
+  if (ptr == nullptr) return reinterpret_cast<T*>(uintptr_t{3});
+#endif
+  return ptr;
 }
 
 template <class T>
 inline static const v8::Local<T> ptr_to_local(const T* ptr) {
   static_assert(sizeof(v8::Local<T>) == sizeof(T*), "");
   if (ptr == nullptr) return v8::Local<T>();
+#ifdef V8_ENABLE_DIRECT_HANDLE
+  if (reinterpret_cast<uintptr_t>(ptr) == 3) ptr = nullptr;
+#endif
   auto local = *reinterpret_cast<const v8::Local<T>*>(&ptr);
   assert(*local == ptr);
   return local;
 }
 
+// Reference arguments are required locals. With direct handles, a raw zero from
+// a V8 callback is a valid Smi, while nullable pointer arguments use null as empty.
 template <class T>
-inline static v8::Local<T>* const_ptr_array_to_local_array(
-    const T* const ptr_array[]) {
-  static_assert(sizeof(v8::Local<T>[42]) == sizeof(T* [42]), "");
-  auto mut_ptr_array = const_cast<T**>(ptr_array);
-  auto mut_local_array = reinterpret_cast<v8::Local<T>*>(mut_ptr_array);
-  return mut_local_array;
+inline static v8::Local<T> ref_to_local(const T& ref) {
+#ifdef V8_ENABLE_DIRECT_HANDLE
+  const T* ptr = &ref;
+  if (reinterpret_cast<uintptr_t>(ptr) == 3) ptr = nullptr;
+  return *reinterpret_cast<const v8::Local<T>*>(&ptr);
+#else
+  return ptr_to_local(&ref);
+#endif
+}
+
+// Direct locals need to decode the normalized zero sentinel in value arrays.
+// Indirect handles keep the existing allocation-free view.
+template <class T>
+class local_array_view {
+ public:
+  local_array_view(const T* const ptrs[], size_t length) {
+#ifdef V8_ENABLE_DIRECT_HANDLE
+    // Most arrays need no copy. Only the encoded Smi zero differs from raw V8.
+    bool needs_decode = false;
+    for (size_t i = 0; i < length; ++i) {
+      if (reinterpret_cast<uintptr_t>(ptrs[i]) == 3) needs_decode = true;
+    }
+    if (needs_decode) {
+      storage_.reserve(length);
+      for (size_t i = 0; i < length; ++i) storage_.push_back(ptr_to_local(ptrs[i]));
+    }
+    data_ = storage_.empty()
+        ? reinterpret_cast<v8::Local<T>*>(const_cast<T**>(ptrs))
+        : storage_.data();
+#else
+    data_ = reinterpret_cast<v8::Local<T>*>(const_cast<T**>(ptrs));
+#endif
+  }
+  operator v8::Local<T>*() {
+    return data_;
+  }
+ private:
+#ifdef V8_ENABLE_DIRECT_HANDLE
+  std::vector<v8::Local<T>> storage_;
+#endif
+  v8::Local<T>* data_;
+};
+
+template <class T>
+inline static local_array_view<T> const_ptr_array_to_local_array(
+    const T* const ptr_array[], size_t length) {
+  return local_array_view<T>(ptr_array, length);
 }
 
 template <class T>
@@ -151,8 +205,7 @@ inline static T* maybe_local_to_ptr(v8::MaybeLocal<T> local) {
 template <class T>
 inline static const v8::MaybeLocal<T> ptr_to_maybe_local(const T* ptr) {
   static_assert(sizeof(v8::MaybeLocal<T>) == sizeof(T*), "");
-  if (ptr == nullptr) return v8::MaybeLocal<T>();
-  return *reinterpret_cast<const v8::MaybeLocal<T>*>(&ptr);
+  return v8::MaybeLocal<T>(ptr_to_local(ptr));
 }
 
 template <class T>

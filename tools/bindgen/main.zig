@@ -2,7 +2,7 @@
 //!
 //!   bindgen gen       <v8_build_dir> <layout.zon> <typemap.zon> <out binding.zig> <out layout.gen.h> <out externs.gen.zig>
 //!   bindgen gen-check <same arguments>: fail if any output would change (nothing is written)
-//!   bindgen check     <libv8_zig.a> <externs.gen.zig> <v8.zig> [<rusty_v8 binding.cc>]
+//!   bindgen check     <libv8_zig.a> <externs.gen.zig> <src/v8 dir> [<rusty_v8 binding.cc>]
 //!
 //! Everything is measured with V8's own clang using the exact flags GN uses
 //! for binding.cc (see clang.zig), so the output reflects the real V8
@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init) !void {
     }
     std.debug.print(
         "usage: bindgen gen|gen-check <v8_build_dir> <layout.zon> <typemap.zon> <out binding.zig> <out layout.gen.h> <out externs.gen.zig>\n" ++
-            "       bindgen check <libv8_zig.a> <externs.gen.zig> <v8.zig> [<rusty_v8 binding.cc>]\n",
+            "       bindgen check <libv8_zig.a> <externs.gen.zig> <src/v8 dir> [<rusty_v8 binding.cc>]\n",
         .{},
     );
     std.process.exit(2);

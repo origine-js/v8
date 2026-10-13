@@ -247,7 +247,7 @@ void v8__Isolate__PerformMicrotaskCheckpoint(v8::Isolate* isolate) {
 
 void v8__Isolate__EnqueueMicrotask(v8::Isolate* isolate,
                                    const v8::Function& function) {
-  isolate->EnqueueMicrotask(ptr_to_local(&function));
+  isolate->EnqueueMicrotask(ref_to_local(function));
 }
 
 void v8__Isolate__RequestInterrupt(v8::Isolate* isolate,
@@ -374,7 +374,7 @@ void v8__Isolate__SetOOMErrorHandler(v8::Isolate* isolate,
 
 const v8::Value* v8__Isolate__ThrowException(v8::Isolate* isolate,
                                              const v8::Value& exception) {
-  return local_to_ptr(isolate->ThrowException(ptr_to_local(&exception)));
+  return local_to_ptr(isolate->ThrowException(ref_to_local(exception)));
 }
 
 void v8__Isolate__TerminateExecution(v8::Isolate* isolate) {
@@ -475,20 +475,20 @@ void v8__HandleScope__CONSTRUCT(uninit_t<v8::HandleScope>* buf,
 void v8__HandleScope__DESTRUCT(v8::HandleScope* self) { self->~HandleScope(); }
 
 const v8::Data* v8__Local__New(v8::Isolate* isolate, const v8::Data& other) {
-  return local_to_ptr(v8::Local<v8::Data>::New(isolate, ptr_to_local(&other)));
+  return local_to_ptr(v8::Local<v8::Data>::New(isolate, ref_to_local(other)));
 }
 
 const v8::Data* v8__Global__New(v8::Isolate* isolate, const v8::Data& other) {
   // We have to use `std::move()` here because v8 disables the copy constructor
   // for class `v8::Global`.
-  auto global = v8::Global<v8::Data>(isolate, ptr_to_local(&other));
+  auto global = v8::Global<v8::Data>(isolate, ref_to_local(other));
   return make_pod<v8::Data*>(std::move(global));
 }
 
 const v8::Data* v8__Global__NewWeak(
     v8::Isolate* isolate, const v8::Data& other, void* parameter,
     v8::WeakCallbackInfo<void>::Callback callback) {
-  auto global = v8::Global<v8::Data>(isolate, ptr_to_local(&other));
+  auto global = v8::Global<v8::Data>(isolate, ref_to_local(other));
   global.SetWeak(parameter, callback, v8::WeakCallbackType::kParameter);
   return make_pod<v8::Data*>(std::move(global));
 }
@@ -561,10 +561,10 @@ void v8__ScriptCompiler__Source__CONSTRUCT(
     v8::ScriptCompiler::CachedData* cached_data) {
   if (origin) {
     construct_in_place<v8::ScriptCompiler::Source>(
-        buf, ptr_to_local(&source_string), *origin, cached_data);
+        buf, ref_to_local(source_string), *origin, cached_data);
   } else {
     construct_in_place<v8::ScriptCompiler::Source>(
-        buf, ptr_to_local(&source_string), cached_data);
+        buf, ref_to_local(source_string), cached_data);
   }
 }
 
@@ -639,335 +639,335 @@ size_t v8__TypedArray__Length(const v8::TypedArray* self) {
 }
 
 bool v8__Data__EQ(const v8::Data& self, const v8::Data& other) {
-  return ptr_to_local(&self) == ptr_to_local(&other);
+  return ref_to_local(self) == ref_to_local(other);
 }
 
 bool v8__Data__IsBigInt(const v8::Data& self) {
-  return self.IsValue() && reinterpret_cast<const v8::Value&>(self).IsBigInt();
+  return ref_to_local(self)->IsValue() && ref_to_local(reinterpret_cast<const v8::Value&>(self))->IsBigInt();
 }
 
 bool v8__Data__IsBoolean(const v8::Data& self) {
-  return self.IsValue() && reinterpret_cast<const v8::Value&>(self).IsBoolean();
+  return ref_to_local(self)->IsValue() && ref_to_local(reinterpret_cast<const v8::Value&>(self))->IsBoolean();
 }
 
-bool v8__Data__IsContext(const v8::Data& self) { return self.IsContext(); }
+bool v8__Data__IsContext(const v8::Data& self) { return ref_to_local(self)->IsContext(); }
 
 bool v8__Data__IsFixedArray(const v8::Data& self) {
-  return self.IsFixedArray();
+  return ref_to_local(self)->IsFixedArray();
 }
 
 bool v8__Data__IsFunctionTemplate(const v8::Data& self) {
-  return self.IsFunctionTemplate();
+  return ref_to_local(self)->IsFunctionTemplate();
 }
 
-bool v8__Data__IsModule(const v8::Data& self) { return self.IsModule(); }
+bool v8__Data__IsModule(const v8::Data& self) { return ref_to_local(self)->IsModule(); }
 
 bool v8__Data__IsModuleRequest(const v8::Data& self) {
-  return self.IsModuleRequest();
+  return ref_to_local(self)->IsModuleRequest();
 }
 
 bool v8__Data__IsName(const v8::Data& self) {
-  return self.IsValue() && reinterpret_cast<const v8::Value&>(self).IsName();
+  return ref_to_local(self)->IsValue() && ref_to_local(reinterpret_cast<const v8::Value&>(self))->IsName();
 }
 
 bool v8__Data__IsNumber(const v8::Data& self) {
-  return self.IsValue() && reinterpret_cast<const v8::Value&>(self).IsNumber();
+  return ref_to_local(self)->IsValue() && ref_to_local(reinterpret_cast<const v8::Value&>(self))->IsNumber();
 }
 
 bool v8__Data__IsObjectTemplate(const v8::Data& self) {
-  return self.IsObjectTemplate();
+  return ref_to_local(self)->IsObjectTemplate();
 }
 
 bool v8__Data__IsPrimitive(const v8::Data& self) {
-  return self.IsValue() &&
-         reinterpret_cast<const v8::Value&>(self).IsPrimitive();
+  return ref_to_local(self)->IsValue() &&
+         ref_to_local(reinterpret_cast<const v8::Value&>(self))->IsPrimitive();
 }
 
-bool v8__Data__IsPrivate(const v8::Data& self) { return self.IsPrivate(); }
+bool v8__Data__IsPrivate(const v8::Data& self) { return ref_to_local(self)->IsPrivate(); }
 
 bool v8__Data__IsString(const v8::Data& self) {
-  return self.IsValue() && reinterpret_cast<const v8::Value&>(self).IsString();
+  return ref_to_local(self)->IsValue() && ref_to_local(reinterpret_cast<const v8::Value&>(self))->IsString();
 }
 
 bool v8__Data__IsSymbol(const v8::Data& self) {
-  return self.IsValue() && reinterpret_cast<const v8::Value&>(self).IsSymbol();
+  return ref_to_local(self)->IsValue() && ref_to_local(reinterpret_cast<const v8::Value&>(self))->IsSymbol();
 }
 
-bool v8__Data__IsValue(const v8::Data& self) { return self.IsValue(); }
+bool v8__Data__IsValue(const v8::Data& self) { return ref_to_local(self)->IsValue(); }
 
 bool v8__Value__IsUndefined(const v8::Value& self) {
-  return self.IsUndefined();
+  return ref_to_local(self)->IsUndefined();
 }
 
-bool v8__Value__IsNull(const v8::Value& self) { return self.IsNull(); }
+bool v8__Value__IsNull(const v8::Value& self) { return ref_to_local(self)->IsNull(); }
 
 bool v8__Value__IsNullOrUndefined(const v8::Value& self) {
-  return self.IsNullOrUndefined();
+  return ref_to_local(self)->IsNullOrUndefined();
 }
 
-bool v8__Value__IsTrue(const v8::Value& self) { return self.IsTrue(); }
+bool v8__Value__IsTrue(const v8::Value& self) { return ref_to_local(self)->IsTrue(); }
 
-bool v8__Value__IsFalse(const v8::Value& self) { return self.IsFalse(); }
+bool v8__Value__IsFalse(const v8::Value& self) { return ref_to_local(self)->IsFalse(); }
 
-bool v8__Value__IsName(const v8::Value& self) { return self.IsName(); }
+bool v8__Value__IsName(const v8::Value& self) { return ref_to_local(self)->IsName(); }
 
-bool v8__Value__IsString(const v8::Value& self) { return self.IsString(); }
+bool v8__Value__IsString(const v8::Value& self) { return ref_to_local(self)->IsString(); }
 
-bool v8__Value__IsSymbol(const v8::Value& self) { return self.IsSymbol(); }
+bool v8__Value__IsSymbol(const v8::Value& self) { return ref_to_local(self)->IsSymbol(); }
 
-bool v8__Value__IsFunction(const v8::Value& self) { return self.IsFunction(); }
+bool v8__Value__IsFunction(const v8::Value& self) { return ref_to_local(self)->IsFunction(); }
 
-bool v8__Value__IsArray(const v8::Value& self) { return self.IsArray(); }
+bool v8__Value__IsArray(const v8::Value& self) { return ref_to_local(self)->IsArray(); }
 
-bool v8__Value__IsObject(const v8::Value& self) { return self.IsObject(); }
+bool v8__Value__IsObject(const v8::Value& self) { return ref_to_local(self)->IsObject(); }
 
-bool v8__Value__IsBigInt(const v8::Value& self) { return self.IsBigInt(); }
+bool v8__Value__IsBigInt(const v8::Value& self) { return ref_to_local(self)->IsBigInt(); }
 
-bool v8__Value__IsBoolean(const v8::Value& self) { return self.IsBoolean(); }
+bool v8__Value__IsBoolean(const v8::Value& self) { return ref_to_local(self)->IsBoolean(); }
 
-bool v8__Value__IsNumber(const v8::Value& self) { return self.IsNumber(); }
+bool v8__Value__IsNumber(const v8::Value& self) { return ref_to_local(self)->IsNumber(); }
 
-bool v8__Value__IsExternal(const v8::Value& self) { return self.IsExternal(); }
+bool v8__Value__IsExternal(const v8::Value& self) { return ref_to_local(self)->IsExternal(); }
 
-bool v8__Value__IsInt32(const v8::Value& self) { return self.IsInt32(); }
+bool v8__Value__IsInt32(const v8::Value& self) { return ref_to_local(self)->IsInt32(); }
 
-bool v8__Value__IsUint32(const v8::Value& self) { return self.IsUint32(); }
+bool v8__Value__IsUint32(const v8::Value& self) { return ref_to_local(self)->IsUint32(); }
 
-bool v8__Value__IsDate(const v8::Value& self) { return self.IsDate(); }
+bool v8__Value__IsDate(const v8::Value& self) { return ref_to_local(self)->IsDate(); }
 
 bool v8__Value__IsArgumentsObject(const v8::Value& self) {
-  return self.IsArgumentsObject();
+  return ref_to_local(self)->IsArgumentsObject();
 }
 
 bool v8__Value__IsBigIntObject(const v8::Value& self) {
-  return self.IsBigIntObject();
+  return ref_to_local(self)->IsBigIntObject();
 }
 
 bool v8__Value__IsBooleanObject(const v8::Value& self) {
-  return self.IsBooleanObject();
+  return ref_to_local(self)->IsBooleanObject();
 }
 
 bool v8__Value__IsNumberObject(const v8::Value& self) {
-  return self.IsNumberObject();
+  return ref_to_local(self)->IsNumberObject();
 }
 
 bool v8__Value__IsStringObject(const v8::Value& self) {
-  return self.IsStringObject();
+  return ref_to_local(self)->IsStringObject();
 }
 
 bool v8__Value__IsSymbolObject(const v8::Value& self) {
-  return self.IsSymbolObject();
+  return ref_to_local(self)->IsSymbolObject();
 }
 
 bool v8__Value__IsNativeError(const v8::Value& self) {
-  return self.IsNativeError();
+  return ref_to_local(self)->IsNativeError();
 }
 
-bool v8__Value__IsRegExp(const v8::Value& self) { return self.IsRegExp(); }
+bool v8__Value__IsRegExp(const v8::Value& self) { return ref_to_local(self)->IsRegExp(); }
 
 bool v8__Value__IsAsyncFunction(const v8::Value& self) {
-  return self.IsAsyncFunction();
+  return ref_to_local(self)->IsAsyncFunction();
 }
 
 bool v8__Value__IsGeneratorFunction(const v8::Value& self) {
-  return self.IsGeneratorFunction();
+  return ref_to_local(self)->IsGeneratorFunction();
 }
 
 bool v8__Value__IsGeneratorObject(const v8::Value& self) {
-  return self.IsGeneratorObject();
+  return ref_to_local(self)->IsGeneratorObject();
 }
 
-bool v8__Value__IsPromise(const v8::Value& self) { return self.IsPromise(); }
+bool v8__Value__IsPromise(const v8::Value& self) { return ref_to_local(self)->IsPromise(); }
 
-bool v8__Value__IsMap(const v8::Value& self) { return self.IsMap(); }
+bool v8__Value__IsMap(const v8::Value& self) { return ref_to_local(self)->IsMap(); }
 
-bool v8__Value__IsSet(const v8::Value& self) { return self.IsSet(); }
+bool v8__Value__IsSet(const v8::Value& self) { return ref_to_local(self)->IsSet(); }
 
 bool v8__Value__IsMapIterator(const v8::Value& self) {
-  return self.IsMapIterator();
+  return ref_to_local(self)->IsMapIterator();
 }
 
 bool v8__Value__IsSetIterator(const v8::Value& self) {
-  return self.IsSetIterator();
+  return ref_to_local(self)->IsSetIterator();
 }
 
 bool v8__Value__IsSetGeneratorObject(const v8::Value& self) {
-  return self.IsGeneratorObject();
+  return ref_to_local(self)->IsGeneratorObject();
 }
 
-bool v8__Value__IsWeakMap(const v8::Value& self) { return self.IsWeakMap(); }
+bool v8__Value__IsWeakMap(const v8::Value& self) { return ref_to_local(self)->IsWeakMap(); }
 
-bool v8__Value__IsWeakSet(const v8::Value& self) { return self.IsWeakSet(); }
+bool v8__Value__IsWeakSet(const v8::Value& self) { return ref_to_local(self)->IsWeakSet(); }
 
 bool v8__Value__IsArrayBuffer(const v8::Value& self) {
-  return self.IsArrayBuffer();
+  return ref_to_local(self)->IsArrayBuffer();
 }
 
 bool v8__Value__IsArrayBufferView(const v8::Value& self) {
-  return self.IsArrayBufferView();
+  return ref_to_local(self)->IsArrayBufferView();
 }
 
 bool v8__Value__IsTypedArray(const v8::Value& self) {
-  return self.IsTypedArray();
+  return ref_to_local(self)->IsTypedArray();
 }
 
 bool v8__Value__IsUint8Array(const v8::Value& self) {
-  return self.IsUint8Array();
+  return ref_to_local(self)->IsUint8Array();
 }
 
 bool v8__Value__IsUint8ClampedArray(const v8::Value& self) {
-  return self.IsUint8ClampedArray();
+  return ref_to_local(self)->IsUint8ClampedArray();
 }
 
 bool v8__Value__IsInt8Array(const v8::Value& self) {
-  return self.IsInt8Array();
+  return ref_to_local(self)->IsInt8Array();
 }
 
 bool v8__Value__IsUint16Array(const v8::Value& self) {
-  return self.IsUint16Array();
+  return ref_to_local(self)->IsUint16Array();
 }
 
 bool v8__Value__IsInt16Array(const v8::Value& self) {
-  return self.IsInt16Array();
+  return ref_to_local(self)->IsInt16Array();
 }
 
 bool v8__Value__IsUint32Array(const v8::Value& self) {
-  return self.IsUint32Array();
+  return ref_to_local(self)->IsUint32Array();
 }
 
 bool v8__Value__IsInt32Array(const v8::Value& self) {
-  return self.IsInt32Array();
+  return ref_to_local(self)->IsInt32Array();
 }
 
 bool v8__Value__IsFloat16Array(const v8::Value& self) {
-  return self.IsFloat16Array();
+  return ref_to_local(self)->IsFloat16Array();
 }
 
 bool v8__Value__IsFloat32Array(const v8::Value& self) {
-  return self.IsFloat32Array();
+  return ref_to_local(self)->IsFloat32Array();
 }
 
 bool v8__Value__IsFloat64Array(const v8::Value& self) {
-  return self.IsFloat64Array();
+  return ref_to_local(self)->IsFloat64Array();
 }
 
 bool v8__Value__IsBigInt64Array(const v8::Value& self) {
-  return self.IsBigInt64Array();
+  return ref_to_local(self)->IsBigInt64Array();
 }
 
 bool v8__Value__IsBigUint64Array(const v8::Value& self) {
-  return self.IsBigUint64Array();
+  return ref_to_local(self)->IsBigUint64Array();
 }
 
-bool v8__Value__IsDataView(const v8::Value& self) { return self.IsDataView(); }
+bool v8__Value__IsDataView(const v8::Value& self) { return ref_to_local(self)->IsDataView(); }
 
 bool v8__Value__IsSharedArrayBuffer(const v8::Value& self) {
-  return self.IsSharedArrayBuffer();
+  return ref_to_local(self)->IsSharedArrayBuffer();
 }
 
-bool v8__Value__IsProxy(const v8::Value& self) { return self.IsProxy(); }
+bool v8__Value__IsProxy(const v8::Value& self) { return ref_to_local(self)->IsProxy(); }
 
 bool v8__Value__IsWasmModuleObject(const v8::Value& self) {
-  return self.IsWasmModuleObject();
+  return ref_to_local(self)->IsWasmModuleObject();
 }
 
 bool v8__Value__IsWasmMemoryObject(const v8::Value& self) {
-  return self.IsWasmMemoryObject();
+  return ref_to_local(self)->IsWasmMemoryObject();
 }
 
 bool v8__Value__IsModuleNamespaceObject(const v8::Value& self) {
-  return self.IsModuleNamespaceObject();
+  return ref_to_local(self)->IsModuleNamespaceObject();
 }
 
 bool v8__Value__StrictEquals(const v8::Value& self, const v8::Value& that) {
-  return self.StrictEquals(ptr_to_local(&that));
+  return ref_to_local(self)->StrictEquals(ref_to_local(that));
 }
 
 bool v8__Value__SameValue(const v8::Value& self, const v8::Value& that) {
-  return self.SameValue(ptr_to_local(&that));
+  return ref_to_local(self)->SameValue(ref_to_local(that));
 }
 
 const v8::Uint32* v8__Value__ToUint32(const v8::Value& self,
                                       const v8::Context& context) {
-  return maybe_local_to_ptr(self.ToUint32(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(self)->ToUint32(ref_to_local(context)));
 }
 
 const v8::Int32* v8__Value__ToInt32(const v8::Value& self,
                                     const v8::Context& context) {
-  return maybe_local_to_ptr(self.ToInt32(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(self)->ToInt32(ref_to_local(context)));
 }
 
 const v8::Integer* v8__Value__ToInteger(const v8::Value& self,
                                         const v8::Context& context) {
-  return maybe_local_to_ptr(self.ToInteger(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(self)->ToInteger(ref_to_local(context)));
 }
 
 const v8::BigInt* v8__Value__ToBigInt(const v8::Value& self,
                                       const v8::Context& context) {
-  return maybe_local_to_ptr(self.ToBigInt(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(self)->ToBigInt(ref_to_local(context)));
 }
 
 const v8::String* v8__Value__ToString(const v8::Value& self,
                                       const v8::Context& context) {
-  return maybe_local_to_ptr(self.ToString(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(self)->ToString(ref_to_local(context)));
 }
 
 const v8::String* v8__Value__ToDetailString(const v8::Value& self,
                                             const v8::Context& context) {
-  return maybe_local_to_ptr(self.ToDetailString(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(self)->ToDetailString(ref_to_local(context)));
 }
 
 const v8::Number* v8__Value__ToNumber(const v8::Value& self,
                                       const v8::Context& context) {
-  return maybe_local_to_ptr(self.ToNumber(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(self)->ToNumber(ref_to_local(context)));
 }
 
 const v8::Object* v8__Value__ToObject(const v8::Value& self,
                                       const v8::Context& context) {
-  return maybe_local_to_ptr(self.ToObject(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(self)->ToObject(ref_to_local(context)));
 }
 
 const v8::Boolean* v8__Value__ToBoolean(const v8::Value& self,
                                         v8::Isolate* isolate) {
-  return local_to_ptr(self.ToBoolean(isolate));
+  return local_to_ptr(ref_to_local(self)->ToBoolean(isolate));
 }
 
 void v8__Value__InstanceOf(const v8::Value& self, const v8::Context& context,
                            const v8::Object& object, v8::Maybe<bool>* out) {
   v8::Value* self_non_const = const_cast<v8::Value*>(&self);
   *out =
-      self_non_const->InstanceOf(ptr_to_local(&context), ptr_to_local(&object));
+      self_non_const->InstanceOf(ref_to_local(context), ref_to_local(object));
 }
 
 void v8__Value__NumberValue(const v8::Value& self, const v8::Context& context,
                             v8::Maybe<double>* out) {
-  *out = self.NumberValue(ptr_to_local(&context));
+  *out = ref_to_local(self)->NumberValue(ref_to_local(context));
 }
 
 void v8__Value__IntegerValue(const v8::Value& self, const v8::Context& context,
                              v8::Maybe<int64_t>* out) {
-  *out = self.IntegerValue(ptr_to_local(&context));
+  *out = ref_to_local(self)->IntegerValue(ref_to_local(context));
 }
 
 void v8__Value__Uint32Value(const v8::Value& self, const v8::Context& context,
                             v8::Maybe<uint32_t>* out) {
-  *out = self.Uint32Value(ptr_to_local(&context));
+  *out = ref_to_local(self)->Uint32Value(ref_to_local(context));
 }
 
 void v8__Value__Int32Value(const v8::Value& self, const v8::Context& context,
                            v8::Maybe<int32_t>* out) {
-  *out = self.Int32Value(ptr_to_local(&context));
+  *out = ref_to_local(self)->Int32Value(ref_to_local(context));
 }
 
 bool v8__Value__BooleanValue(const v8::Value& self, v8::Isolate* isolate) {
-  return self.BooleanValue(isolate);
+  return ref_to_local(self)->BooleanValue(isolate);
 }
 
 const v8::String* v8__Value__TypeOf(v8::Value& self, v8::Isolate* isolate) {
-  return local_to_ptr(self.TypeOf(isolate));
+  return local_to_ptr(ref_to_local(self)->TypeOf(isolate));
 }
 
-uint32_t v8__Value__GetHash(v8::Value& self) { return self.GetHash(); }
+uint32_t v8__Value__GetHash(v8::Value& self) { return ref_to_local(self)->GetHash(); }
 
 const v8::Primitive* v8__Null(v8::Isolate* isolate) {
   return local_to_ptr(v8::Null(isolate));
@@ -984,7 +984,7 @@ const v8::Boolean* v8__Boolean__New(v8::Isolate* isolate, bool value) {
 int v8__FixedArray__Length(const v8::FixedArray& self) { return self.Length(); }
 
 const v8::Data* v8__FixedArray__Get(const v8::FixedArray& self, int index) {
-  return local_to_ptr(ptr_to_local(&self)->Get(index));
+  return local_to_ptr(ref_to_local(self)->Get(index));
 }
 
 const v8::PrimitiveArray* v8__PrimitiveArray__New(v8::Isolate* isolate,
@@ -999,12 +999,12 @@ int v8__PrimitiveArray__Length(const v8::PrimitiveArray& self) {
 void v8__PrimitiveArray__Set(const v8::PrimitiveArray& self,
                              v8::Isolate* isolate, int index,
                              const v8::Primitive& item) {
-  ptr_to_local(&self)->Set(isolate, index, ptr_to_local(&item));
+  ref_to_local(self)->Set(isolate, index, ref_to_local(item));
 }
 
 const v8::Primitive* v8__PrimitiveArray__Get(const v8::PrimitiveArray& self,
                                              v8::Isolate* isolate, int index) {
-  return local_to_ptr(ptr_to_local(&self)->Get(isolate, index));
+  return local_to_ptr(ref_to_local(self)->Get(isolate, index));
 }
 
 v8::BackingStore* v8__ArrayBuffer__NewBackingStore__with_byte_length(
@@ -1023,34 +1023,34 @@ v8::BackingStore* v8__ArrayBuffer__NewBackingStore__with_data(
 }
 
 two_pointers_t v8__ArrayBuffer__GetBackingStore(const v8::ArrayBuffer& self) {
-  return make_pod<two_pointers_t>(ptr_to_local(&self)->GetBackingStore());
+  return make_pod<two_pointers_t>(ref_to_local(self)->GetBackingStore());
 }
 
 bool v8__BackingStore__IsResizableByUserJavaScript(
     const v8::BackingStore& self) {
-  return ptr_to_local(&self)->IsResizableByUserJavaScript();
+  return ref_to_local(self)->IsResizableByUserJavaScript();
 }
 
 void* v8__ArrayBuffer__Data(const v8::ArrayBuffer& self) {
-  return ptr_to_local(&self)->Data();
+  return ref_to_local(self)->Data();
 }
 
 MaybeBool v8__ArrayBuffer__Detach(const v8::ArrayBuffer& self,
                                   const v8::Value* key) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->Detach(ptr_to_local(key)));
+  return maybe_to_maybe_bool(ref_to_local(self)->Detach(ptr_to_local(key)));
 }
 
 bool v8__ArrayBuffer__IsDetachable(const v8::ArrayBuffer& self) {
-  return ptr_to_local(&self)->IsDetachable();
+  return ref_to_local(self)->IsDetachable();
 }
 
 bool v8__ArrayBuffer__WasDetached(const v8::ArrayBuffer& self) {
-  return ptr_to_local(&self)->WasDetached();
+  return ref_to_local(self)->WasDetached();
 }
 
 void v8__ArrayBuffer__SetDetachKey(const v8::ArrayBuffer& self,
                                    const v8::Value* key) {
-  return ptr_to_local(&self)->SetDetachKey(ptr_to_local(key));
+  return ref_to_local(self)->SetDetachKey(ptr_to_local(key));
 }
 
 void* v8__BackingStore__Data(const v8::BackingStore& self) {
@@ -1063,6 +1063,11 @@ size_t v8__BackingStore__ByteLength(const v8::BackingStore& self) {
 
 bool v8__BackingStore__IsShared(const v8::BackingStore& self) {
   return self.IsShared();
+}
+
+// GetBackingStore returns an owning std::shared_ptr in two-pointer storage.
+void v8__BackingStore__shared_ptr_DESTRUCT(std::shared_ptr<v8::BackingStore>* self) {
+  self->~shared_ptr();
 }
 
 void v8__BackingStore__DELETE(v8::BackingStore* self) { delete self; }
@@ -1121,7 +1126,7 @@ long std__shared_ptr__v8__ArrayBuffer__Allocator__use_count(
 }
 
 int v8__Name__GetIdentityHash(const v8::Name& self) {
-  return ptr_to_local(&self)->GetIdentityHash();
+  return ref_to_local(self)->GetIdentityHash();
 }
 
 const v8::String* v8__String__Empty(v8::Isolate* isolate) {
@@ -1296,7 +1301,7 @@ void v8__String__ValueView__CONSTRUCT(uninit_t<v8::String::ValueView>* buf,
                                       v8::Isolate* isolate,
                                       const v8::String& string) {
   construct_in_place<v8::String::ValueView>(buf, isolate,
-                                            ptr_to_local(&string));
+                                            ref_to_local(string));
 }
 
 void v8__String__ValueView__DESTRUCT(v8::String::ValueView* self) {
@@ -1326,12 +1331,12 @@ const v8::Symbol* v8__Symbol__New(v8::Isolate* isolate,
 
 const v8::Symbol* v8__Symbol__For(v8::Isolate* isolate,
                                   const v8::String& description) {
-  return local_to_ptr(v8::Symbol::For(isolate, ptr_to_local(&description)));
+  return local_to_ptr(v8::Symbol::For(isolate, ref_to_local(description)));
 }
 
 const v8::Symbol* v8__Symbol__ForApi(v8::Isolate* isolate,
                                      const v8::String& description) {
-  return local_to_ptr(v8::Symbol::ForApi(isolate, ptr_to_local(&description)));
+  return local_to_ptr(v8::Symbol::ForApi(isolate, ref_to_local(description)));
 }
 
 #define V(NAME)                                                   \
@@ -1354,7 +1359,7 @@ V(Unscopables)
 
 const v8::Value* v8__Symbol__Description(const v8::Symbol& self,
                                          v8::Isolate* isolate) {
-  return local_to_ptr(ptr_to_local(&self)->Description(isolate));
+  return local_to_ptr(ref_to_local(self)->Description(isolate));
 }
 
 const v8::Private* v8__Private__New(v8::Isolate* isolate,
@@ -1368,19 +1373,19 @@ const v8::Private* v8__Private__ForApi(v8::Isolate* isolate,
 }
 
 const v8::Value* v8__Private__Name(const v8::Private& self) {
-  return local_to_ptr(ptr_to_local(&self)->Name());
+  return local_to_ptr(ref_to_local(self)->Name());
 }
 
 void v8__Template__Set(const v8::Template& self, const v8::Name& key,
                        const v8::Data& value, v8::PropertyAttribute attr) {
-  ptr_to_local(&self)->Set(ptr_to_local(&key), ptr_to_local(&value), attr);
+  ref_to_local(self)->Set(ref_to_local(key), ref_to_local(value), attr);
 }
 
 void v8__Template__SetIntrinsicDataProperty(const v8::Template& self,
                                             const v8::Name& key,
                                             v8::Intrinsic intrinsic,
                                             v8::PropertyAttribute attr) {
-  ptr_to_local(&self)->SetIntrinsicDataProperty(ptr_to_local(&key), intrinsic,
+  ref_to_local(self)->SetIntrinsicDataProperty(ref_to_local(key), intrinsic,
                                                 attr);
 }
 
@@ -1391,22 +1396,22 @@ const v8::ObjectTemplate* v8__ObjectTemplate__New__DEFAULT(
 
 const v8::ObjectTemplate* v8__ObjectTemplate__New(
     v8::Isolate* isolate, const v8::FunctionTemplate& templ) {
-  return local_to_ptr(v8::ObjectTemplate::New(isolate, ptr_to_local(&templ)));
+  return local_to_ptr(v8::ObjectTemplate::New(isolate, ref_to_local(templ)));
 }
 
 const v8::Object* v8__ObjectTemplate__NewInstance(
     const v8::ObjectTemplate& self, const v8::Context& context) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->NewInstance(ptr_to_local(&context)));
+      ref_to_local(self)->NewInstance(ref_to_local(context)));
 }
 
 int v8__ObjectTemplate__InternalFieldCount(const v8::ObjectTemplate& self) {
-  return ptr_to_local(&self)->InternalFieldCount();
+  return ref_to_local(self)->InternalFieldCount();
 }
 
 void v8__ObjectTemplate__SetInternalFieldCount(const v8::ObjectTemplate& self,
                                                int value) {
-  ptr_to_local(&self)->SetInternalFieldCount(value);
+  ref_to_local(self)->SetInternalFieldCount(value);
 }
 
 void v8__ObjectTemplate__SetNativeDataProperty(
@@ -1414,7 +1419,7 @@ void v8__ObjectTemplate__SetNativeDataProperty(
     v8::AccessorNameGetterCallback getter,
     v8::AccessorNameSetterCallback setter, const v8::Value* data_or_null,
     v8::PropertyAttribute attr) {
-  ptr_to_local(&self)->SetNativeDataProperty(ptr_to_local(&key), getter, setter,
+  ref_to_local(self)->SetNativeDataProperty(ref_to_local(key), getter, setter,
                                              ptr_to_local(data_or_null), attr);
 }
 
@@ -1427,7 +1432,7 @@ void v8__ObjectTemplate__SetNamedPropertyHandler(
     v8::NamedPropertyDefinerCallback definer,
     v8::NamedPropertyDescriptorCallback descriptor,
     const v8::Value* data_or_null, v8::PropertyHandlerFlags flags) {
-  ptr_to_local(&self)->SetHandler(v8::NamedPropertyHandlerConfiguration(
+  ref_to_local(self)->SetHandler(v8::NamedPropertyHandlerConfiguration(
       getter, setter, query, deleter, enumerator, definer, descriptor,
       ptr_to_local(data_or_null), flags));
 }
@@ -1441,7 +1446,7 @@ void v8__ObjectTemplate__SetIndexedPropertyHandler(
     v8::IndexedPropertyDefinerCallbackV2 definer,
     v8::IndexedPropertyDescriptorCallbackV2 descriptor,
     const v8::Value* data_or_null, v8::PropertyHandlerFlags flags) {
-  ptr_to_local(&self)->SetHandler(v8::IndexedPropertyHandlerConfiguration(
+  ref_to_local(self)->SetHandler(v8::IndexedPropertyHandlerConfiguration(
       getter, setter, query, deleter, enumerator, definer, descriptor,
       ptr_to_local(data_or_null), flags));
 }
@@ -1451,12 +1456,12 @@ void v8__ObjectTemplate__SetAccessorProperty(const v8::ObjectTemplate& self,
                                              v8::FunctionTemplate& getter,
                                              v8::FunctionTemplate& setter,
                                              v8::PropertyAttribute attr) {
-  ptr_to_local(&self)->SetAccessorProperty(
-      ptr_to_local(&key), ptr_to_local(&getter), ptr_to_local(&setter), attr);
+  ref_to_local(self)->SetAccessorProperty(
+      ref_to_local(key), ref_to_local(getter), ref_to_local(setter), attr);
 }
 
 void v8__ObjectTemplate__SetImmutableProto(const v8::ObjectTemplate& self) {
-  return ptr_to_local(&self)->SetImmutableProto();
+  return ref_to_local(self)->SetImmutableProto();
 }
 
 const v8::Object* v8__Object__New(v8::Isolate* isolate) {
@@ -1467,9 +1472,9 @@ const v8::Object* v8__Object__New__with_prototype_and_properties(
     v8::Isolate* isolate, const v8::Value& prototype_or_null,
     const v8::Name* const names[], const v8::Value* const values[],
     size_t length) {
-  return local_to_ptr(v8::Object::New(isolate, ptr_to_local(&prototype_or_null),
-                                      const_ptr_array_to_local_array(names),
-                                      const_ptr_array_to_local_array(values),
+  return local_to_ptr(v8::Object::New(isolate, ref_to_local(prototype_or_null),
+                                      const_ptr_array_to_local_array(names, length),
+                                      const_ptr_array_to_local_array(values, length),
                                       length));
 }
 
@@ -1477,48 +1482,48 @@ const v8::Value* v8__Object__Get(const v8::Object& self,
                                  const v8::Context& context,
                                  const v8::Value& key) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->Get(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Get(ref_to_local(context), ref_to_local(key)));
 }
 
 const v8::Value* v8__Object__GetWithReceiver(const v8::Object& self,
                                              const v8::Context& context,
                                              const v8::Value& key,
                                              const v8::Object& receiver) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->Get(
-      ptr_to_local(&context), ptr_to_local(&key), ptr_to_local(&receiver)));
+  return maybe_local_to_ptr(ref_to_local(self)->Get(
+      ref_to_local(context), ref_to_local(key), ref_to_local(receiver)));
 }
 
 const v8::Value* v8__Object__GetIndex(const v8::Object& self,
                                       const v8::Context& context,
                                       uint32_t index) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->Get(ptr_to_local(&context), index));
+      ref_to_local(self)->Get(ref_to_local(context), index));
 }
 
 void* v8__Object__GetAlignedPointerFromInternalField(const v8::Object& self,
                                                      int index) {
-  return ptr_to_local(&self)->GetAlignedPointerFromInternalField(
+  return ref_to_local(self)->GetAlignedPointerFromInternalField(
       index, v8::kEmbedderDataTypeTagDefault);
 }
 
 void v8__Object__SetAlignedPointerInInternalField(const v8::Object& self,
                                                   int index, void* value) {
-  ptr_to_local(&self)->SetAlignedPointerInInternalField(
+  ref_to_local(self)->SetAlignedPointerInInternalField(
       index, value, v8::kEmbedderDataTypeTagDefault);
 }
 
 bool v8__Object__IsApiWrapper(const v8::Object& self) {
-  return ptr_to_local(&self)->IsApiWrapper();
+  return ref_to_local(self)->IsApiWrapper();
 }
 
 const v8::Value* v8__Object__GetPrototype(const v8::Object& self) {
-  return local_to_ptr(ptr_to_local(&self)->GetPrototypeV2());
+  return local_to_ptr(ref_to_local(self)->GetPrototypeV2());
 }
 
 MaybeBool v8__Object__Set(const v8::Object& self, const v8::Context& context,
                           const v8::Value& key, const v8::Value& value) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->Set(
-      ptr_to_local(&context), ptr_to_local(&key), ptr_to_local(&value)));
+  return maybe_to_maybe_bool(ref_to_local(self)->Set(
+      ref_to_local(context), ref_to_local(key), ref_to_local(value)));
 }
 
 MaybeBool v8__Object__SetWithReceiver(const v8::Object& self,
@@ -1527,22 +1532,22 @@ MaybeBool v8__Object__SetWithReceiver(const v8::Object& self,
                                       const v8::Value& value,
                                       const v8::Object& receiver) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Set(ptr_to_local(&context), ptr_to_local(&key),
-                               ptr_to_local(&value), ptr_to_local(&receiver)));
+      ref_to_local(self)->Set(ref_to_local(context), ref_to_local(key),
+                               ref_to_local(value), ref_to_local(receiver)));
 }
 
 MaybeBool v8__Object__SetIndex(const v8::Object& self,
                                const v8::Context& context, uint32_t index,
                                const v8::Value& value) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->Set(
-      ptr_to_local(&context), index, ptr_to_local(&value)));
+  return maybe_to_maybe_bool(ref_to_local(self)->Set(
+      ref_to_local(context), index, ref_to_local(value)));
 }
 
 MaybeBool v8__Object__SetPrototype(const v8::Object& self,
                                    const v8::Context& context,
                                    const v8::Value& prototype) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->SetPrototypeV2(
-      ptr_to_local(&context), ptr_to_local(&prototype)));
+  return maybe_to_maybe_bool(ref_to_local(self)->SetPrototypeV2(
+      ref_to_local(context), ref_to_local(prototype)));
 }
 
 const v8::String* v8__Object__GetConstructorName(v8::Object& self) {
@@ -1553,8 +1558,8 @@ MaybeBool v8__Object__CreateDataProperty(const v8::Object& self,
                                          const v8::Context& context,
                                          const v8::Name& key,
                                          const v8::Value& value) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->CreateDataProperty(
-      ptr_to_local(&context), ptr_to_local(&key), ptr_to_local(&value)));
+  return maybe_to_maybe_bool(ref_to_local(self)->CreateDataProperty(
+      ref_to_local(context), ref_to_local(key), ref_to_local(value)));
 }
 
 MaybeBool v8__Object__DefineOwnProperty(const v8::Object& self,
@@ -1562,16 +1567,16 @@ MaybeBool v8__Object__DefineOwnProperty(const v8::Object& self,
                                         const v8::Name& key,
                                         const v8::Value& value,
                                         v8::PropertyAttribute attr) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->DefineOwnProperty(
-      ptr_to_local(&context), ptr_to_local(&key), ptr_to_local(&value), attr));
+  return maybe_to_maybe_bool(ref_to_local(self)->DefineOwnProperty(
+      ref_to_local(context), ref_to_local(key), ref_to_local(value), attr));
 }
 
 MaybeBool v8__Object__DefineProperty(const v8::Object& self,
                                      const v8::Context& context,
                                      const v8::Name& key,
                                      v8::PropertyDescriptor& desc) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->DefineProperty(
-      ptr_to_local(&context), ptr_to_local(&key), desc));
+  return maybe_to_maybe_bool(ref_to_local(self)->DefineProperty(
+      ref_to_local(context), ref_to_local(key), desc));
 }
 
 MaybeBool v8__Object__SetAccessor(const v8::Object& self,
@@ -1581,17 +1586,17 @@ MaybeBool v8__Object__SetAccessor(const v8::Object& self,
                                   v8::AccessorNameSetterCallback setter,
                                   const v8::Value* data_or_null,
                                   v8::PropertyAttribute attr) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->SetNativeDataProperty(
-      ptr_to_local(&context), ptr_to_local(&key), getter, setter,
+  return maybe_to_maybe_bool(ref_to_local(self)->SetNativeDataProperty(
+      ref_to_local(context), ref_to_local(key), getter, setter,
       ptr_to_local(data_or_null), attr));
 }
 
 int v8__Object__GetIdentityHash(const v8::Object& self) {
-  return ptr_to_local(&self)->GetIdentityHash();
+  return ref_to_local(self)->GetIdentityHash();
 }
 
 const v8::Context* v8__Object__GetCreationContext(const v8::Object& self) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->GetCreationContext());
+  return maybe_local_to_ptr(ref_to_local(self)->GetCreationContext());
 }
 
 // v8::PropertyFilter
@@ -1641,41 +1646,41 @@ const v8::Array* v8__Object__GetPropertyNames(
 MaybeBool v8__Object__Has(const v8::Object& self, const v8::Context& context,
                           const v8::Value& key) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Has(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Has(ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Object__HasIndex(const v8::Object& self,
                                const v8::Context& context, uint32_t index) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Has(ptr_to_local(&context), index));
+      ref_to_local(self)->Has(ref_to_local(context), index));
 }
 
 MaybeBool v8__Object__HasOwnProperty(const v8::Object& self,
                                      const v8::Context& context,
                                      const v8::Name& key) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->HasOwnProperty(
-      ptr_to_local(&context), ptr_to_local(&key)));
+  return maybe_to_maybe_bool(ref_to_local(self)->HasOwnProperty(
+      ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Object__Delete(const v8::Object& self, const v8::Context& context,
                              const v8::Value& key) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Delete(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Delete(ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Object__DeleteIndex(const v8::Object& self,
                                   const v8::Context& context, uint32_t index) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Delete(ptr_to_local(&context), index));
+      ref_to_local(self)->Delete(ref_to_local(context), index));
 }
 
 int v8__Object__InternalFieldCount(const v8::Object& self) {
-  return ptr_to_local(&self)->InternalFieldCount();
+  return ref_to_local(self)->InternalFieldCount();
 }
 
 const v8::Data* v8__Object__GetInternalField(const v8::Object& self,
                                              int index) {
-  return local_to_ptr(ptr_to_local(&self)->GetInternalField(index));
+  return local_to_ptr(ref_to_local(self)->GetInternalField(index));
 }
 
 static_assert(static_cast<int>(v8::IntegrityLevel::kFrozen) == 0,
@@ -1687,81 +1692,81 @@ MaybeBool v8__Object__SetIntegrityLevel(const v8::Object& self,
                                         const v8::Context& context,
                                         v8::IntegrityLevel level) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->SetIntegrityLevel(ptr_to_local(&context), level));
+      ref_to_local(self)->SetIntegrityLevel(ref_to_local(context), level));
 }
 
 void v8__Object__SetInternalField(const v8::Object& self, int index,
                                   const v8::Data& data) {
-  ptr_to_local(&self)->SetInternalField(index, ptr_to_local(&data));
+  ref_to_local(self)->SetInternalField(index, ref_to_local(data));
 }
 
 const v8::Value* v8__Object__GetPrivate(const v8::Object& self,
                                         const v8::Context& context,
                                         const v8::Private& key) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->GetPrivate(
-      ptr_to_local(&context), ptr_to_local(&key)));
+  return maybe_local_to_ptr(ref_to_local(self)->GetPrivate(
+      ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Object__SetPrivate(const v8::Object& self,
                                  const v8::Context& context,
                                  const v8::Private& key,
                                  const v8::Value& value) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->SetPrivate(
-      ptr_to_local(&context), ptr_to_local(&key), ptr_to_local(&value)));
+  return maybe_to_maybe_bool(ref_to_local(self)->SetPrivate(
+      ref_to_local(context), ref_to_local(key), ref_to_local(value)));
 }
 
 MaybeBool v8__Object__DeletePrivate(const v8::Object& self,
                                     const v8::Context& context,
                                     const v8::Private& key) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->DeletePrivate(
-      ptr_to_local(&context), ptr_to_local(&key)));
+  return maybe_to_maybe_bool(ref_to_local(self)->DeletePrivate(
+      ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Object__HasPrivate(const v8::Object& self,
                                  const v8::Context& context,
                                  const v8::Private& key) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->HasPrivate(
-      ptr_to_local(&context), ptr_to_local(&key)));
+  return maybe_to_maybe_bool(ref_to_local(self)->HasPrivate(
+      ref_to_local(context), ref_to_local(key)));
 }
 
 void v8__Object__GetPropertyAttributes(const v8::Object& self,
                                        const v8::Context& context,
                                        const v8::Value& key,
                                        v8::Maybe<v8::PropertyAttribute>* out) {
-  *out = ptr_to_local(&self)->GetPropertyAttributes(ptr_to_local(&context),
-                                                    ptr_to_local(&key));
+  *out = ref_to_local(self)->GetPropertyAttributes(ref_to_local(context),
+                                                    ref_to_local(key));
 }
 
 const v8::Value* v8__Object__GetOwnPropertyDescriptor(
     const v8::Object& self, const v8::Context& context, const v8::Name& key) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->GetOwnPropertyDescriptor(
-      ptr_to_local(&context), ptr_to_local(&key)));
+  return maybe_local_to_ptr(ref_to_local(self)->GetOwnPropertyDescriptor(
+      ref_to_local(context), ref_to_local(key)));
 }
 
 const v8::Value* v8__Object__GetRealNamedProperty(const v8::Object& self,
                                                   const v8::Context& context,
                                                   const v8::Name& key) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->GetRealNamedProperty(
-      ptr_to_local(&context), ptr_to_local(&key)));
+  return maybe_local_to_ptr(ref_to_local(self)->GetRealNamedProperty(
+      ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Object__HasRealNamedProperty(const v8::Object& self,
                                            const v8::Context& context,
                                            const v8::Name& key) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->HasRealNamedProperty(
-      ptr_to_local(&context), ptr_to_local(&key)));
+  return maybe_to_maybe_bool(ref_to_local(self)->HasRealNamedProperty(
+      ref_to_local(context), ref_to_local(key)));
 }
 
 void v8__Object__GetRealNamedPropertyAttributes(
     const v8::Object& self, const v8::Context& context, const v8::Name& key,
     v8::Maybe<v8::PropertyAttribute>* out) {
-  *out = ptr_to_local(&self)->GetRealNamedPropertyAttributes(
-      ptr_to_local(&context), ptr_to_local(&key));
+  *out = ref_to_local(self)->GetRealNamedPropertyAttributes(
+      ref_to_local(context), ref_to_local(key));
 }
 
 const v8::Array* v8__Object__PreviewEntries(const v8::Object& self,
                                             bool* is_key_value) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->PreviewEntries(is_key_value));
+  return maybe_local_to_ptr(ref_to_local(self)->PreviewEntries(is_key_value));
 }
 
 const v8::Array* v8__Array__New(v8::Isolate* isolate, int length) {
@@ -1772,7 +1777,7 @@ const v8::Array* v8__Array__New_with_elements(v8::Isolate* isolate,
                                               const v8::Value* const elements[],
                                               size_t length) {
   return local_to_ptr(v8::Array::New(
-      isolate, const_ptr_array_to_local_array(elements), length));
+      isolate, const_ptr_array_to_local_array(elements, length), length));
 }
 
 uint32_t v8__Array__Length(const v8::Array& self) { return self.Length(); }
@@ -1784,7 +1789,7 @@ const v8::Date* v8__Date__New(const v8::Context& context, double time) {
   v8::MaybeLocal<v8::Date> maybe_date;
 
   v8::Local<v8::Value> value;
-  if (v8::Date::New(ptr_to_local(&context), time).ToLocal(&value)) {
+  if (v8::Date::New(ref_to_local(context), time).ToLocal(&value)) {
     assert(value->IsDate());
     maybe_date = value.As<v8::Date>();
   }
@@ -1810,31 +1815,31 @@ const v8::Map* v8__Map__New(v8::Isolate* isolate) {
 size_t v8__Map__Size(const v8::Map& self) { return self.Size(); }
 
 void v8__Map__Clear(const v8::Map& self) {
-  return ptr_to_local(&self)->Clear();
+  return ref_to_local(self)->Clear();
 }
 
 const v8::Value* v8__Map__Get(const v8::Map& self, const v8::Context& context,
                               const v8::Value& key) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->Get(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Get(ref_to_local(context), ref_to_local(key)));
 }
 
 v8::Map* v8__Map__Set(const v8::Map& self, const v8::Context& context,
                       const v8::Value& key, const v8::Value& value) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->Set(
-      ptr_to_local(&context), ptr_to_local(&key), ptr_to_local(&value)));
+  return maybe_local_to_ptr(ref_to_local(self)->Set(
+      ref_to_local(context), ref_to_local(key), ref_to_local(value)));
 }
 
 MaybeBool v8__Map__Has(const v8::Map& self, const v8::Context& context,
                        const v8::Value& key) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Has(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Has(ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Map__Delete(const v8::Map& self, const v8::Context& context,
                           const v8::Value& key) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Delete(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Delete(ref_to_local(context), ref_to_local(key)));
 }
 
 const v8::Array* v8__Map__As__Array(const v8::Map& self) {
@@ -1848,25 +1853,25 @@ const v8::Set* v8__Set__New(v8::Isolate* isolate) {
 size_t v8__Set__Size(const v8::Set& self) { return self.Size(); }
 
 void v8__Set__Clear(const v8::Set& self) {
-  return ptr_to_local(&self)->Clear();
+  return ref_to_local(self)->Clear();
 }
 
 v8::Set* v8__Set__Add(const v8::Set& self, const v8::Context& context,
                       const v8::Value& key) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->Add(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Add(ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Set__Has(const v8::Set& self, const v8::Context& context,
                        const v8::Value& key) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Has(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Has(ref_to_local(context), ref_to_local(key)));
 }
 
 MaybeBool v8__Set__Delete(const v8::Set& self, const v8::Context& context,
                           const v8::Value& key) {
   return maybe_to_maybe_bool(
-      ptr_to_local(&self)->Delete(ptr_to_local(&context), ptr_to_local(&key)));
+      ref_to_local(self)->Delete(ref_to_local(context), ref_to_local(key)));
 }
 
 const v8::Array* v8__Set__As__Array(const v8::Set& self) {
@@ -1874,32 +1879,32 @@ const v8::Array* v8__Set__As__Array(const v8::Set& self) {
 }
 
 const v8::Number* v8__Number__New(v8::Isolate* isolate, double value) {
-  return *v8::Number::New(isolate, value);
+  return local_to_ptr(v8::Number::New(isolate, value));
 }
 const v8::Number* v8__Number__NewInt(v8::Isolate* isolate, int32_t value) {
-  return *v8::Number::New(isolate, value);
+  return local_to_ptr(v8::Number::New(isolate, value));
 }
 const v8::Number* v8__Number__NewUInt(v8::Isolate* isolate, uint32_t value) {
-  return *v8::Number::New(isolate, value);
+  return local_to_ptr(v8::Number::New(isolate, value));
 }
 
 
-double v8__Number__Value(const v8::Number& self) { return self.Value(); }
+double v8__Number__Value(const v8::Number& self) { return ref_to_local(self)->Value(); }
 
 const v8::Integer* v8__Integer__New(v8::Isolate* isolate, int32_t value) {
-  return *v8::Integer::New(isolate, value);
+  return local_to_ptr(v8::Integer::New(isolate, value));
 }
 
 const v8::Integer* v8__Integer__NewFromUnsigned(v8::Isolate* isolate,
                                                 uint32_t value) {
-  return *v8::Integer::NewFromUnsigned(isolate, value);
+  return local_to_ptr(v8::Integer::NewFromUnsigned(isolate, value));
 }
 
-int64_t v8__Integer__Value(const v8::Integer& self) { return self.Value(); }
+int64_t v8__Integer__Value(const v8::Integer& self) { return ref_to_local(self)->Value(); }
 
-uint32_t v8__Uint32__Value(const v8::Uint32& self) { return self.Value(); }
+uint32_t v8__Uint32__Value(const v8::Uint32& self) { return ref_to_local(self)->Value(); }
 
-int32_t v8__Int32__Value(const v8::Int32& self) { return self.Value(); }
+int32_t v8__Int32__Value(const v8::Int32& self) { return ref_to_local(self)->Value(); }
 
 const v8::BigInt* v8__BigInt__New(v8::Isolate* isolate, int64_t value) {
   return local_to_ptr(v8::BigInt::New(isolate, value));
@@ -1914,56 +1919,56 @@ const v8::BigInt* v8__BigInt__NewFromWords(const v8::Context& context,
                                            int sign_bit, int word_count,
                                            const uint64_t words[]) {
   return maybe_local_to_ptr(v8::BigInt::NewFromWords(
-      ptr_to_local(&context), sign_bit, word_count, words));
+      ref_to_local(context), sign_bit, word_count, words));
 }
 
 uint64_t v8__BigInt__Uint64Value(const v8::BigInt& self, bool* lossless) {
-  return ptr_to_local(&self)->Uint64Value(lossless);
+  return ref_to_local(self)->Uint64Value(lossless);
 }
 
 int64_t v8__BigInt__Int64Value(const v8::BigInt& self, bool* lossless) {
-  return ptr_to_local(&self)->Int64Value(lossless);
+  return ref_to_local(self)->Int64Value(lossless);
 }
 
 int v8__BigInt__WordCount(const v8::BigInt& self) {
-  return ptr_to_local(&self)->WordCount();
+  return ref_to_local(self)->WordCount();
 }
 
 void v8__BigInt__ToWordsArray(const v8::BigInt& self, int* sign_bit,
                               int* word_count, uint64_t words[]) {
-  ptr_to_local(&self)->ToWordsArray(sign_bit, word_count, words);
+  ref_to_local(self)->ToWordsArray(sign_bit, word_count, words);
 }
 
 const v8::ArrayBuffer* v8__ArrayBufferView__Buffer(
     const v8::ArrayBufferView& self) {
-  return local_to_ptr(ptr_to_local(&self)->Buffer());
+  return local_to_ptr(ref_to_local(self)->Buffer());
 }
 
 const void* v8__ArrayBufferView__Buffer__Data(const v8::ArrayBufferView& self) {
-  return ptr_to_local(&self)->Buffer()->Data();
+  return ref_to_local(self)->Buffer()->Data();
 }
 
 size_t v8__ArrayBufferView__ByteLength(const v8::ArrayBufferView& self) {
-  return ptr_to_local(&self)->ByteLength();
+  return ref_to_local(self)->ByteLength();
 }
 
 size_t v8__ArrayBufferView__ByteOffset(const v8::ArrayBufferView& self) {
-  return ptr_to_local(&self)->ByteOffset();
+  return ref_to_local(self)->ByteOffset();
 }
 
 bool v8__ArrayBufferView__HasBuffer(const v8::ArrayBufferView& self) {
-  return ptr_to_local(&self)->HasBuffer();
+  return ref_to_local(self)->HasBuffer();
 }
 
 size_t v8__ArrayBufferView__CopyContents(const v8::ArrayBufferView& self,
                                          void* dest, int byte_length) {
-  return ptr_to_local(&self)->CopyContents(dest, byte_length);
+  return ref_to_local(self)->CopyContents(dest, byte_length);
 }
 
 memory_span_t v8__ArrayBufferView__GetContents(const v8::ArrayBufferView& self,
                                                memory_span_t rstorage) {
   v8::MemorySpan<uint8_t> storage{rstorage.data, rstorage.size};
-  v8::MemorySpan<uint8_t> span = ptr_to_local(&self)->GetContents(storage);
+  v8::MemorySpan<uint8_t> span = ref_to_local(self)->GetContents(storage);
   return {span.data(), span.size()};
 }
 
@@ -2035,7 +2040,7 @@ size_t v8__ArrayBuffer__ByteLength(const v8::ArrayBuffer& self) {
 
 const v8::DataView* v8__DataView__New(const v8::ArrayBuffer& ab, size_t offset,
                                       size_t length) {
-  return local_to_ptr(v8::DataView::New(ptr_to_local(&ab), offset, length));
+  return local_to_ptr(v8::DataView::New(ref_to_local(ab), offset, length));
 }
 
 struct InternalFieldData {
@@ -2071,51 +2076,51 @@ const v8::Context* v8__Context__New(v8::Isolate* isolate,
 }
 
 bool v8__Context__EQ(const v8::Context& self, const v8::Context& other) {
-  return ptr_to_local(&self) == ptr_to_local(&other);
+  return ref_to_local(self) == ref_to_local(other);
 }
 
 void v8__Context__Enter(const v8::Context& self) {
-  ptr_to_local(&self)->Enter();
+  ref_to_local(self)->Enter();
 }
 
-void v8__Context__Exit(const v8::Context& self) { ptr_to_local(&self)->Exit(); }
+void v8__Context__Exit(const v8::Context& self) { ref_to_local(self)->Exit(); }
 
 const v8::Object* v8__Context__Global(const v8::Context& self) {
-  return local_to_ptr(ptr_to_local(&self)->Global());
+  return local_to_ptr(ref_to_local(self)->Global());
 }
 
 uint32_t v8__Context__GetNumberOfEmbedderDataFields(const v8::Context& self) {
-  return ptr_to_local(&self)->GetNumberOfEmbedderDataFields();
+  return ref_to_local(self)->GetNumberOfEmbedderDataFields();
 }
 
 void* v8__Context__GetAlignedPointerFromEmbedderData(const v8::Context& self,
                                                      int index) {
-  return ptr_to_local(&self)->GetAlignedPointerFromEmbedderData(index);
+  return ref_to_local(self)->GetAlignedPointerFromEmbedderData(index);
 }
 
 void v8__Context__SetAlignedPointerInEmbedderData(v8::Context& self, int index,
                                                   void* value) {
-  ptr_to_local(&self)->SetAlignedPointerInEmbedderData(index, value);
+  ref_to_local(self)->SetAlignedPointerInEmbedderData(index, value);
 }
 
 const v8::Data* v8__Context__GetEmbedderData(const v8::Context& self,
                                               int index) {
-  return local_to_ptr(ptr_to_local(&self)->GetEmbedderDataV2(index));
+  return local_to_ptr(ref_to_local(self)->GetEmbedderDataV2(index));
 }
 
 void v8__Context__SetEmbedderData(v8::Context& self, int index,
                                   const v8::Data* value) {
-  ptr_to_local(&self)->SetEmbedderDataV2(index, ptr_to_local(value));
+  ref_to_local(self)->SetEmbedderDataV2(index, ptr_to_local(value));
 }
 
 const v8::Data* v8__Context__GetDataFromSnapshotOnce(v8::Context& self,
                                                      size_t index) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->GetDataFromSnapshotOnce<v8::Data>(index));
+      ref_to_local(self)->GetDataFromSnapshotOnce<v8::Data>(index));
 }
 
 const v8::Object* v8__Context__GetExtrasBindingObject(v8::Context& self) {
-  return local_to_ptr(ptr_to_local(&self)->GetExtrasBindingObject());
+  return local_to_ptr(ref_to_local(self)->GetExtrasBindingObject());
 }
 
 void v8__Context__SetPromiseHooks(v8::Context& self,
@@ -2123,41 +2128,41 @@ void v8__Context__SetPromiseHooks(v8::Context& self,
                                   const v8::Function* before_hook,
                                   const v8::Function* after_hook,
                                   const v8::Function* resolve_hook) {
-  ptr_to_local(&self)->SetPromiseHooks(
+  ref_to_local(self)->SetPromiseHooks(
       ptr_to_local(init_hook), ptr_to_local(before_hook),
       ptr_to_local(after_hook), ptr_to_local(resolve_hook));
 }
 
 const v8::Value* v8__Context__GetSecurityToken(const v8::Context& self) {
-  auto value = ptr_to_local(&self)->GetSecurityToken();
+  auto value = ref_to_local(self)->GetSecurityToken();
   return local_to_ptr(value);
 }
 
 void v8__Context__SetSecurityToken(v8::Context& self, const v8::Value* token) {
-  auto c = ptr_to_local(&self);
+  auto c = ref_to_local(self);
   c->SetSecurityToken(ptr_to_local(token));
 }
 
 void v8__Context__UseDefaultSecurityToken(v8::Context& self) {
-  ptr_to_local(&self)->UseDefaultSecurityToken();
+  ref_to_local(self)->UseDefaultSecurityToken();
 }
 
 void v8__Context__AllowCodeGenerationFromStrings(v8::Context& self,
                                                  bool allow) {
-  ptr_to_local(&self)->AllowCodeGenerationFromStrings(allow);
+  ref_to_local(self)->AllowCodeGenerationFromStrings(allow);
 }
 
 bool v8__Context_IsCodeGenerationFromStringsAllowed(v8::Context& self) {
-  return ptr_to_local(&self)->IsCodeGenerationFromStringsAllowed();
+  return ref_to_local(self)->IsCodeGenerationFromStringsAllowed();
 }
 
 v8::MicrotaskQueue* v8__Context__GetMicrotaskQueue(v8::Context& self) {
-  return ptr_to_local(&self)->GetMicrotaskQueue();
+  return ref_to_local(self)->GetMicrotaskQueue();
 }
 
 void v8__Context__SetMicrotaskQueue(v8::Context& self,
                                     v8::MicrotaskQueue* microtask_queue) {
-  ptr_to_local(&self)->SetMicrotaskQueue(microtask_queue);
+  ref_to_local(self)->SetMicrotaskQueue(microtask_queue);
 }
 
 const v8::Context* v8__Context__FromSnapshot(
@@ -2215,7 +2220,7 @@ const v8::String* v8__Message__Get(const v8::Message& self) {
 
 const v8::String* v8__Message__GetSourceLine(const v8::Message& self,
                                              const v8::Context& context) {
-  return maybe_local_to_ptr(self.GetSourceLine(ptr_to_local(&context)));
+  return maybe_local_to_ptr(self.GetSourceLine(ref_to_local(context)));
 }
 
 const v8::Value* v8__Message__GetScriptResourceName(const v8::Message& self) {
@@ -2224,7 +2229,7 @@ const v8::Value* v8__Message__GetScriptResourceName(const v8::Message& self) {
 
 int v8__Message__GetLineNumber(const v8::Message& self,
                                const v8::Context& context) {
-  v8::Maybe<int> maybe = self.GetLineNumber(ptr_to_local(&context));
+  v8::Maybe<int> maybe = self.GetLineNumber(ref_to_local(context));
   if (maybe.IsJust()) {
     return maybe.ToChecked();
   } else {
@@ -2267,39 +2272,39 @@ bool v8__Message__IsSharedCrossOrigin(const v8::Message& self) {
 bool v8__Message__IsOpaque(const v8::Message& self) { return self.IsOpaque(); }
 
 const v8::Value* v8__Exception__RangeError(const v8::String& message) {
-  return local_to_ptr(v8::Exception::RangeError(ptr_to_local(&message)));
+  return local_to_ptr(v8::Exception::RangeError(ref_to_local(message)));
 }
 
 const v8::Value* v8__Exception__ReferenceError(const v8::String& message) {
-  return local_to_ptr(v8::Exception::ReferenceError(ptr_to_local(&message)));
+  return local_to_ptr(v8::Exception::ReferenceError(ref_to_local(message)));
 }
 
 const v8::Value* v8__Exception__SyntaxError(const v8::String& message) {
-  return local_to_ptr(v8::Exception::SyntaxError(ptr_to_local(&message)));
+  return local_to_ptr(v8::Exception::SyntaxError(ref_to_local(message)));
 }
 
 const v8::Value* v8__Exception__TypeError(const v8::String& message) {
-  return local_to_ptr(v8::Exception::TypeError(ptr_to_local(&message)));
+  return local_to_ptr(v8::Exception::TypeError(ref_to_local(message)));
 }
 
 const v8::Value* v8__Exception__Error(const v8::String& message) {
-  return local_to_ptr(v8::Exception::Error(ptr_to_local(&message)));
+  return local_to_ptr(v8::Exception::Error(ref_to_local(message)));
 }
 
 const v8::Message* v8__Exception__CreateMessage(v8::Isolate* isolate,
                                                 const v8::Value& exception) {
   return local_to_ptr(
-      v8::Exception::CreateMessage(isolate, ptr_to_local(&exception)));
+      v8::Exception::CreateMessage(isolate, ref_to_local(exception)));
 }
 
 const v8::StackTrace* v8__Exception__GetStackTrace(const v8::Value& exception) {
-  return local_to_ptr(v8::Exception::GetStackTrace(ptr_to_local(&exception)));
+  return local_to_ptr(v8::Exception::GetStackTrace(ref_to_local(exception)));
 }
 
 MaybeBool v8__Exception__CaptureStackTrace(const v8::Context& context,
                                            const v8::Object& object) {
   return maybe_to_maybe_bool(v8::Exception::CaptureStackTrace(
-      ptr_to_local(&context), ptr_to_local(&object)));
+      ref_to_local(context), ref_to_local(object)));
 }
 
 const v8::Function* v8__Function__New(
@@ -2308,7 +2313,7 @@ const v8::Function* v8__Function__New(
     v8::ConstructorBehavior constructor_behavior,
     v8::SideEffectType side_effect_type) {
   return maybe_local_to_ptr(v8::Function::New(
-      ptr_to_local(&context), callback, ptr_to_local(data_or_null), length,
+      ref_to_local(context), callback, ptr_to_local(data_or_null), length,
       constructor_behavior, side_effect_type));
 }
 
@@ -2317,16 +2322,16 @@ const v8::Value* v8__Function__Call(const v8::Function& self,
                                     const v8::Value& recv, int argc,
                                     const v8::Value* const argv[]) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->Call(ptr_to_local(&context), ptr_to_local(&recv),
-                                argc, const_ptr_array_to_local_array(argv)));
+      ref_to_local(self)->Call(ref_to_local(context), ref_to_local(recv),
+                                argc, const_ptr_array_to_local_array(argv, argc)));
 }
 
 const v8::Object* v8__Function__NewInstance(const v8::Function& self,
                                             const v8::Context& context,
                                             int argc,
                                             const v8::Value* const argv[]) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->NewInstance(
-      ptr_to_local(&context), argc, const_ptr_array_to_local_array(argv)));
+  return maybe_local_to_ptr(ref_to_local(self)->NewInstance(
+      ref_to_local(context), argc, const_ptr_array_to_local_array(argv, argc)));
 }
 
 const v8::Value* v8__Function__GetName(const v8::Function& self) {
@@ -2334,25 +2339,27 @@ const v8::Value* v8__Function__GetName(const v8::Function& self) {
 }
 
 void v8__Function__SetName(const v8::Function& self, const v8::String& name) {
-  return ptr_to_local(&self)->SetName(ptr_to_local(&name));
+  return ref_to_local(self)->SetName(ref_to_local(name));
 }
 
 int v8__Function__GetScriptColumnNumber(const v8::Function& self) {
-  return ptr_to_local(&self)->GetScriptColumnNumber();
+  return ref_to_local(self)->GetScriptColumnNumber();
 }
 
 int v8__Function__GetScriptLineNumber(const v8::Function& self) {
-  return ptr_to_local(&self)->GetScriptLineNumber();
+  return ref_to_local(self)->GetScriptLineNumber();
 }
 
 int v8__Function__ScriptId(const v8::Function& self) {
-  return ptr_to_local(&self)->ScriptId();
+  return ref_to_local(self)->ScriptId();
 }
+
+void v8__ScriptOrigin__DELETE(v8::ScriptOrigin* self) { delete self; }
 
 const v8::ScriptOrigin* v8__Function__GetScriptOrigin(
     const v8::Function& self) {
   std::unique_ptr<v8::ScriptOrigin> u = std::make_unique<v8::ScriptOrigin>(
-      ptr_to_local(&self)->GetScriptOrigin());
+      ref_to_local(self)->GetScriptOrigin());
   return u.release();
 }
 
@@ -2377,35 +2384,35 @@ const v8::FunctionTemplate* v8__FunctionTemplate__New(
 const v8::Function* v8__FunctionTemplate__GetFunction(
     const v8::FunctionTemplate& self, const v8::Context& context) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->GetFunction(ptr_to_local(&context)));
+      ref_to_local(self)->GetFunction(ref_to_local(context)));
 }
 
 void v8__FunctionTemplate__SetClassName(const v8::FunctionTemplate& self,
                                         const v8::String& name) {
-  ptr_to_local(&self)->SetClassName(ptr_to_local(&name));
+  ref_to_local(self)->SetClassName(ref_to_local(name));
 }
 
 void v8__FunctionTemplate__Inherit(const v8::FunctionTemplate& self,
                                    const v8::FunctionTemplate& parent) {
-  ptr_to_local(&self)->Inherit(ptr_to_local(&parent));
+  ref_to_local(self)->Inherit(ref_to_local(parent));
 }
 
 void v8__FunctionTemplate__ReadOnlyPrototype(const v8::FunctionTemplate& self) {
-  ptr_to_local(&self)->ReadOnlyPrototype();
+  ref_to_local(self)->ReadOnlyPrototype();
 }
 
 void v8__FunctionTemplate__RemovePrototype(const v8::FunctionTemplate& self) {
-  ptr_to_local(&self)->RemovePrototype();
+  ref_to_local(self)->RemovePrototype();
 }
 
 const v8::ObjectTemplate* v8__FunctionTemplate__PrototypeTemplate(
     const v8::FunctionTemplate& self) {
-  return local_to_ptr(ptr_to_local(&self)->PrototypeTemplate());
+  return local_to_ptr(ref_to_local(self)->PrototypeTemplate());
 }
 
 const v8::ObjectTemplate* v8__FunctionTemplate__InstanceTemplate(
     const v8::FunctionTemplate& self) {
-  return local_to_ptr(ptr_to_local(&self)->InstanceTemplate());
+  return local_to_ptr(ref_to_local(self)->InstanceTemplate());
 }
 
 
@@ -2486,13 +2493,13 @@ const v8::RegExp* v8__RegExp__New(const v8::Context& context,
                                   const v8::String& pattern,
                                   v8::RegExp::Flags flags) {
   return maybe_local_to_ptr(
-      v8::RegExp::New(ptr_to_local(&context), ptr_to_local(&pattern), flags));
+      v8::RegExp::New(ref_to_local(context), ref_to_local(pattern), flags));
 }
 
 const v8::Object* v8__RegExp__Exec(v8::RegExp& self, const v8::Context& context,
                                    const v8::String& subject) {
   return maybe_local_to_ptr(
-      self.Exec(ptr_to_local(&context), ptr_to_local(&subject)));
+      self.Exec(ref_to_local(context), ref_to_local(subject)));
 }
 
 const v8::String* v8__RegExp__GetSource(const v8::RegExp& self) {
@@ -2501,7 +2508,7 @@ const v8::String* v8__RegExp__GetSource(const v8::RegExp& self) {
 
 void v8__ReturnValue__Value__Set(v8::ReturnValue<v8::Value>* self,
                                  const v8::Value& value) {
-  self->Set(ptr_to_local(&value));
+  self->Set(ref_to_local(value));
 }
 
 void v8__ReturnValue__Value__Set__Bool(v8::ReturnValue<v8::Value>* self,
@@ -2637,7 +2644,7 @@ const v8::Value* v8__TryCatch__Exception(const v8::TryCatch& self) {
 
 const v8::Value* v8__TryCatch__StackTrace(const v8::TryCatch& self,
                                           const v8::Context& context) {
-  return maybe_local_to_ptr(self.StackTrace(ptr_to_local(&context)));
+  return maybe_local_to_ptr(self.StackTrace(ref_to_local(context)));
 }
 
 const v8::Message* v8__TryCatch__Message(const v8::TryCatch& self) {
@@ -2690,7 +2697,7 @@ void v8__AllowJavascriptExecutionScope__DESTRUCT(
   const v8::NAME* v8__##NAME##__New(const v8::ArrayBuffer& buf_ptr,      \
                                     size_t byte_offset, size_t length) { \
     return local_to_ptr(                                                 \
-        v8::NAME::New(ptr_to_local(&buf_ptr), byte_offset, length));     \
+        v8::NAME::New(ref_to_local(buf_ptr), byte_offset, length));     \
   }
 EACH_TYPED_ARRAY(V)
 #undef V
@@ -2699,60 +2706,60 @@ const v8::Script* v8__Script__Compile(const v8::Context& context,
                                       const v8::String& source,
                                       const v8::ScriptOrigin* origin) {
   return maybe_local_to_ptr(
-      v8::Script::Compile(ptr_to_local(&context), ptr_to_local(&source),
+      v8::Script::Compile(ref_to_local(context), ref_to_local(source),
                           const_cast<v8::ScriptOrigin*>(origin)));
 }
 
 const v8::UnboundScript* v8__Script__GetUnboundScript(
     const v8::Script& script) {
-  return local_to_ptr(ptr_to_local(&script)->GetUnboundScript());
+  return local_to_ptr(ref_to_local(script)->GetUnboundScript());
 }
 
 const v8::Script* v8__UnboundScript__BindToCurrentContext(
     const v8::UnboundScript& unbound_script) {
-  return local_to_ptr(ptr_to_local(&unbound_script)->BindToCurrentContext());
+  return local_to_ptr(ref_to_local(unbound_script)->BindToCurrentContext());
 }
 
 v8::ScriptCompiler::CachedData* v8__UnboundScript__CreateCodeCache(
     const v8::UnboundScript& unbound_script) {
-  return v8::ScriptCompiler::CreateCodeCache(ptr_to_local(&unbound_script));
+  return v8::ScriptCompiler::CreateCodeCache(ref_to_local(unbound_script));
 }
 
 v8::Value* v8__UnboundScript__GetSourceMappingURL(
     const v8::UnboundScript& unbound_script) {
-  return local_to_ptr(ptr_to_local(&unbound_script)->GetSourceMappingURL());
+  return local_to_ptr(ref_to_local(unbound_script)->GetSourceMappingURL());
 }
 
 v8::Value* v8__UnboundScript__GetSourceURL(
     const v8::UnboundScript& unbound_script) {
-  return local_to_ptr(ptr_to_local(&unbound_script)->GetSourceURL());
+  return local_to_ptr(ref_to_local(unbound_script)->GetSourceURL());
 }
 
 v8::ScriptCompiler::CachedData* v8__UnboundModuleScript__CreateCodeCache(
     const v8::UnboundModuleScript& unbound_module_script) {
   return v8::ScriptCompiler::CreateCodeCache(
-      ptr_to_local(&unbound_module_script));
+      ref_to_local(unbound_module_script));
 }
 
 v8::Value* v8__UnboundModuleScript__GetSourceMappingURL(
     const v8::UnboundModuleScript& unbound_module_script) {
   return local_to_ptr(
-      ptr_to_local(&unbound_module_script)->GetSourceMappingURL());
+      ref_to_local(unbound_module_script)->GetSourceMappingURL());
 }
 
 v8::Value* v8__UnboundModuleScript__GetSourceURL(
     const v8::UnboundModuleScript& unbound_module_script) {
-  return local_to_ptr(ptr_to_local(&unbound_module_script)->GetSourceURL());
+  return local_to_ptr(ref_to_local(unbound_module_script)->GetSourceURL());
 }
 
 v8::ScriptCompiler::CachedData* v8__Function__CreateCodeCache(
     const v8::Function& self) {
-  return v8::ScriptCompiler::CreateCodeCacheForFunction(ptr_to_local(&self));
+  return v8::ScriptCompiler::CreateCodeCacheForFunction(ref_to_local(self));
 }
 
 const v8::Value* v8__Script__Run(const v8::Script& script,
                                  const v8::Context& context) {
-  return maybe_local_to_ptr(ptr_to_local(&script)->Run(ptr_to_local(&context)));
+  return maybe_local_to_ptr(ref_to_local(script)->Run(ref_to_local(context)));
 }
 
 void v8__ScriptOrigin__CONSTRUCT(
@@ -2762,32 +2769,32 @@ void v8__ScriptOrigin__CONSTRUCT(
     const v8::Value* source_map_url, bool resource_is_opaque, bool is_wasm,
     bool is_module, const v8::Data* host_defined_options) {
   construct_in_place<v8::ScriptOrigin>(
-      buf, ptr_to_local(&resource_name), resource_line_offset,
+      buf, ref_to_local(resource_name), resource_line_offset,
       resource_column_offset, resource_is_shared_cross_origin, script_id,
       ptr_to_local(source_map_url), resource_is_opaque, is_wasm, is_module,
       ptr_to_local(host_defined_options));
 }
 
 int v8__ScriptOrigin__ScriptId(const v8::ScriptOrigin& self) {
-  return ptr_to_local(&self)->ScriptId();
+  return ref_to_local(self)->ScriptId();
 }
 
 const v8::Value* v8__ScriptOrigin__ResourceName(const v8::ScriptOrigin& self) {
-  return local_to_ptr(ptr_to_local(&self)->ResourceName());
+  return local_to_ptr(ref_to_local(self)->ResourceName());
 }
 
 const v8::Value* v8__ScriptOrigin__SourceMapUrl(const v8::ScriptOrigin& self) {
-  return local_to_ptr(ptr_to_local(&self)->SourceMapUrl());
+  return local_to_ptr(ref_to_local(self)->SourceMapUrl());
 }
 
 const v8::Value* v8__ScriptOrModule__GetResourceName(
     const v8::ScriptOrModule& self) {
-  return local_to_ptr(ptr_to_local(&self)->GetResourceName());
+  return local_to_ptr(ref_to_local(self)->GetResourceName());
 }
 
 const v8::Data* v8__ScriptOrModule__HostDefinedOptions(
     const v8::ScriptOrModule& self) {
-  return local_to_ptr(ptr_to_local(&self)->HostDefinedOptions());
+  return local_to_ptr(ref_to_local(self)->HostDefinedOptions());
 }
 
 const v8::SharedArrayBuffer* v8__SharedArrayBuffer__New__with_byte_length(
@@ -2807,7 +2814,7 @@ size_t v8__SharedArrayBuffer__ByteLength(const v8::SharedArrayBuffer& self) {
 
 two_pointers_t v8__SharedArrayBuffer__GetBackingStore(
     const v8::SharedArrayBuffer& self) {
-  return make_pod<two_pointers_t>(ptr_to_local(&self)->GetBackingStore());
+  return make_pod<two_pointers_t>(ref_to_local(self)->GetBackingStore());
 }
 
 v8::BackingStore* v8__SharedArrayBuffer__NewBackingStore__with_byte_length(
@@ -2828,72 +2835,72 @@ v8::BackingStore* v8__SharedArrayBuffer__NewBackingStore__with_data(
 const v8::Value* v8__JSON__Parse(const v8::Context& context,
                                  const v8::String& json_string) {
   return maybe_local_to_ptr(
-      v8::JSON::Parse(ptr_to_local(&context), ptr_to_local(&json_string)));
+      v8::JSON::Parse(ref_to_local(context), ref_to_local(json_string)));
 }
 
 const v8::String* v8__JSON__Stringify(const v8::Context& context,
                                       const v8::Value& json_object) {
   return maybe_local_to_ptr(
-      v8::JSON::Stringify(ptr_to_local(&context), ptr_to_local(&json_object)));
+      v8::JSON::Stringify(ref_to_local(context), ref_to_local(json_object)));
 }
 
 const v8::Promise::Resolver* v8__Promise__Resolver__New(
     const v8::Context& context) {
-  return maybe_local_to_ptr(v8::Promise::Resolver::New(ptr_to_local(&context)));
+  return maybe_local_to_ptr(v8::Promise::Resolver::New(ref_to_local(context)));
 }
 
 const v8::Promise* v8__Promise__Resolver__GetPromise(
     const v8::Promise::Resolver& self) {
-  return local_to_ptr(ptr_to_local(&self)->GetPromise());
+  return local_to_ptr(ref_to_local(self)->GetPromise());
 }
 
 MaybeBool v8__Promise__Resolver__Resolve(const v8::Promise::Resolver& self,
                                          const v8::Context& context,
                                          const v8::Value& value) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->Resolve(
-      ptr_to_local(&context), ptr_to_local(&value)));
+  return maybe_to_maybe_bool(ref_to_local(self)->Resolve(
+      ref_to_local(context), ref_to_local(value)));
 }
 
 MaybeBool v8__Promise__Resolver__Reject(const v8::Promise::Resolver& self,
                                         const v8::Context& context,
                                         const v8::Value& value) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->Reject(ptr_to_local(&context),
-                                                         ptr_to_local(&value)));
+  return maybe_to_maybe_bool(ref_to_local(self)->Reject(ref_to_local(context),
+                                                         ref_to_local(value)));
 }
 
 v8::Promise::PromiseState v8__Promise__State(const v8::Promise& self) {
-  return ptr_to_local(&self)->State();
+  return ref_to_local(self)->State();
 }
 
 bool v8__Promise__HasHandler(const v8::Promise& self) {
-  return ptr_to_local(&self)->HasHandler();
+  return ref_to_local(self)->HasHandler();
 }
 
 const v8::Value* v8__Promise__Result(const v8::Promise& self) {
-  return local_to_ptr(ptr_to_local(&self)->Result());
+  return local_to_ptr(ref_to_local(self)->Result());
 }
 
 const v8::Promise* v8__Promise__Catch(const v8::Promise& self,
                                       const v8::Context& context,
                                       const v8::Function& handler) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->Catch(ptr_to_local(&context),
-                                                       ptr_to_local(&handler)));
+  return maybe_local_to_ptr(ref_to_local(self)->Catch(ref_to_local(context),
+                                                       ref_to_local(handler)));
 }
 
 const v8::Promise* v8__Promise__Then(const v8::Promise& self,
                                      const v8::Context& context,
                                      const v8::Function& handler) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->Then(ptr_to_local(&context),
-                                                      ptr_to_local(&handler)));
+  return maybe_local_to_ptr(ref_to_local(self)->Then(ref_to_local(context),
+                                                      ref_to_local(handler)));
 }
 
 const v8::Promise* v8__Promise__Then2(const v8::Promise& self,
                                       const v8::Context& context,
                                       const v8::Function& on_fulfilled,
                                       const v8::Function& on_rejected) {
-  return maybe_local_to_ptr(ptr_to_local(&self)->Then(
-      ptr_to_local(&context), ptr_to_local(&on_fulfilled),
-      ptr_to_local(&on_rejected)));
+  return maybe_local_to_ptr(ref_to_local(self)->Then(
+      ref_to_local(context), ref_to_local(on_fulfilled),
+      ref_to_local(on_rejected)));
 }
 
 v8::PromiseRejectEvent v8__PromiseRejectMessage__GetEvent(
@@ -2915,22 +2922,22 @@ const v8::Proxy* v8__Proxy__New(const v8::Context& context,
                                 const v8::Object& target,
                                 const v8::Object& handler) {
   return maybe_local_to_ptr(v8::Proxy::New(
-      ptr_to_local(&context), ptr_to_local(&target), ptr_to_local(&handler)));
+      ref_to_local(context), ref_to_local(target), ref_to_local(handler)));
 }
 
 const v8::Value* v8__Proxy__GetHandler(const v8::Proxy& self) {
-  return local_to_ptr(ptr_to_local(&self)->GetHandler());
+  return local_to_ptr(ref_to_local(self)->GetHandler());
 }
 
 const v8::Value* v8__Proxy__GetTarget(const v8::Proxy& self) {
-  return local_to_ptr(ptr_to_local(&self)->GetTarget());
+  return local_to_ptr(ref_to_local(self)->GetTarget());
 }
 
 bool v8__Proxy__IsRevoked(const v8::Proxy& self) {
-  return ptr_to_local(&self)->IsRevoked();
+  return ref_to_local(self)->IsRevoked();
 }
 
-void v8__Proxy__Revoke(const v8::Proxy& self) { ptr_to_local(&self)->Revoke(); }
+void v8__Proxy__Revoke(const v8::Proxy& self) { ref_to_local(self)->Revoke(); }
 
 void v8__SnapshotCreator__CONSTRUCT(uninit_t<v8::SnapshotCreator>* buf,
                                     const v8::Isolate::CreateParams& params) {
@@ -2974,23 +2981,23 @@ v8::StartupData SerializeInternalFields(v8::Local<v8::Object> holder, int index,
 
 void v8__SnapshotCreator__SetDefaultContext(v8::SnapshotCreator* self,
                                             const v8::Context& context) {
-  self->SetDefaultContext(ptr_to_local(&context), SerializeInternalFields);
+  self->SetDefaultContext(ref_to_local(context), SerializeInternalFields);
 }
 
 size_t v8__SnapshotCreator__AddContext(v8::SnapshotCreator* self,
                                        const v8::Context& context) {
-  return self->AddContext(ptr_to_local(&context), SerializeInternalFields);
+  return self->AddContext(ref_to_local(context), SerializeInternalFields);
 }
 
 size_t v8__SnapshotCreator__AddData_to_isolate(v8::SnapshotCreator* self,
                                                const v8::Data& data) {
-  return self->AddData(ptr_to_local(&data));
+  return self->AddData(ref_to_local(data));
 }
 
 size_t v8__SnapshotCreator__AddData_to_context(v8::SnapshotCreator* self,
                                                const v8::Context& context,
                                                const v8::Data& data) {
-  return self->AddData(ptr_to_local(&context), ptr_to_local(&data));
+  return self->AddData(ref_to_local(context), ref_to_local(data));
 }
 
 v8::StartupData v8__SnapshotCreator__CreateBlob(
@@ -3131,7 +3138,7 @@ void v8_inspector__V8Inspector__contextCreated(
     v8_inspector::V8Inspector* self, const v8::Context& context,
     int contextGroupId, v8_inspector::StringView humanReadableName,
     v8_inspector::StringView auxData) {
-  v8_inspector::V8ContextInfo info(ptr_to_local(&context), contextGroupId,
+  v8_inspector::V8ContextInfo info(ref_to_local(context), contextGroupId,
                                    humanReadableName);
   info.auxData = auxData;
   self->contextCreated(info);
@@ -3139,7 +3146,7 @@ void v8_inspector__V8Inspector__contextCreated(
 
 void v8_inspector__V8Inspector__contextDestroyed(
     v8_inspector::V8Inspector* self, const v8::Context& context) {
-  self->contextDestroyed(ptr_to_local(&context));
+  self->contextDestroyed(ref_to_local(context));
 }
 
 bool v8_inspector__V8InspectorSession__canDispatchMethod(
@@ -3154,7 +3161,7 @@ unsigned v8_inspector__V8Inspector__exceptionThrown(
     unsigned line_number, unsigned column_number,
     v8_inspector::V8StackTrace* stack_trace, int script_id) {
   return self->exceptionThrown(
-      ptr_to_local(&context), message, ptr_to_local(&exception),
+      ref_to_local(context), message, ref_to_local(exception),
       detailed_message, url, line_number, column_number,
       static_cast<std::unique_ptr<v8_inspector::V8StackTrace>>(stack_trace),
       script_id);
@@ -3163,7 +3170,7 @@ unsigned v8_inspector__V8Inspector__exceptionThrown(
 v8_inspector::V8StackTrace* v8_inspector__V8Inspector__createStackTrace(
     v8_inspector::V8Inspector* self, const v8::StackTrace& stack_trace) {
   std::unique_ptr<v8_inspector::V8StackTrace> u =
-      self->createStackTrace(ptr_to_local(&stack_trace));
+      self->createStackTrace(ref_to_local(stack_trace));
   return u.release();
 }
 
@@ -3382,7 +3389,7 @@ void v8__Module__SourceOffsetToLocation(const v8::Module& self, int offset,
 }
 
 const v8::Value* v8__Module__GetModuleNamespace(const v8::Module& self) {
-  return local_to_ptr(ptr_to_local(&self)->GetModuleNamespace());
+  return local_to_ptr(ref_to_local(self)->GetModuleNamespace());
 }
 
 int v8__Module__GetIdentityHash(const v8::Module& self) {
@@ -3401,26 +3408,26 @@ MaybeBool v8__Module__InstantiateModule(
     const v8::Module& self, const v8::Context& context,
     v8::Module::ResolveModuleCallback cb,
     v8::Module::ResolveSourceCallback source_callback) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->InstantiateModule(
-      ptr_to_local(&context), cb, source_callback));
+  return maybe_to_maybe_bool(ref_to_local(self)->InstantiateModule(
+      ref_to_local(context), cb, source_callback));
 }
 
 const v8::Value* v8__Module__Evaluate(const v8::Module& self,
                                       const v8::Context& context) {
   return maybe_local_to_ptr(
-      ptr_to_local(&self)->Evaluate(ptr_to_local(&context)));
+      ref_to_local(self)->Evaluate(ref_to_local(context)));
 }
 
 bool v8__Module__IsGraphAsync(const v8::Module& self) {
-  return ptr_to_local(&self)->IsGraphAsync();
+  return ref_to_local(self)->IsGraphAsync();
 }
 
 bool v8__Module__IsSourceTextModule(const v8::Module& self) {
-  return ptr_to_local(&self)->IsSourceTextModule();
+  return ref_to_local(self)->IsSourceTextModule();
 }
 
 bool v8__Module__IsSyntheticModule(const v8::Module& self) {
-  return ptr_to_local(&self)->IsSyntheticModule();
+  return ref_to_local(self)->IsSyntheticModule();
 }
 
 const v8::Module* v8__Module__CreateSyntheticModule(
@@ -3441,13 +3448,13 @@ MaybeBool v8__Module__SetSyntheticModuleExport(const v8::Module& self,
                                                v8::Isolate* isolate,
                                                const v8::String* export_name,
                                                const v8::Value* export_value) {
-  return maybe_to_maybe_bool(ptr_to_local(&self)->SetSyntheticModuleExport(
+  return maybe_to_maybe_bool(ref_to_local(self)->SetSyntheticModuleExport(
       isolate, ptr_to_local(export_name), ptr_to_local(export_value)));
 }
 
 const v8::UnboundModuleScript* v8__Module__GetUnboundModuleScript(
     const v8::Module& self) {
-  return local_to_ptr(ptr_to_local(&self)->GetUnboundModuleScript());
+  return local_to_ptr(ref_to_local(self)->GetUnboundModuleScript());
 }
 
 struct StalledTopLevelAwaitMessage {
@@ -3459,7 +3466,7 @@ size_t v8__Module__GetStalledTopLevelAwaitMessage(
     const v8::Module& self, v8::Isolate* isolate,
     StalledTopLevelAwaitMessage* out_vec, size_t out_len) {
   auto [modules, messages] =
-      ptr_to_local(&self)->GetStalledTopLevelAwaitMessages(isolate);
+      ref_to_local(self)->GetStalledTopLevelAwaitMessages(isolate);
   auto len = std::min(messages.size(), out_len);
   for (size_t i = 0; i < len; i += 1) {
     StalledTopLevelAwaitMessage stalled_message;
@@ -3499,7 +3506,7 @@ static_assert(sizeof(WasmStreamingSharedPtr) <= 2 * sizeof(void*),
 void v8__WasmStreaming__Unpack(v8::Isolate* isolate, const v8::Value& value,
                                WasmStreamingSharedPtr* self) {
   new (self) WasmStreamingSharedPtr();
-  self->inner = v8::WasmStreaming::Unpack(isolate, ptr_to_local(&value));
+  self->inner = v8::WasmStreaming::Unpack(isolate, ref_to_local(value));
 }
 
 void v8__WasmStreaming__shared_ptr_DESTRUCT(WasmStreamingSharedPtr* self) {
@@ -3527,7 +3534,7 @@ void v8__WasmStreaming__SetUrl(WasmStreamingSharedPtr* self, const char* url,
 
 const v8::ArrayBuffer* v8__WasmMemoryObject__Buffer(
     const v8::WasmMemoryObject& self) {
-  return local_to_ptr(ptr_to_local(&self)->Buffer());
+  return local_to_ptr(ref_to_local(self)->Buffer());
 }
 
 using HeapSnapshotCallback = bool (*)(void*, const char*, size_t);

@@ -14,6 +14,13 @@
 
     // sizeof(cpp) -> binding.sizes.<name>
     .sizes = .{
+        .{ .name = "HeapSpaceStatistics", .cpp = "v8::HeapSpaceStatistics" },
+        .{ .name = "String_ValueView", .cpp = "v8::String::ValueView" },
+        .{ .name = "SnapshotCreator", .cpp = "v8::SnapshotCreator" },
+        .{ .name = "Eternal_Data", .cpp = "v8::Eternal<v8::Data>" },
+        .{ .name = "TracedReference_Data", .cpp = "v8::TracedReference<v8::Data>" },
+        .{ .name = "Isolate_AllowJavascriptExecutionScope", .cpp = "v8::Isolate::AllowJavascriptExecutionScope" },
+        .{ .name = "Isolate_DisallowJavascriptExecutionScope", .cpp = "v8::Isolate::DisallowJavascriptExecutionScope" },
         .{ .name = "Isolate_CreateParams", .cpp = "v8::Isolate::CreateParams" },
         .{ .name = "HandleScope", .cpp = "v8::HandleScope" },
         .{ .name = "TryCatch", .cpp = "v8::TryCatch" },

@@ -106,7 +106,7 @@ const helpers =
     \\    return v8.MaybeHandle;
     \\}
     \\
-    ;
+;
 
 pub fn generate(
     arena: std.mem.Allocator,

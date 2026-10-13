@@ -33,7 +33,7 @@ pub fn addSteps(b: *std.Build, v8: v8_build.V8) void {
         run.addArg("check");
         run.addFileArg(v8.lib);
         run.addFileArg(b.path("src/externs.gen.zig"));
-        run.addFileArg(b.path("src/v8.zig"));
+        run.addDirectoryArg(b.path("src/v8"));
         if (b.lazyDependency("rusty_v8", .{})) |rusty| run.addFileArg(rusty.path("src/binding.cc"));
         check_bindings.dependOn(&run.step);
     }

@@ -906,6 +906,9 @@ pub extern fn v8__BackingStore__ByteLength(self: Ref("BackingStore")) usize;
 /// bool (const v8::BackingStore &)
 pub extern fn v8__BackingStore__IsShared(self: Ref("BackingStore")) bool;
 
+/// void (std::shared_ptr<v8::BackingStore> *)
+pub extern fn v8__BackingStore__shared_ptr_DESTRUCT(self: Ptr("std_shared_ptr_BackingStore", false)) void;
+
 /// void (v8::BackingStore *)
 pub extern fn v8__BackingStore__DELETE(self: Ptr("BackingStore", false)) void;
 
@@ -1535,6 +1538,9 @@ pub extern fn v8__Function__GetScriptLineNumber(self: Ref("Function")) c_int;
 
 /// int (const v8::Function &)
 pub extern fn v8__Function__ScriptId(self: Ref("Function")) c_int;
+
+/// void (v8::ScriptOrigin *)
+pub extern fn v8__ScriptOrigin__DELETE(self: Ptr("ScriptOrigin", false)) void;
 
 /// const v8::ScriptOrigin *(const v8::Function &)
 pub extern fn v8__Function__GetScriptOrigin(self: Ref("Function")) Ptr("ScriptOrigin", true);

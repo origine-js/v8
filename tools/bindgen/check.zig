@@ -2,7 +2,7 @@
 //!
 //!   lib      the `v8__*` symbols the built libv8_zig.a really exports (nm)
 //!   gen      the externs in src/externs.gen.zig
-//!   wrapped  the externs v8.zig actually calls (`e.v8__*`)
+//!   wrapped  the externs src/v8/*.zig actually calls (`e.v8__*`)
 //!   rusty    optional: the shims rusty_v8 defines, as a porting checklist
 //!
 //! A mismatch between `lib` and `gen` is a hard failure (stale generated file or
@@ -28,8 +28,18 @@ pub fn run(
     const lib = try libSymbols(arena, io, lib_path);
     const externs_src = try cwd.readFileAlloc(io, externs_path, arena, .limited(1 << 26));
     const gen = try collect(arena, externs_src, "pub extern fn ");
-    const wrapper_src = try cwd.readFileAlloc(io, wrapper_path, arena, .limited(1 << 26));
-    const wrapped = try collect(arena, wrapper_src, "e.");
+    var wrapped: Set = .empty;
+    {
+        var dir = try cwd.openDir(io, wrapper_path, .{ .iterate = true });
+        defer dir.close(io);
+        var walker = try dir.walk(arena);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
+            const src = try dir.readFileAlloc(io, entry.path, arena, .limited(1 << 26));
+            for ((try collect(arena, src, "e.")).keys()) |n| try wrapped.put(arena, n, {});
+        }
+    }
 
     var ok = true;
 
@@ -47,8 +57,13 @@ pub fn run(
 
     // 2. generated externs the wrappers do not call yet.
     var unwrapped: std.ArrayList([]const u8) = .empty;
-    for (gen.keys()) |n| if (!wrapped.contains(n)) try unwrapped.append(arena, n);
-    std.debug.print("\nwrapped by v8.zig: {d} of {d} shims; not wrapped yet: {d}\n", .{ gen.count() - unwrapped.items.len, gen.count(), unwrapped.items.len });
+    // `__SIZEOF` shims only feed build-time layout checks; there is nothing to wrap.
+    var layout_shims: usize = 0;
+    for (gen.keys()) |n| {
+        if (std.mem.endsWith(u8, n, "__SIZEOF")) layout_shims += 1;
+        if (!wrapped.contains(n) and !std.mem.endsWith(u8, n, "__SIZEOF")) try unwrapped.append(arena, n);
+    }
+    std.debug.print("\nwrapped by v8.zig: {d} of {d} runtime shims; not wrapped yet: {d} ({d} layout shims excluded)\n", .{ gen.count() - layout_shims - unwrapped.items.len, gen.count() - layout_shims, unwrapped.items.len, layout_shims });
     try printByClass(arena, unwrapped.items);
 
     // 3. what rusty_v8 has that we do not.

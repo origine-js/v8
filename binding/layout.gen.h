@@ -9,6 +9,13 @@
 #include "v8-fast-api-calls.h"
 
 #ifndef BINDGEN
+static_assert(sizeof(v8::HeapSpaceStatistics) == 40, "HeapSpaceStatistics size changed");
+static_assert(sizeof(v8::String::ValueView) == 32, "String_ValueView size changed");
+static_assert(sizeof(v8::SnapshotCreator) == 8, "SnapshotCreator size changed");
+static_assert(sizeof(v8::Eternal<v8::Data>) == 8, "Eternal_Data size changed");
+static_assert(sizeof(v8::TracedReference<v8::Data>) == 8, "TracedReference_Data size changed");
+static_assert(sizeof(v8::Isolate::AllowJavascriptExecutionScope) == 16, "Isolate_AllowJavascriptExecutionScope size changed");
+static_assert(sizeof(v8::Isolate::DisallowJavascriptExecutionScope) == 16, "Isolate_DisallowJavascriptExecutionScope size changed");
 static_assert(sizeof(v8::Isolate::CreateParams) == 160, "Isolate_CreateParams size changed");
 static_assert(sizeof(v8::HandleScope) == 24, "HandleScope size changed");
 static_assert(sizeof(v8::TryCatch) == 48, "TryCatch size changed");

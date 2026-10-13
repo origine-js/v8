@@ -1,0 +1,169 @@
+//! `bindgen check`: keeps the views of the C ABI honest.
+//!
+//!   lib      the `v8__*` symbols the built libv8_zig.a really exports (nm)
+//!   gen      the externs in src/externs.gen.zig
+//!   wrapped  the externs v8.zig actually calls (`e.v8__*`)
+//!   rusty    optional: the shims rusty_v8 defines, as a porting checklist
+//!
+//! A mismatch between `lib` and `gen` is a hard failure (stale generated file or
+//! a shim without a signature). The rest is a report: what is not wrapped yet
+//! and what rusty_v8 has that this repo does not.
+
+const std = @import("std");
+const Io = std.Io;
+
+const Set = std.array_hash_map.String(void);
+
+/// Returns false when the library and the generated externs disagree.
+pub fn run(
+    arena: std.mem.Allocator,
+    io: Io,
+    lib_path: []const u8,
+    externs_path: []const u8,
+    wrapper_path: []const u8,
+    rusty_path: ?[]const u8,
+) !bool {
+    const cwd = Io.Dir.cwd();
+
+    const lib = try libSymbols(arena, io, lib_path);
+    const externs_src = try cwd.readFileAlloc(io, externs_path, arena, .limited(1 << 26));
+    const gen = try collect(arena, externs_src, "pub extern fn ");
+    const wrapper_src = try cwd.readFileAlloc(io, wrapper_path, arena, .limited(1 << 26));
+    const wrapped = try collect(arena, wrapper_src, "e.");
+
+    var ok = true;
+
+    // 1. library <-> generated externs (hard failure).
+    const only_lib = try difference(arena, lib, gen);
+    const only_gen = try difference(arena, gen, lib);
+    if (only_lib.len != 0 or only_gen.len != 0) {
+        ok = false;
+        std.debug.print("FAIL: libv8_zig.a and src/externs.gen.zig disagree; run `zig build gen`.\n", .{});
+        for (only_lib) |n| std.debug.print("  exported but not declared: {s}\n", .{n});
+        for (only_gen) |n| std.debug.print("  declared but not exported: {s}\n", .{n});
+    } else {
+        std.debug.print("ok: {d} shims exported by the library, all declared in externs.gen.zig\n", .{lib.count()});
+    }
+
+    // 2. generated externs the wrappers do not call yet.
+    var unwrapped: std.ArrayList([]const u8) = .empty;
+    for (gen.keys()) |n| if (!wrapped.contains(n)) try unwrapped.append(arena, n);
+    std.debug.print("\nwrapped by v8.zig: {d} of {d} shims; not wrapped yet: {d}\n", .{ gen.count() - unwrapped.items.len, gen.count(), unwrapped.items.len });
+    try printByClass(arena, unwrapped.items);
+
+    // 3. what rusty_v8 has that we do not.
+    if (rusty_path) |path| {
+        const src = try cwd.readFileAlloc(io, path, arena, .limited(1 << 26));
+        const rusty = try definitions(arena, src);
+        const missing = try difference(arena, rusty, lib);
+        std.debug.print(
+            "\nrusty_v8 defines {d} shims; {d} are missing here (its V8 is newer, so some are expected):\n",
+            .{ rusty.count(), missing.len },
+        );
+        try printByClass(arena, missing);
+    } else {
+        std.debug.print("\n(rusty_v8 comparison skipped: dependency not fetched)\n", .{});
+    }
+
+    return ok;
+}
+
+/// `nm -g` -> defined `v8__*` symbols (macOS prefixes C symbols with `_`).
+fn libSymbols(arena: std.mem.Allocator, io: Io, lib_path: []const u8) !Set {
+    const result = try std.process.run(arena, io, .{
+        .argv = &.{ "nm", "-g", lib_path },
+        .stdout_limit = .limited(1 << 28),
+    });
+    if (!result.term.success()) {
+        std.debug.print("nm failed:\n{s}\n", .{result.stderr});
+        return error.NmFailed;
+    }
+    var set: Set = .empty;
+    var lines = std.mem.splitScalar(u8, result.stdout, '\n');
+    while (lines.next()) |line| {
+        var tokens = std.mem.tokenizeAny(u8, line, " \t");
+        var last: []const u8 = "";
+        var prev: []const u8 = "";
+        while (tokens.next()) |t| {
+            prev = last;
+            last = t;
+        }
+        // `<addr> T <symbol>`
+        if (!std.mem.eql(u8, prev, "T")) continue;
+        const name = if (last.len != 0 and last[0] == '_') last[1..] else last;
+        if (std.mem.startsWith(u8, name, "v8__")) try set.put(arena, name, {});
+    }
+    return set;
+}
+
+/// Identifiers `v8__<name>` that directly follow `prefix`.
+fn collect(arena: std.mem.Allocator, src: []const u8, prefix: []const u8) !Set {
+    var set: Set = .empty;
+    var pos: usize = 0;
+    while (std.mem.indexOfPos(u8, src, pos, prefix)) |at| {
+        pos = at + prefix.len;
+        const rest = src[pos..];
+        if (!std.mem.startsWith(u8, rest, "v8__")) continue;
+        var end: usize = 0;
+        while (end < rest.len and isIdent(rest[end])) end += 1;
+        try set.put(arena, rest[0..end], {});
+    }
+    return set;
+}
+
+/// Function definitions in a binding.cc: `v8__name(` on a line that starts in
+/// column 0 (return type and name on one line, as clang-format emits them).
+fn definitions(arena: std.mem.Allocator, src: []const u8) !Set {
+    var set: Set = .empty;
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0 or !std.ascii.isAlphabetic(line[0])) continue;
+        const at = std.mem.indexOf(u8, line, "v8__") orelse continue;
+        var end = at;
+        while (end < line.len and isIdent(line[end])) end += 1;
+        if (end >= line.len or line[end] != '(') continue;
+        // Skip `using v8__X = ...;` / `static ... v8__X = ...;` style lines.
+        if (std.mem.indexOfScalar(u8, line[0..at], '=') != null) continue;
+        try set.put(arena, line[at..end], {});
+    }
+    return set;
+}
+
+fn isIdent(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_';
+}
+
+fn difference(arena: std.mem.Allocator, a: Set, b: Set) ![]const []const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    for (a.keys()) |k| if (!b.contains(k)) try out.append(arena, k);
+    std.mem.sort([]const u8, out.items, {}, lessThan);
+    return out.items;
+}
+
+fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
+/// `v8__Object__Get` -> class `Object`; one line per class with its methods.
+fn printByClass(arena: std.mem.Allocator, names: []const []const u8) !void {
+    var classes: std.array_hash_map.String(std.ArrayList([]const u8)) = .empty;
+    for (names) |n| {
+        const body = n["v8__".len..];
+        const split = std.mem.indexOf(u8, body, "__") orelse body.len;
+        const gop = try classes.getOrPut(arena, body[0..split]);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(arena, if (split < body.len) body[split + 2 ..] else "");
+    }
+    const Ctx = struct {
+        keys: []const []const u8,
+        pub fn lessThan(self: @This(), a: usize, b: usize) bool {
+            return std.mem.lessThan(u8, self.keys[a], self.keys[b]);
+        }
+    };
+    classes.sort(Ctx{ .keys = classes.keys() });
+    for (classes.keys(), classes.values()) |class, methods| {
+        std.debug.print("  {s} ({d}):", .{ class, methods.items.len });
+        for (methods.items) |m| std.debug.print(" {s}", .{m});
+        std.debug.print("\n", .{});
+    }
+}

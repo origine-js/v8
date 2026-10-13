@@ -1464,10 +1464,10 @@ const v8::Object* v8__Object__New(v8::Isolate* isolate) {
 }
 
 const v8::Object* v8__Object__New__with_prototype_and_properties(
-    v8::Isolate* isolate, const v8::Value* prototype_or_null,
+    v8::Isolate* isolate, const v8::Value& prototype_or_null,
     const v8::Name* const names[], const v8::Value* const values[],
     size_t length) {
-  return local_to_ptr(v8::Object::New(isolate, ptr_to_local(prototype_or_null),
+  return local_to_ptr(v8::Object::New(isolate, ptr_to_local(&prototype_or_null),
                                       const_ptr_array_to_local_array(names),
                                       const_ptr_array_to_local_array(values),
                                       length));

@@ -21,6 +21,10 @@ static_assert(sizeof(v8::ReturnValue<v8::Value>) == 8, "ReturnValue size changed
 static_assert(sizeof(v8::Location) == 8, "Location size changed");
 static_assert(sizeof(v8::StartupData) == 16, "StartupData size changed");
 static_assert(sizeof(v8::PropertyDescriptor) == 8, "PropertyDescriptor size changed");
+static_assert(sizeof(v8::ResourceConstraints) == 56, "ResourceConstraints size changed");
+static_assert(sizeof(v8::HeapStatistics) == 120, "HeapStatistics size changed");
+static_assert(sizeof(v8::CFunction) == 16, "CFunction size changed");
+static_assert(sizeof(v8::CTypeInfo) == 2, "CTypeInfo size changed");
 static_assert((v8::FunctionCallbackInfo<v8::Value>::kArgsLength) == 10, "FunctionCallbackInfo_kArgsLength changed");
 #ifdef V8_ENABLE_DIRECT_HANDLE
 #error "is_direct_handle changed: run `zig build gen`"

@@ -1086,8 +1086,8 @@ pub extern fn v8__ObjectTemplate__SetImmutableProto(self: Ref("ObjectTemplate"))
 /// const v8::Object *(v8::Isolate *)
 pub extern fn v8__Object__New(isolate: Ptr("Isolate", false)) Ptr("Object", true);
 
-/// const v8::Object *(v8::Isolate *, const v8::Value *, const v8::Name *const *, const v8::Value *const *, size_t)
-pub extern fn v8__Object__New__with_prototype_and_properties(isolate: Ptr("Isolate", false), prototype_or_null: Ptr("Value", true), names: ?[*]const Ptr("Name", true), values: ?[*]const Ptr("Value", true), length: usize) Ptr("Object", true);
+/// const v8::Object *(v8::Isolate *, const v8::Value &, const v8::Name *const *, const v8::Value *const *, size_t)
+pub extern fn v8__Object__New__with_prototype_and_properties(isolate: Ptr("Isolate", false), prototype_or_null: Ref("Value"), names: ?[*]const Ptr("Name", true), values: ?[*]const Ptr("Value", true), length: usize) Ptr("Object", true);
 
 /// const v8::Value *(const v8::Object &, const v8::Context &, const v8::Value &)
 pub extern fn v8__Object__Get(self: Ref("Object"), context: Ref("Context"), key: Ref("Value")) Ptr("Value", true);

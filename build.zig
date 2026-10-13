@@ -18,7 +18,7 @@ pub fn build(b: *std.Build) void {
     linkSystem(module);
     module.addObjectFile(v8.lib);
 
-    binding_build.addGenStep(b, v8);
+    binding_build.addSteps(b, v8);
 
     // `zig build` installs the static library for non-Zig consumers.
     b.getInstallStep().dependOn(&b.addInstallFile(v8.lib, "libv8_zig.a").step);

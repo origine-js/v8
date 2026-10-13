@@ -38,3 +38,15 @@ Once complete, you can find v8 in: `zig-out/libv8_zig.a`
 
 The outputs are committed. Run `gen` after changing `layout.zon`, `typemap.zon`, `binding.cc` or upgrading V8.
 Types the generator cannot map with certainty are listed at the end of `externs.gen.zig`; add an entry to `typemap.zon` to enable them.
+
+### Keeping them honest
+| Step | What it checks |
+| --- | --- |
+| `zig build check-generated` | the committed generated files equal a fresh run (use it in CI) |
+| `zig build check-bindings` | the library's exported `v8__*` symbols equal the declared externs (hard failure), then reports which shims `v8.zig` does not wrap yet and which shims [rusty_v8](https://github.com/denoland/rusty_v8) has that this repo lacks (a porting checklist; the dependency is pinned in `build.zig.zon` and only fetched by this step) |
+
+## Tests
+`zig build test` runs `src/test.zig`: behavioural tests for each wrapper in `v8.zig` against a real V8
+(values, objects, functions and callbacks, templates, promises, errors and stack traces, termination, host
+callbacks), plus checks that the Zig struct sizes equal the C++ ones. A fresh isolate and context is created per
+test; the V8 platform is shared because it can only be initialised once per process.

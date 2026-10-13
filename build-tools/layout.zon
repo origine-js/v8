@@ -26,6 +26,10 @@
         .{ .name = "Location", .cpp = "v8::Location" },
         .{ .name = "StartupData", .cpp = "v8::StartupData" },
         .{ .name = "PropertyDescriptor", .cpp = "v8::PropertyDescriptor" },
+        .{ .name = "ResourceConstraints", .cpp = "v8::ResourceConstraints" },
+        .{ .name = "HeapStatistics", .cpp = "v8::HeapStatistics" },
+        .{ .name = "CFunction", .cpp = "v8::CFunction" },
+        .{ .name = "CTypeInfo", .cpp = "v8::CTypeInfo" },
     },
 
     // Integral constant expressions -> binding.consts.<name>.

@@ -13,6 +13,10 @@ pub const sizes = struct {
     pub const Location = 8;
     pub const StartupData = 16;
     pub const PropertyDescriptor = 8;
+    pub const ResourceConstraints = 56;
+    pub const HeapStatistics = 120;
+    pub const CFunction = 16;
+    pub const CTypeInfo = 2;
 };
 
 pub const consts = struct {

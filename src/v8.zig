@@ -337,12 +337,13 @@ pub const CTypeInfo = extern struct {
         Pointer = 10,
         V8Value = 11,
     },
-    flags: packed struct(u32) {
+    /// `v8::CTypeInfo::Flags` is a `uint8_t` enum: sizeof(CTypeInfo) == 2.
+    flags: packed struct(u8) {
         AllowSharedBit: bool,
         EnforceRangeBit: bool,
         ClampBit: bool,
         IsRestrictedBit: bool,
-        _unused: u28 = 0,
+        _unused: u4 = 0,
     },
 };
 
@@ -521,6 +522,19 @@ pub const FunctionCallbackInfo = extern struct {
 
     pub fn isolate(self: @This()) Isolate {
         return .{ .handle = e.v8__FunctionCallbackInfo__GetIsolate(self).? };
+    }
+
+    /// `true` when the function was invoked with `new`.
+    pub fn isConstructCall(self: @This()) bool {
+        return e.v8__FunctionCallbackInfo__IsConstructCall(self);
+    }
+
+    pub fn this(self: @This()) Object {
+        return Object.from_opaque(e.v8__FunctionCallbackInfo__This(self)).?;
+    }
+
+    pub fn newTarget(self: @This()) Value {
+        return Value.from_opaque(e.v8__FunctionCallbackInfo__NewTarget(self)).?;
     }
 
     pub fn retval(self: @This()) ReturnValue {
@@ -866,16 +880,18 @@ pub const Object = extern struct {
         return from_opaque(e.v8__Object__New(isolate.handle)).?;
     }
 
+    /// `prototype` is a required object, or JS `null` (`Primitive.initNull`) for none;
+    /// V8 rejects an empty handle.
     pub fn initWithProperties(
         isolate: Isolate,
-        prototype: ?Value,
+        prototype: Value,
         names: []const Name,
         values: []const Value,
     ) Object {
         std.debug.assert(names.len == values.len);
         return from_opaque(e.v8__Object__New__with_prototype_and_properties(
             isolate.handle,
-            if (prototype) |p| p.data.handle else null,
+            prototype,
             // Name/Value are one-pointer wrappers, layout-identical to a handle array.
             @ptrCast(names.ptr),
             @ptrCast(values.ptr),
@@ -991,6 +1007,16 @@ pub const External = extern struct {
 
 pub const Primitive = extern struct {
     value: Value,
+
+    /// The JavaScript `null` value.
+    pub fn initNull(isolate: Isolate) Primitive {
+        return from_opaque(e.v8__Null(isolate.handle)).?;
+    }
+
+    /// The JavaScript `undefined` value.
+    pub fn initUndefined(isolate: Isolate) Primitive {
+        return from_opaque(e.v8__Undefined(isolate.handle)).?;
+    }
 
     pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{
@@ -1509,6 +1535,10 @@ fn refAllNested(comptime T: type, comptime depth: u8) void {
         const value = @field(T, decl);
         if (@TypeOf(value) == type) refAllNested(value, depth - 1);
     }
+}
+
+test {
+    _ = @import("test.zig");
 }
 
 test "wrappers type-check against the generated externs" {

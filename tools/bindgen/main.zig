@@ -1,6 +1,8 @@
 //! Binding generator, run by `zig build gen`.
 //!
-//!   bindgen gen <v8_build_dir> <layout.zon> <typemap.zon> <out binding.zig> <out layout.gen.h> <out externs.gen.zig>
+//!   bindgen gen       <v8_build_dir> <layout.zon> <typemap.zon> <out binding.zig> <out layout.gen.h> <out externs.gen.zig>
+//!   bindgen gen-check <same arguments>: fail if any output would change (nothing is written)
+//!   bindgen check     <libv8_zig.a> <externs.gen.zig> <v8.zig> [<rusty_v8 binding.cc>]
 //!
 //! Everything is measured with V8's own clang using the exact flags GN uses
 //! for binding.cc (see clang.zig), so the output reflects the real V8
@@ -10,6 +12,11 @@ const std = @import("std");
 const Io = std.Io;
 const Clang = @import("clang.zig");
 const externs = @import("externs.zig");
+const check = @import("check.zig");
+
+/// `gen-check`: compare instead of writing, so CI can prove the committed files are fresh.
+var check_only = false;
+var stale = false;
 
 const LayoutManifest = struct {
     includes: []const []const u8,
@@ -30,12 +37,23 @@ pub fn main(init: std.process.Init) !void {
     const arena = arena_state.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len == 8 and std.mem.eql(u8, args[1], "gen")) {
+    if (args.len == 8 and (std.mem.eql(u8, args[1], "gen") or std.mem.eql(u8, args[1], "gen-check"))) {
+        check_only = std.mem.eql(u8, args[1], "gen-check");
         try gen(arena, init.io, args[2], args[3], args[4], args[5], args[6], args[7]);
+        if (stale) {
+            std.debug.print("generated files are stale: run `zig build gen` and commit the result\n", .{});
+            std.process.exit(1);
+        }
+        return;
+    }
+    if ((args.len == 5 or args.len == 6) and std.mem.eql(u8, args[1], "check")) {
+        const ok = try check.run(arena, init.io, args[2], args[3], args[4], if (args.len == 6) args[5] else null);
+        if (!ok) std.process.exit(1);
         return;
     }
     std.debug.print(
-        "usage: bindgen gen <v8_build_dir> <layout.zon> <typemap.zon> <out binding.zig> <out layout.gen.h> <out externs.gen.zig>\n",
+        "usage: bindgen gen|gen-check <v8_build_dir> <layout.zon> <typemap.zon> <out binding.zig> <out layout.gen.h> <out externs.gen.zig>\n" ++
+            "       bindgen check <libv8_zig.a> <externs.gen.zig> <v8.zig> [<rusty_v8 binding.cc>]\n",
         .{},
     );
     std.process.exit(2);
@@ -148,6 +166,11 @@ fn writeIfChanged(arena: std.mem.Allocator, io: Io, path: []const u8, data: []co
     if (cwd.readFileAlloc(io, path, arena, .limited(1 << 26))) |existing| {
         if (std.mem.eql(u8, existing, data)) return;
     } else |_| {}
+    if (check_only) {
+        stale = true;
+        std.debug.print("stale: {s}\n", .{path});
+        return;
+    }
     try cwd.writeFile(io, .{ .sub_path = path, .data = data });
     std.debug.print("updated {s}\n", .{path});
 }

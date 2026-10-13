@@ -5,7 +5,7 @@ Builds V8 from official source and provides C bindings and a Zig API. This would
 V8 is the JavaScript runtime that powers Google Chrome.
 
 ## System Requirements
-- Zig (0.16.0-dev, https://codeberg.org/ziglang/zig). Download from https://ziglang.org/download/.
+- Zig 0.17.0. Download from https://ziglang.org/download/.
 - Python 3 (2.7 seems to work as well)
 - unzip
 - rsync
@@ -19,7 +19,12 @@ if you come across this error:<br />
 Compiling v8 will take 20+ minutes.
 
 ```sh
-zig build gen
+zig build
 ```
 
+If V8 fails to compile against your newest macOS SDK (e.g. ICU: `use of undeclared identifier 'NAN'`), point it at an older one with
+`-Dmac_sdk_path=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`.
+
 Once complete, you can find v8 in: `zig-out/libv8_zig.a`
+
+`zig build gen` writes the generated struct sizes to `zig-out/binding.zig`; merge it into `src/binding.zig` by hand.

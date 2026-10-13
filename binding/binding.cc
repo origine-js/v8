@@ -982,7 +982,9 @@ int v8__FixedArray__Length(const v8::FixedArray& self) { return self.Length(); }
 
 const v8::Data* v8__FixedArray__Get(const v8::FixedArray& self,
                                     const v8::Context& context, int index) {
-  return local_to_ptr(ptr_to_local(&self)->Get(ptr_to_local(&context), index));
+  // As of V8 14.7 FixedArray::Get no longer takes a context.
+  (void)context;
+  return local_to_ptr(ptr_to_local(&self)->Get(index));
 }
 
 const v8::PrimitiveArray* v8__PrimitiveArray__New(v8::Isolate* isolate,
@@ -1495,12 +1497,14 @@ const v8::Value* v8__Object__GetIndex(const v8::Object& self,
 
 void* v8__Object__GetAlignedPointerFromInternalField(const v8::Object& self,
                                                      int index) {
-  return ptr_to_local(&self)->GetAlignedPointerFromInternalField(index);
+  return ptr_to_local(&self)->GetAlignedPointerFromInternalField(
+      index, v8::kEmbedderDataTypeTagDefault);
 }
 
 void v8__Object__SetAlignedPointerInInternalField(const v8::Object& self,
                                                   int index, void* value) {
-  ptr_to_local(&self)->SetAlignedPointerInInternalField(index, value);
+  ptr_to_local(&self)->SetAlignedPointerInInternalField(
+      index, value, v8::kEmbedderDataTypeTagDefault);
 }
 
 bool v8__Object__IsApiWrapper(const v8::Object& self) {
@@ -1791,10 +1795,13 @@ const v8::Date* v8__Date__New(const v8::Context& context, double time) {
 double v8__Date__ValueOf(const v8::Date& self) { return self.ValueOf(); }
 
 const v8::External* v8__External__New(v8::Isolate* isolate, void* value) {
-  return local_to_ptr(v8::External::New(isolate, value));
+  return local_to_ptr(v8::External::New(isolate, value,
+                                           v8::kExternalPointerTypeTagDefault));
 }
 
-void* v8__External__Value(const v8::External& self) { return self.Value(); }
+void* v8__External__Value(const v8::External& self) {
+  return self.Value(v8::kExternalPointerTypeTagDefault);
+}
 
 const v8::Map* v8__Map__New(v8::Isolate* isolate) {
   return local_to_ptr(v8::Map::New(isolate));
@@ -2041,12 +2048,14 @@ void DeserializeInternalFields(v8::Local<v8::Object> holder, int index,
                                v8::StartupData payload, void* data) {
   assert(data == nullptr);
   if (payload.raw_size == 0) {
-    holder->SetAlignedPointerInInternalField(index, nullptr);
+    holder->SetAlignedPointerInInternalField(index, nullptr,
+                                          v8::kEmbedderDataTypeTagDefault);
     return;
   }
   InternalFieldData* embedder_field = new InternalFieldData{0};
   memcpy(embedder_field, payload.data, payload.raw_size);
-  holder->SetAlignedPointerInInternalField(index, embedder_field);
+  holder->SetAlignedPointerInInternalField(index, embedder_field,
+                                        v8::kEmbedderDataTypeTagDefault);
   deserialized_data.push_back(embedder_field);
 }
 
@@ -2453,7 +2462,8 @@ const v8::Value* v8__PropertyCallbackInfo__Data(
 
 const v8::Object* v8__PropertyCallbackInfo__This(
     const v8::PropertyCallbackInfo<v8::Value>& self) {
-  return local_to_ptr(self.This());
+  // PropertyCallbackInfo::This() was removed in V8 14.7; Holder() replaces it.
+  return local_to_ptr(self.Holder());
 }
 
 const v8::Object* v8__PropertyCallbackInfo__Holder(
@@ -2952,7 +2962,8 @@ v8::StartupData SerializeInternalFields(v8::Local<v8::Object> holder, int index,
                                         void* data) {
   assert(data == nullptr);
   InternalFieldData* embedder_field = static_cast<InternalFieldData*>(
-      holder->GetAlignedPointerFromInternalField(index));
+      holder->GetAlignedPointerFromInternalField(
+          index, v8::kEmbedderDataTypeTagDefault));
   if (embedder_field == nullptr) return {nullptr, 0};
   int size = sizeof(*embedder_field);
   char* payload = new char[size];
@@ -3501,7 +3512,7 @@ void v8__WasmStreaming__OnBytesReceived(WasmStreamingSharedPtr* self,
 }
 
 void v8__WasmStreaming__Finish(WasmStreamingSharedPtr* self) {
-  self->inner->Finish();
+  self->inner->Finish([](v8::WasmStreaming::ModuleCachingInterface&) {});
 }
 
 void v8__WasmStreaming__Abort(WasmStreamingSharedPtr* self,

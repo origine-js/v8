@@ -1,59 +1,54 @@
 const std = @import("std");
-const v8_pkg = @import("build/v8.build.zig");
-const binding_pkg = @import("build/binding.build.zig");
+const v8_build = @import("build/v8.build.zig");
+const binding_build = @import("build/binding.build.zig");
 
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // 1. Build V8 and its C++ bindings
-    const v8_build = try v8_pkg.buildV8(b, target, optimize);
+    const v8 = v8_build.add(b, target, optimize);
 
-    // 2. Generate the binding constants (sizes) from the built V8 binary
-    const generated_binding = try binding_pkg.generateBinding(b, target, optimize, v8_build);
-
-    const write_binding_files = b.addWriteFiles();
-    write_binding_files.step.dependOn(generated_binding.step);
-    _ = write_binding_files.addCopyFile(generated_binding.path, b.build_root.join(b.allocator, &.{ "src/", "binding.zig" }) catch @panic("OOM"));
-
-    const step = b.step("gen", "Generate bindings");
-    step.dependOn(generated_binding.step);
-    step.dependOn(&write_binding_files.step);
-
-    // 3. Create the module with the generated constants
-    // The generated file will be available as "@import("$binding")" to our source code
-    const v8_module = b.addModule("v8", .{
+    const module = b.addModule("v8", .{
         .root_source_file = b.path("src/v8.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
         .link_libcpp = true,
     });
+    linkSystem(module);
+    module.addObjectFile(v8.lib);
 
-    // Add the generated file as a named import to the module
-    v8_module.addImport("$binding", b.createModule(.{
-        .root_source_file = generated_binding.path,
-    }));
+    binding_build.addGenStep(b, target, optimize, v8.lib, linkSystem);
 
-    v8_module.addObjectFile(v8_build.lib);
-    v8_module.addIncludePath(v8_build.include_path);
-    v8_module.addIncludePath(b.path("binding"));
+    // `zig build` installs the static library for non-Zig consumers.
+    b.getInstallStep().dependOn(&b.addInstallFile(v8.lib, "libv8_zig.a").step);
 
-    if (target.result.os.tag == .macos) {
-        v8_module.addSystemFrameworkPath(.{ .cwd_relative = "/System/Library/Frameworks" });
-        v8_module.linkFramework("CoreFoundation", .{});
-        v8_module.linkFramework("Security", .{});
-    }
+    const tests = b.addTest(.{ .root_module = module });
+    b.step("test", "Run library tests").dependOn(&b.addRunArtifact(tests).step);
 
-    // 4. Install the library
-    const install_lib = b.addInstallFile(v8_build.lib, "libv8_zig.a");
-    b.getInstallStep().dependOn(&install_lib.step);
-
-    // 5. Unit Tests
-    const tests = b.addTest(.{
-        .root_module = v8_module,
+    // Demo REPL.
+    const shell = b.addExecutable(.{
+        .name = "shell",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/shell.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .link_libcpp = true,
+        }),
     });
-    const run_tests = b.addRunArtifact(tests);
-    const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&run_tests.step);
+    linkSystem(shell.root_module);
+    shell.root_module.addObjectFile(v8.lib);
+    const run_shell = b.addRunArtifact(shell);
+    run_shell.addPassthruArgs();
+    b.step("shell", "Run the demo JS REPL").dependOn(&run_shell.step);
+}
+
+/// V8 needs CoreFoundation (abseil) and Security (partition allocator) on macOS.
+fn linkSystem(m: *std.Build.Module) void {
+    if (m.resolved_target.?.result.os.tag == .macos) {
+        m.addSystemFrameworkPath(.{ .cwd_relative = "/System/Library/Frameworks" });
+        m.linkFramework("CoreFoundation", .{});
+        m.linkFramework("Security", .{});
+    }
 }

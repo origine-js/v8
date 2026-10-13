@@ -19,18 +19,33 @@ pub const Runtime = struct {
             _ = js_import_attributes;
             const isolate = v8.Isolate.getCurrent();
             const realm: *JsRealm = @ptrCast(@alignCast(v8.External.from_opaque(js_context.getEmbedderData(0).handle).?.pointer()));
+
+            const alloc = realm.alloc;
+
             const primitive_array: v8.PrimitiveArray = v8.PrimitiveArray.from_opaque(js_host_defined_options.handle).?;
-            const map_id = primitive_array.get(isolate, 0).value.u32Value(isolate.getCurrentContext()) orelse unreachable;
+            const map_id = primitive_array.get(isolate, 0).value.u32Value(js_context) orelse unreachable;
             const map = realm.maps.get(@truncate(map_id)) orelse @panic("invalid map");
             var buf: std.ArrayList(u8) = .empty;
-            defer buf.deinit(std.heap.smp_allocator);
+            defer buf.deinit(alloc);
             const specifier = u.stringToSlice(
                 isolate,
                 js_specifier,
                 &buf,
-                std.heap.smp_allocator,
+                alloc,
             );
-            const maybe_mod_id = map.lookup(specifier) catch unreachable;
+
+            const maybe_mod_id = map.lookup(specifier) catch unreachable orelse blk: {
+                var buf1: std.ArrayList(u8) = .empty;
+                defer buf1.deinit(alloc);
+                const resolver_id = primitive_array.get(isolate, 1).value.u32Value(js_context) orelse unreachable;
+                const resolver = realm.resolvers.get(@truncate(resolver_id)) orelse @panic("invalid resolver");
+                const new_specifier = resolver.resolve(
+                    specifier,
+                    &buf1,
+                    realm,
+                ) orelse break :blk null;
+                break :blk map.lookup(new_specifier) catch unreachable;
+            };
             std.debug.print("@import(:{s}:) = {?d}\n", .{ specifier, maybe_mod_id });
             const promise_resolver = v8.Promise.Resolver.init(js_context) orelse unreachable;
             if (maybe_mod_id) |mod_id| {
@@ -80,9 +95,10 @@ pub const Runtime = struct {
         is_wasm: bool,
         is_module: bool,
     ) v8.ScriptOrigin {
-        const host_defined_options = v8.PrimitiveArray.init(self.isolate, 1);
+        const host_defined_options = v8.PrimitiveArray.init(self.isolate, 2);
         _ = self.realm.get_root_map() catch unreachable;
-        host_defined_options.set(self.isolate, JsRealm.ROOT_MAP_ID, v8.Number.initUInt(self.isolate, JsRealm.ROOT_MAP_ID).numeric.primitive);
+        host_defined_options.set(self.isolate, 0, v8.Number.initUInt(self.isolate, JsRealm.ROOT_MAP_ID).numeric.primitive);
+        host_defined_options.set(self.isolate, 1, v8.Number.initUInt(self.isolate, JsRealm.DEFAULT_RESOLVER_ID).numeric.primitive);
         const origin = v8.ScriptOrigin.init(
             resource_name,
             resource_line_offset,
@@ -101,17 +117,20 @@ pub const Runtime = struct {
 
 pub const JsRealm = struct {
     pub const ROOT_MAP_ID = 0;
+    pub const DEFAULT_RESOLVER_ID = 0;
 
     map_pool: std.heap.MemoryPool(ModuleMap),
     maps: std.AutoHashMapUnmanaged(u31, *ModuleMap),
+    resolvers: std.AutoHashMapUnmanaged(u31, *Resolver),
     next_module_id: mp.ModuleId,
-    modules: std.AutoArrayHashMapUnmanaged(mp.ModuleId, *mp.Module),
+    modules: std.AutoHashMapUnmanaged(mp.ModuleId, *mp.Module),
     alloc: std.mem.Allocator,
 
     pub fn init(alloc_: std.mem.Allocator) @This() {
         return .{
             .map_pool = .empty,
             .maps = .empty,
+            .resolvers = .empty,
             .modules = .empty,
             .alloc = alloc_,
             .next_module_id = 0x100,
@@ -119,7 +138,7 @@ pub const JsRealm = struct {
     }
 
     pub fn get_root_map(self: *@This()) !*ModuleMap {
-        var result = try self.maps.getOrPut(self.alloc, ROOT_MAP_ID);
+        const result = try self.maps.getOrPut(self.alloc, ROOT_MAP_ID);
         if (result.found_existing) {
             return result.value_ptr.*;
         } else {
@@ -136,6 +155,7 @@ pub const JsRealm = struct {
 
 const mp = @import("./map.zig");
 const ModuleMap = mp.ModuleMap;
+const Resolver = @import("./resolver.zig");
 
 const std = @import("std");
 const v8 = @import("../v8.zig");

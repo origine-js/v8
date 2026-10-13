@@ -32,20 +32,21 @@ pub const ModuleMap = struct {
     realm: *runtime.JsRealm,
     depth: u8 = 0,
     parent: ?*ModuleMap = null,
-    specifiers: std.StringHashMapUnmanaged(ModuleRef),
+    mapper: std.StringHashMapUnmanaged(ModuleRef),
+    paths: std.ArrayList([]const u8),
     ref_count: rc.RcData = .{},
 
     pub fn init(realm: *runtime.JsRealm) @This() {
         return .{
             .realm = realm,
-            .specifiers = .empty,
+            .mapper = .empty,
+            .paths = .empty,
         };
     }
 
-    pub fn with_capacity(realm: *runtime.JsRealm, modules_cap: usize, specifier_cap: usize) !@This() {
+    pub fn with_capacity(realm: *runtime.JsRealm, specifier_cap: usize) !@This() {
         var x: @This() = .init(realm);
-        try x.modules.ensureTotalCapacity(realm.alloc, modules_cap);
-        try x.specifiers.ensureTotalCapacity(realm.alloc, specifier_cap);
+        try x.mapper.ensureTotalCapacity(realm.alloc, specifier_cap);
         return x;
     }
 
@@ -66,17 +67,16 @@ pub const ModuleMap = struct {
             p.deref();
         }
         self.modules.deinit(self.alloc);
-        self.specifiers.deinit(self.alloc);
+        self.mapper.deinit(self.alloc);
     }
 
     pub fn derive(self: *@This()) !*ModuleMap {
         const map_ptr = try self.realm.map_pool.create(self.realm.alloc);
         map_ptr.* = .{
-            .alloc = self.ptr.alloc,
-            .specifiers = .empty,
-            .modules = .empty,
+            .alloc = self.realm.alloc,
+            .mapper = .empty,
             .depth = blk: {
-                const next_depth, const overflow = @addWithOverflow(self.ptr.depth, 1);
+                const next_depth, const overflow = @addWithOverflow(self.depth, 1);
                 if (overflow) {
                     return error.DepthLimitExceed;
                 }
@@ -87,25 +87,31 @@ pub const ModuleMap = struct {
                 break :blk self;
             },
         };
+        return map_ptr;
     }
 
     pub fn lookup(self: *const @This(), specifier: []const u8) !?ModuleId {
         const Lookuper = struct {
-            const RECURSION_LIMIT = 8;
+            const RECURSION_LIMIT = 16;
 
-            fn lookup(specifiers: *const std.StringHashMapUnmanaged(ModuleRef), specifier_: []const u8, depth: u16) !?ModuleId {
+            fn lookup(map: *const ModuleMap, specifier_: []const u8, depth: u16) !?ModuleId {
                 if (depth > RECURSION_LIMIT) return error.RecursionLimitExceed;
-                const mod_ref = specifiers.get(specifier_) orelse return null;
+                const mod_ref = map.mapper.get(specifier_) orelse return {
+                    if (map.parent) |parent| {
+                        return @This().lookup(parent, specifier_, depth + 1);
+                    }
+                    return null;
+                };
                 switch (mod_ref) {
                     .Mod => |mod_id| return mod_id,
                     .Alias => |next| {
-                        return @This().lookup(specifiers, next, depth + 1);
+                        return @This().lookup(map, next, depth + 1);
                     },
                 }
             }
         };
 
-        return Lookuper.lookup(&self.specifiers, specifier, 0);
+        return Lookuper.lookup(self, specifier, 0);
     }
 };
 

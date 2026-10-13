@@ -57,16 +57,16 @@ fn create_api(isolate: v8.Isolate) v8.ObjectTemplate {
 
 fn setup_global(isolate: v8.Isolate, ctx: v8.Context) void {
     const global = ctx.getGlobal();
-    var js_name: v8.Name = v8.String.initOneByte(isolate, "core").name;
+    const js_name: v8.Name = v8.String.initOneByte(isolate, "core").name;
     _ = global.set(ctx, js_name.primitive.value, create_api(isolate).initInstance(ctx).?.value);
 }
 
 fn repl() void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
-    runtime = .init(gpa.allocator());
+    runtime = .init(gpa.allocator(), .{});
     defer runtime.deinit();
 
     var input_buf: std.ArrayList(u8) = .empty;
@@ -136,7 +136,7 @@ fn repl() void {
 
 fn getInput(io: std.Io, writer: *std.Io.Writer) bool {
     var buffer: [64]u8 = undefined;
-    var reader = std.fs.File.stdin().reader(io, &buffer);
+    var reader = std.Io.File.stdin().reader(io, &buffer);
     _ = reader.interface.streamDelimiter(writer, '\n') catch |err| {
         if (err == error.EndOfStream) {
             return false;
@@ -149,7 +149,7 @@ fn getInput(io: std.Io, writer: *std.Io.Writer) bool {
 
 pub fn printFmt(comptime format: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
-    var writer = std.fs.File.stdout().writer(&buffer);
+    var writer = std.Io.File.stdout().writer(runtime.io(), &buffer);
     writer.interface.print(format, args) catch unreachable;
     writer.interface.flush() catch unreachable;
 }

@@ -1,299 +1,177 @@
-const std = @import("std");
+//! Builds V8 plus our C++ shim (`binding/`) into a single static library.
+//!
+//! Pipeline: stage shims into the V8 tree -> fetch (depot_tools, gclient, clang)
+//! -> `gn gen` -> `autoninja`. Every stage is idempotent, so the steps simply run
+//! each time and defer to rsync/markers/ninja for incrementality.
 
-const V8_VERSION: []const u8 = "14.5.201.4";
+const std = @import("std");
 
 const LazyPath = std.Build.LazyPath;
 
-pub const V8Build = struct {
+pub const version = "14.7.173.20";
+
+pub const V8 = struct {
+    /// `libv8_zig.a`, a complete static library containing V8 and the shim.
     lib: LazyPath,
-    include_path: LazyPath,
-    step: *std.Build.Step,
 };
 
-fn mapArch(target: std.Build.ResolvedTarget) []const u8 {
+/// Files copied into the V8 checkout. `src` is relative to this repository,
+/// `dest` to the V8 source root.
+const shims = [_]struct { src: []const u8, dest: []const u8 }{
+    .{ .src = "binding/binding.cc", .dest = "zig/binding/binding.cc" },
+    .{ .src = "binding/binding.hpp", .dest = "zig/binding/binding.hpp" },
+    .{ .src = "binding/support.h", .dest = "zig/binding/support.h" },
+    .{ .src = "build-tools/BUILD.gn", .dest = "zig/BUILD.gn" },
+    .{ .src = "build-tools/.gn", .dest = "zig/.gn" },
+};
+
+const GnArgs = struct {
+    is_debug: bool,
+    symbol_level: u8,
+    is_asan: bool,
+    is_tsan: bool,
+    v8_enable_sandbox: bool,
+    /// macOS SDK to compile against; GN picks the newest installed one when null.
+    mac_sdk_path: ?[]const u8,
+
+    fn render(self: GnArgs, b: *std.Build, target: std.Build.ResolvedTarget) []const u8 {
+        var lines: std.ArrayList([]const u8) = .empty;
+        const a = b.allocator;
+        lines.append(a, b.fmt("target_os=\"{s}\"", .{gnOs(target)})) catch @panic("OOM");
+        lines.append(a, b.fmt("target_cpu=\"{s}\"", .{gnCpu(target)})) catch @panic("OOM");
+        lines.append(a, b.fmt("v8_target_cpu=\"{s}\"", .{gnCpu(target)})) catch @panic("OOM");
+        lines.append(a, "use_siso=true") catch @panic("OOM");
+        // Official builds depend on PGO.
+        lines.append(a, "is_official_build=false") catch @panic("OOM");
+        lines.append(a, b.fmt("is_debug={}", .{self.is_debug})) catch @panic("OOM");
+        lines.append(a, b.fmt("symbol_level={d}", .{self.symbol_level})) catch @panic("OOM");
+        lines.append(a, b.fmt("is_asan={}", .{self.is_asan})) catch @panic("OOM");
+        lines.append(a, b.fmt("is_tsan={}", .{self.is_tsan})) catch @panic("OOM");
+        lines.append(a, b.fmt("v8_enable_sandbox={}", .{self.v8_enable_sandbox})) catch @panic("OOM");
+
+        if (self.mac_sdk_path) |path| {
+            lines.append(a, b.fmt("mac_sdk_path=\"{s}\"", .{path})) catch @panic("OOM");
+        }
+
+        switch (target.result.os.tag) {
+            .ios => lines.appendSlice(a, &.{
+                "v8_enable_pointer_compression=false",
+                "v8_enable_webassembly=false",
+            }) catch @panic("OOM"),
+            .linux => if (target.result.cpu.arch == .aarch64) lines.appendSlice(a, &.{
+                "clang_base_path=\"/usr/lib/llvm-21\"",
+                "clang_use_chrome_plugins=false",
+                "treat_warnings_as_errors=false",
+            }) catch @panic("OOM"),
+            else => {},
+        }
+        return std.mem.join(a, "\n", lines.items) catch @panic("OOM");
+    }
+};
+
+fn gnCpu(target: std.Build.ResolvedTarget) []const u8 {
     return switch (target.result.cpu.arch) {
         .aarch64 => "arm64",
-        .arm => "arm",
-        .riscv64 => "riscv64",
         .x86_64 => "x64",
         .x86 => "x86",
-        else => |x| @tagName(x),
+        .arm => "arm",
+        .riscv64 => "riscv64",
+        else => |arch| @tagName(arch),
     };
 }
 
-fn mapOs(target: std.Build.ResolvedTarget) []const u8 {
+fn gnOs(target: std.Build.ResolvedTarget) []const u8 {
     return switch (target.result.os.tag) {
         .linux => "linux",
         .macos => "mac",
         .ios => "ios",
         .fuchsia => "fuchsia",
-        else => @panic("os may not be supported"),
+        else => @panic("unsupported target os"),
     };
 }
 
-pub fn buildV8(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) !V8Build {
-    const cache_root = b.option([]const u8, "cache_root", "Root directory for the V8 and depot_tools cache") orelse b.pathFromRoot(".lp-cache");
-
-    // Ensure cache root exists
-    std.fs.cwd().makeDir(cache_root) catch {};
-
-    const v8_dir = b.fmt("{s}/v8-{s}", .{ cache_root, V8_VERSION });
-    const depot_tools_dir = b.fmt("{s}/depot_tools-{s}", .{ cache_root, V8_VERSION });
-
-    const bootstrapped_depot_tools = try bootstrapDepotTools(b, depot_tools_dir);
-    const bootstrapped_v8 = try bootstrapV8(b, bootstrapped_depot_tools, v8_dir, depot_tools_dir);
-
-    const v8_dir_lazy_path: LazyPath = .{ .cwd_relative = v8_dir };
-    const allocator = b.allocator;
-
-    const tag = target.result.os.tag;
-    const arch = target.result.cpu.arch;
-
-    var gn_args: std.Io.Writer.Allocating = .init(allocator);
-    defer gn_args.deinit();
-
-    try gn_args.writer.print("target_os=\"{s}\"\n", .{mapOs(target)});
-    try gn_args.writer.print("target_cpu=\"{s}\"\n", .{mapArch(target)});
-    try gn_args.writer.print("v8_target_cpu=\"{s}\"\n", .{mapArch(target)});
-    try gn_args.writer.writeAll("is_official_build=false\n");
-    switch (optimize) {
-        .Debug => {
-            try gn_args.writer.writeAll("is_debug=true\n");
-            try gn_args.writer.writeAll("symbol_level=1\n");
-        },
-        .ReleaseSafe => {
-            try gn_args.writer.writeAll("is_debug=false\n");
-            try gn_args.writer.writeAll("v8_optimized_debug=true\n");
-            try gn_args.writer.writeAll("symbol_level=1\n");
-        },
-        .ReleaseFast, .ReleaseSmall => {
-            try gn_args.writer.writeAll("is_debug=false\n");
-            try gn_args.writer.writeAll("symbol_level=0\n");
-        },
+pub fn add(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.Optimize,
+) V8 {
+    if (b.option([]const u8, "prebuilt_v8_path", "Path to a prebuilt libv8_zig.a; skips building V8")) |path| {
+        return .{ .lib = .{ .cwd_relative = path } };
     }
 
-    switch (tag) {
-        .ios => {
-            try gn_args.writer.writeAll("v8_enable_pointer_compression=false\n");
-            try gn_args.writer.writeAll("v8_enable_webassembly=false\n");
-        },
-        .linux => {
-            if (arch == .aarch64) {
-                try gn_args.writer.writeAll("clang_base_path=\"/usr/lib/llvm-21\"\n");
-                try gn_args.writer.writeAll("clang_use_chrome_plugins=false\n");
-                try gn_args.writer.writeAll("treat_warnings_as_errors=false\n");
-            }
-        },
-        else => {},
-    }
+    const gn_args: GnArgs = .{
+        .is_debug = optimize == .debug,
+        .symbol_level = b.option(u8, "symbol_level", "GN symbol_level") orelse if (optimize == .debug) 1 else 0,
+        .is_asan = b.option(bool, "is_asan", "Build V8 with AddressSanitizer") orelse false,
+        .is_tsan = b.option(bool, "is_tsan", "Build V8 with ThreadSanitizer") orelse false,
+        .v8_enable_sandbox = b.option(bool, "v8_enable_sandbox", "Enable the V8 sandbox") orelse false,
+        .mac_sdk_path = b.option([]const u8, "mac_sdk_path", "macOS SDK directory to build V8 against (e.g. an older SDK when V8 does not build with the newest)"),
+    };
+    const cache_root = b.option([]const u8, "cache_root", "Directory holding the V8 and depot_tools checkouts") orelse b.root.joinString(b.allocator, ".lp-cache") catch @panic("OOM");
 
-    const out_dir = b.fmt("out/{s}/{s}", .{ @tagName(tag), @tagName(optimize) });
+    const v8_dir = b.fmt("{s}/v8-{s}", .{ cache_root, version });
+    const depot_dir = b.fmt("{s}/depot_tools-{s}", .{ cache_root, version });
+    const args = gn_args.render(b, target);
+    // Different GN args must not share a ninja output directory.
+    const out_dir = b.fmt("out/{s}-{s}-{s}-{x}", .{
+        gnOs(target),
+        gnCpu(target),
+        if (gn_args.is_debug) "debug" else "release",
+        std.hash.Wyhash.hash(0, args),
+    });
 
-    const gn_run = b.addSystemCommand(&.{
-        getDepotToolExePath(b, depot_tools_dir, "gn"),
+    // 1. Stage the shims. rsync only rewrites files whose content changed, so
+    //    ninja's mtime tracking stays accurate.
+    const staged = b.addWriteFiles();
+    for (shims) |shim| _ = staged.addCopyFile(b.path(shim.src), shim.dest);
+
+    const stage = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && rsync -rc \"$1/\" \"$2/\"", "stage" });
+    stage.addDirectoryArg(staged.getDirectory());
+    stage.addArg(v8_dir);
+    stage.has_side_effects = true;
+
+    // 2. depot_tools, the V8 checkout and the bundled clang.
+    const depot_tools = b.dependency("depot_tools", .{});
+    const fetch = b.addSystemCommand(&.{"sh"});
+    fetch.addFileArg(b.path("build-tools/fetch-v8.sh"));
+    fetch.addArgs(&.{ cache_root, version });
+    fetch.addDirectoryArg(depot_tools.path(""));
+    fetch.has_side_effects = true;
+    fetch.step.dependOn(&stage.step);
+
+    // 3. Generate and build.
+    const path_env = b.fmt("{s}:{s}", .{ depot_dir, b.graph.environ_map.get("PATH") orelse "" });
+
+    const gn = b.addSystemCommand(&.{
+        b.fmt("{s}/gn", .{depot_dir}),
         "--root=.",
         "--root-target=//zig",
         "--dotfile=zig/.gn",
         "gen",
         out_dir,
-        b.fmt("--args={s}", .{gn_args.toOwnedSlice() catch @panic("OOM")}),
+        b.fmt("--args={s}", .{args}),
     });
-    gn_run.setCwd(v8_dir_lazy_path);
-    addDepotToolsToPath(gn_run, depot_tools_dir);
-    gn_run.step.dependOn(&bootstrapped_v8.step);
+    gn.setCwd(.{ .cwd_relative = v8_dir });
+    gn.setEnvironmentVariable("PATH", path_env);
+    gn.has_side_effects = true;
+    gn.step.dependOn(&fetch.step);
 
-    const ninja_run = b.addSystemCommand(&.{
-        getDepotToolExePath(b, depot_tools_dir, "ninja"),
-        "-C",
-        out_dir,
-        "v8_zig",
-    });
-    ninja_run.setCwd(v8_dir_lazy_path);
-    addDepotToolsToPath(ninja_run, depot_tools_dir);
-    ninja_run.step.dependOn(&gn_run.step);
+    const ninja = b.addSystemCommand(&.{ b.fmt("{s}/autoninja", .{depot_dir}), "-C", out_dir, "v8_zig" });
+    ninja.setCwd(.{ .cwd_relative = v8_dir });
+    ninja.setEnvironmentVariable("PATH", path_env);
+    ninja.has_side_effects = true;
+    ninja.step.dependOn(&gn.step);
 
-    const lib_path = b.fmt("{s}/obj/zig/libv8_zig.a", .{out_dir});
+    // Copy into the Zig cache so the artifact is tracked by the build graph.
+    const out = b.addWriteFiles();
+    out.step.dependOn(&ninja.step);
+    const lib = out.addCopyFile(
+        .{ .cwd_relative = b.fmt("{s}/{s}/obj/zig/libv8_zig.a", .{ v8_dir, out_dir }) },
+        "libv8_zig.a",
+    );
 
-    // Use addWriteFiles to ensure the library is correctly brought into the Zig build graph
-    const wf = b.addWriteFiles();
-    wf.step.dependOn(&ninja_run.step);
-    const lib_file = wf.addCopyFile(v8_dir_lazy_path.path(b, lib_path), "libv8_zig.a");
+    const step = b.step("build-v8", "Fetch and build V8");
+    step.dependOn(&out.step);
 
-    return V8Build{
-        .lib = lib_file,
-        .include_path = v8_dir_lazy_path.path(b, "include"),
-        .step = &wf.step,
-    };
-}
-
-fn getDepotToolExePath(b: *std.Build, depot_tools_dir: []const u8, executable: []const u8) []const u8 {
-    return b.fmt("{s}/{s}", .{ depot_tools_dir, executable });
-}
-
-fn addDepotToolsToPath(step: *std.Build.Step.Run, depot_tools_dir: []const u8) void {
-    step.addPathDir(depot_tools_dir);
-}
-
-fn bootstrapDepotTools(b: *std.Build, depot_tools_dir: []const u8) !*std.Build.Step.Run {
-    const depot_tools = b.dependency("depot_tools", .{});
-    const marker_file = b.fmt("{s}/.bootstrap-complete", .{depot_tools_dir});
-
-    const needs_full_bootstrap = blk: {
-        std.fs.cwd().access(marker_file, .{}) catch break :blk true;
-        break :blk false;
-    };
-
-    if (!needs_full_bootstrap) return b.addSystemCommand(&.{"true"});
-
-    const copy_depot_tools = b.addSystemCommand(&.{ "cp", "-r" });
-    copy_depot_tools.addDirectoryArg(depot_tools.path(""));
-    copy_depot_tools.addArg(depot_tools_dir);
-
-    const ensure_bootstrap = b.addSystemCommand(&.{
-        getDepotToolExePath(b, depot_tools_dir, "ensure_bootstrap"),
-    });
-    ensure_bootstrap.setCwd(.{ .cwd_relative = depot_tools_dir });
-    addDepotToolsToPath(ensure_bootstrap, depot_tools_dir);
-    ensure_bootstrap.step.dependOn(&copy_depot_tools.step);
-
-    const create_marker = b.addSystemCommand(&.{ "touch", marker_file });
-    create_marker.step.dependOn(&ensure_bootstrap.step);
-
-    return create_marker;
-}
-
-fn bootstrapV8(
-    b: *std.Build,
-    bootstrapped_depot_tools: *std.Build.Step.Run,
-    v8_dir: []const u8,
-    depot_tools_dir: []const u8,
-) !*std.Build.Step.Run {
-    const marker_file = b.fmt("{s}/.bootstrap-complete", .{v8_dir});
-
-    const needs_full_bootstrap = blk: {
-        std.fs.cwd().access(marker_file, .{}) catch break :blk true;
-        break :blk false;
-    };
-
-    if (!needs_full_bootstrap) {
-        const needs_source_update = blk: {
-            const marker_stat = std.fs.cwd().statFile(marker_file) catch break :blk true;
-            const marker_mtime = marker_stat.mtime;
-
-            const source_dirs = [_][]const u8{
-                b.pathFromRoot("binding"),
-                b.pathFromRoot("build-tools"),
-            };
-
-            for (source_dirs) |dir_path| {
-                var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch continue;
-                defer dir.close();
-
-                var walker = dir.walk(b.allocator) catch continue;
-                defer walker.deinit();
-                while (walker.next() catch continue) |entry| {
-                    if (entry.kind == .file) {
-                        const stat = entry.dir.statFile(entry.path) catch continue;
-                        if (stat.mtime.toNanoseconds() > marker_mtime.toNanoseconds()) break :blk true;
-                    }
-                }
-            }
-            break :blk false;
-        };
-
-        if (needs_source_update) {
-            std.debug.print("Updating source files in V8 bootstrap\n", .{});
-            const zig_dir = b.fmt("{s}/zig", .{v8_dir});
-            const rm_zig = b.addSystemCommand(&.{ "rm", "-rf", zig_dir });
-            const mkdir_zig = b.addSystemCommand(&.{ "mkdir", "-p", zig_dir });
-            mkdir_zig.step.dependOn(&rm_zig.step);
-
-            const copy_binding = b.addSystemCommand(&.{ "cp", "-r" });
-            copy_binding.addDirectoryArg(b.path("binding/"));
-            copy_binding.addArg(b.fmt("{s}/zig/", .{v8_dir}));
-            copy_binding.step.dependOn(&mkdir_zig.step);
-
-            const copy_build_gn = b.addSystemCommand(&.{"cp"});
-            copy_build_gn.addFileArg(b.path("build-tools/BUILD.gn"));
-            copy_build_gn.addArg(b.fmt("{s}/zig/BUILD.gn", .{v8_dir}));
-            copy_build_gn.step.addWatchInput(b.path("build-tools/BUILD.gn")) catch unreachable;
-            copy_build_gn.step.dependOn(&mkdir_zig.step);
-
-            const copy_gn = b.addSystemCommand(&.{"cp"});
-            copy_gn.addFileArg(b.path("build-tools/.gn"));
-            copy_gn.addArg(b.fmt("{s}/zig/.gn", .{v8_dir}));
-            copy_gn.step.addWatchInput(b.path("build-tools/.gn")) catch unreachable;
-            copy_gn.step.dependOn(&mkdir_zig.step);
-
-            const update_marker = b.addSystemCommand(&.{ "touch", marker_file });
-            update_marker.step.dependOn(&copy_binding.step);
-            update_marker.step.dependOn(&copy_build_gn.step);
-            update_marker.step.dependOn(&copy_gn.step);
-
-            return update_marker;
-        }
-
-        return b.addSystemCommand(&.{"true"});
-    }
-
-    const mkdir = b.addSystemCommand(&.{ "mkdir", "-p", v8_dir });
-    mkdir.step.dependOn(&bootstrapped_depot_tools.step);
-
-    const gclient_content = b.fmt(
-        \\solutions = [
-        \\  {{
-        \\    "name": ".",
-        \\    "url": "https://chromium.googlesource.com/v8/v8.git@{s}",
-        \\    "deps_file": "DEPS",
-        \\    "managed": False,
-        \\    "custom_deps": {{}},
-        \\  }},
-        \\]
-        \\
-    , .{V8_VERSION});
-
-    const write_gclient = b.addSystemCommand(&.{ "sh", "-c" });
-    write_gclient.addArg(b.fmt("echo '{s}' > {s}/.gclient", .{ gclient_content, v8_dir }));
-    write_gclient.step.dependOn(&mkdir.step);
-
-    const zig_dir = b.fmt("{s}/zig", .{v8_dir});
-    const mkdir_zig = b.addSystemCommand(&.{ "mkdir", "-p", zig_dir });
-    mkdir_zig.step.dependOn(&write_gclient.step);
-
-    const copy_binding = b.addSystemCommand(&.{ "cp", "-r" });
-    copy_binding.addDirectoryArg(b.path("binding/"));
-    copy_binding.addArg(b.fmt("{s}/zig/", .{v8_dir}));
-    copy_binding.step.dependOn(&mkdir_zig.step);
-
-    const copy_build_gn = b.addSystemCommand(&.{"cp"});
-    copy_build_gn.addFileArg(b.path("build-tools/BUILD.gn"));
-    copy_build_gn.addArg(b.fmt("{s}/zig/BUILD.gn", .{v8_dir}));
-    copy_build_gn.step.dependOn(&mkdir_zig.step);
-
-    const copy_gn = b.addSystemCommand(&.{"cp"});
-    copy_gn.addFileArg(b.path("build-tools/.gn"));
-    copy_gn.addArg(b.fmt("{s}/zig/.gn", .{v8_dir}));
-    copy_gn.step.dependOn(&mkdir_zig.step);
-
-    const gclient_sync = b.addSystemCommand(&.{
-        getDepotToolExePath(b, depot_tools_dir, "gclient"),
-        "sync",
-    });
-    gclient_sync.setCwd(.{ .cwd_relative = v8_dir });
-    addDepotToolsToPath(gclient_sync, depot_tools_dir);
-    gclient_sync.step.dependOn(&copy_build_gn.step);
-    gclient_sync.step.dependOn(&copy_gn.step);
-
-    const clang_update = b.addSystemCommand(&.{
-        getDepotToolExePath(b, depot_tools_dir, "python-bin/python3"),
-        "tools/clang/scripts/update.py",
-    });
-    clang_update.setCwd(.{ .cwd_relative = v8_dir });
-    addDepotToolsToPath(clang_update, depot_tools_dir);
-    clang_update.step.dependOn(&gclient_sync.step);
-
-    const create_marker = b.addSystemCommand(&.{ "touch", marker_file });
-    create_marker.step.dependOn(&clang_update.step);
-
-    return create_marker;
+    return .{ .lib = lib };
 }

@@ -39,7 +39,10 @@ const MallocMeta = struct {
 
     const aligned_size = std.mem.alignForward(usize, @sizeOf(MallocMeta), 16);
 
-    pub inline fn allocate(alloc: std.mem.Allocator, size: usize) ?struct { *@This(), []u8 } {
+    /// Borrows alloc through the call. Returns metadata and a data slice into one
+    /// alloc-owned block; the caller releases it through MallocMeta.dealloc.
+    /// On failure, any partial block is freed before null is returned.
+    pub inline fn alloc(alloc: std.mem.Allocator, size: usize) ?struct { *@This(), []u8 } {
         const alloc_size = aligned_size + size;
         const mem = alloc.alignedAlloc(u8, Alignment, alloc_size) catch return null;
         errdefer alloc.free(mem);
@@ -63,7 +66,10 @@ const MallocMeta = struct {
         return mem[aligned_size..self.alloc_size];
     }
 
-    pub inline fn reallocate(self: **@This(), alloc: std.mem.Allocator, new_size: usize) !void {
+    /// Borrows alloc through the call and replaces the allocation owned by self.
+    /// On failure, self keeps the original allocation and the caller must release
+    /// it with dealloc. On success, self owns the resized block until dealloc.
+    pub inline fn realloc(self: **@This(), alloc: std.mem.Allocator, new_size: usize) !void {
         self.*.tag = Tags.resi;
         const new_alloc_size = aligned_size + new_size;
         const new_mem = try alloc.realloc(self.*.as_mem(), new_alloc_size);
@@ -75,7 +81,9 @@ const MallocMeta = struct {
         self.* = new_meta;
     }
 
-    pub inline fn deallocate(self: *@This(), alloc: std.mem.Allocator) void {
+    /// Borrows alloc through the call and releases the block owned by self.
+    /// The metadata pointer is invalid after return and must not be used again.
+    pub inline fn dealloc(self: *@This(), alloc: std.mem.Allocator) void {
         self.tag = Tags.free; // freed
         const mem: [*]u8 = @ptrCast(self);
         alloc.free(mem[0..self.alloc_size]);
@@ -101,7 +109,7 @@ const MallocMeta = struct {
 };
 
 pub export fn malloc(size: usize) callconv(.c) ?*anyopaque {
-    const meta, const mem = MallocMeta.allocate(gpa, size) orelse return null;
+    const meta, const mem = MallocMeta.alloc(gpa, size) orelse return null;
     _ = meta;
     // std.debug.print("@ -> malloc({}) = {*}\n", .{ size, mem.ptr });
     return @ptrCast(mem);
@@ -114,13 +122,13 @@ pub export fn free(maybe_ptr: ?*anyopaque) callconv(.c) void {
         // get_original_free()(ptr);
         return;
     };
-    meta.deallocate(gpa);
+    meta.dealloc(gpa);
 }
 
 pub export fn calloc(num: usize, size: usize) callconv(.c) ?*anyopaque {
     const res, const of = @mulWithOverflow(num, size);
     if (of == 1) return null;
-    const meta, const mem = MallocMeta.allocate(gpa, res) orelse return null;
+    const meta, const mem = MallocMeta.alloc(gpa, res) orelse return null;
     // std.debug.print("@ -> calloc({}, {}) = {*}\n", .{ num, size, mem });
     _ = meta;
     @memset(mem, 0);
@@ -133,10 +141,10 @@ pub export fn realloc(maybe_ptr: ?*anyopaque, size: usize) ?*anyopaque {
     };
     var meta = MallocMeta.from(ptr) catch return null;
     if (size == 0) {
-        meta.deallocate(gpa);
+        meta.dealloc(gpa);
         return null;
     }
-    MallocMeta.reallocate(&meta, gpa, size) catch return null;
+    MallocMeta.realloc(&meta, gpa, size) catch return null;
     const mem = meta.get_data();
     // std.debug.print("@ -> realloc({ptr}, {}) = {*}\n", .{ ptr, size, mem });
     return @ptrCast(mem);

@@ -5,8 +5,14 @@ const Platform = v8.Platform;
 const Isolate = v8.Isolate;
 
 pub const V8 = struct {
-    /// Initializes V8. This function needs to be called before the first Isolate is created.
+    /// Initializes V8 with process-wide strict mode enabled by default.
+    /// Registers the lazy embedded ICU provider without expanding the package.
+    /// First ICU data use expands it into immutable process-lifetime storage;
+    /// configuration failure aborts, data failures propagate via ICU at use.
+    /// Retains no caller resources.
+    /// Call once, before creating any isolate; V8 freezes flags during initialization.
     pub fn initialize() void {
+        setFlagsFromString("--use-strict");
         e.v8__V8__Initialize();
     }
 
@@ -15,7 +21,10 @@ pub const V8 = struct {
         e.v8__V8__InitializePlatform(platform.handle);
     }
 
-    /// Initializes the ICU bundled with v8.
+    /// Registers the embedded ICU provider once without expanding any data;
+    /// returns configuration success by value and retains no inputs. First ICU
+    /// data use expands storage retained until process exit; data errors are
+    /// cached and reported through ICU. Do not clean up/reinitialize ICU.
     pub fn initializeICU() bool {
         return e.v8__V8__InitializeICU();
     }

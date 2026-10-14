@@ -15,9 +15,9 @@ const Module = v8.Module;
 
 pub const HostInitializeImportMetaObjectCallback = *const fn (Context, Module, meta: Object) callconv(.c) void;
 
-pub const HostImportModuleDynamicallyCallback = *const fn (Context, host_defined_options: Data, resource_name: Value, specifier: String, import_attributes: FixedArray) callconv(.c) Promise;
+pub const HostImportModuleDynamicallyCallback = *const fn (Context, host_defined_options: Data, resource_name: Value, specifier: String, import_attributes: FixedArray) callconv(.c) v8.MaybeHandle;
 
-pub const HostImportModuleWithPhaseDynamicallyCallback = *const fn (Context, host_defined_options: Data, resource_name: Value, specifier: String, ModuleImportPhase, import_attributes: FixedArray) callconv(.c) Promise;
+pub const HostImportModuleWithPhaseDynamicallyCallback = *const fn (Context, host_defined_options: Data, resource_name: Value, specifier: String, ModuleImportPhase, import_attributes: FixedArray) callconv(.c) v8.MaybeHandle;
 
 pub const AccessorNameGetterCallback = *const fn (Name, *const PropertyCallbackInfo) callconv(.c) void;
 

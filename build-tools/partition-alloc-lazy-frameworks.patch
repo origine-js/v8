@@ -1,0 +1,250 @@
+diff --git a/src/partition_alloc/BUILD.gn b/src/partition_alloc/BUILD.gn
+index 275d6dbe..c03d3024 100644
+--- a/src/partition_alloc/BUILD.gn
++++ b/src/partition_alloc/BUILD.gn
+@@ -723,8 +723,15 @@ if (is_clang_or_gcc) {
+ 
+         sources += [
+           "partition_alloc_base/debug/stack_trace_mac.cc",
+-          "partition_alloc_base/time/time_apple.mm",
+         ]
++        if (is_mac) {
++          sources += [
++            "partition_alloc_base/time/time_apple.cc",
++            "partition_alloc_base/time/time_apple_nsdate.mm",
++          ]
++        } else {
++          sources += [ "partition_alloc_base/time/time_apple.mm" ]
++        }
+       } else {
+         sources += [ "partition_alloc_base/time/time_now_posix.cc" ]
+       }
+@@ -762,12 +769,16 @@ if (is_clang_or_gcc) {
+       # Apple-specific utilities
+       sources += [
+         "partition_alloc_base/apple/foundation_util.h",
+-        "partition_alloc_base/apple/foundation_util.mm",
+         "partition_alloc_base/apple/mach_logging.cc",
+         "partition_alloc_base/apple/mach_logging.h",
+         "partition_alloc_base/apple/scoped_cftyperef.h",
+         "partition_alloc_base/apple/scoped_typeref.h",
+       ]
++      if (is_mac) {
++        sources += [ "partition_alloc_base/apple/foundation_util.cc" ]
++      } else {
++        sources += [ "partition_alloc_base/apple/foundation_util.mm" ]
++      }
+       if (is_ios) {
+         sources += [
+           "partition_alloc_base/ios/ios_util.h",
+@@ -778,7 +789,7 @@ if (is_clang_or_gcc) {
+       if (is_mac) {
+         sources += [
+           "partition_alloc_base/mac/mac_util.h",
+-          "partition_alloc_base/mac/mac_util.mm",
++          "partition_alloc_base/mac/mac_util.cc",
+           "partition_alloc_base/system/sys_info_mac.mm",
+         ]
+       }
+diff --git a/src/partition_alloc/page_allocator_internals_posix.cc b/src/partition_alloc/page_allocator_internals_posix.cc
+index 00329ada..e6372322 100644
+--- a/src/partition_alloc/page_allocator_internals_posix.cc
++++ b/src/partition_alloc/page_allocator_internals_posix.cc
+@@ -162,7 +162,8 @@ void NameRegion(void* start, size_t length, PageTag page_tag) {
+ // Tests whether the version of macOS supports the MAP_JIT flag and if the
+ // current process is signed with the hardened runtime and the allow-jit
+ // entitlement, returning whether MAP_JIT should be used to allocate regions
+-// that will contain JIT-compiled executable code.
++// that will contain JIT-compiled executable code. Owns temporary CF references
++// through this call; scoped wrappers release them on every return path.
+ bool UseMapJit() {
+   // Until determining that the hardened runtime is enabled, early returns will
+   // return true, so that MAP_JIT will be used. This is important on arm64,
+@@ -173,7 +174,7 @@ bool UseMapJit() {
+   // MAP_JIT is harmless in that case.
+ 
+   base::apple::ScopedCFTypeRef<SecTaskRef> task(
+-      SecTaskCreateFromSelf(kCFAllocatorDefault));
++      SecTaskCreateFromSelf(nullptr));
+   if (!task) {
+     return true;
+   }
+@@ -190,15 +191,19 @@ bool UseMapJit() {
+   // (EINVAL) to use MAP_JIT with the hardened runtime unless the JIT
+   // entitlement is specified.
+ 
++  base::apple::ScopedCFTypeRef<CFStringRef> entitlement_name(
++      CFStringCreateWithCString(nullptr, "com.apple.security.cs.allow-jit",
++                                kCFStringEncodingUTF8));
++  if (!entitlement_name) return false;
+   base::apple::ScopedCFTypeRef<CFTypeRef> jit_entitlement(
+       SecTaskCopyValueForEntitlement(
+-          task.get(), CFSTR("com.apple.security.cs.allow-jit"), nullptr));
++          task.get(), entitlement_name.get(), nullptr));
+   if (!jit_entitlement) {
+     return false;
+   }
+ 
+-  return base::apple::CFCast<CFBooleanRef>(jit_entitlement.get()) ==
+-         kCFBooleanTrue;
++  CFBooleanRef allowed = base::apple::CFCast<CFBooleanRef>(jit_entitlement.get());
++  return allowed && CFBooleanGetValue(allowed);
+ }
+ #elif PA_BUILDFLAG(IS_IOS)
+ bool UseMapJit() {
+diff --git a/src/partition_alloc/page_allocator_internals_posix.h b/src/partition_alloc/page_allocator_internals_posix.h
+index d3ae5c58..021aea6e 100644
+--- a/src/partition_alloc/page_allocator_internals_posix.h
++++ b/src/partition_alloc/page_allocator_internals_posix.h
+@@ -56,6 +56,11 @@ std::atomic<int32_t> s_allocPageErrorCode{0};
+ 
+ int GetAccessFlags(PageAccessibilityConfiguration accessibility);
+ 
++// Copies hint/length/accessibility/tag; borrows a shared-allocation fd only
++// through mmap (the mapping owns its kernel reference, not the descriptor).
++// Returns a caller-owned mapping released with FreePages, or zero on
++// failure with no mapping retained. JIT entitlement checks are cached on first
++// JIT-region request; ordinary data mappings do not load Apple frameworks.
+ uintptr_t SystemAllocPagesInternal(uintptr_t hint,
+                                    size_t length,
+                                    PageAccessibilityConfiguration accessibility,
+@@ -79,18 +84,21 @@ uintptr_t SystemAllocPagesInternal(uintptr_t hint,
+   // execute writable memory by default. They can opt into this capability by
+   // specifying the "com.apple.security.cs.allow-jit" code signing entitlement
+   // and allocating the region with the MAP_JIT flag.
+-  static const bool kUseMapJit = UseMapJit();
+   if (accessibility.permissions ==
+-          PageAccessibilityConfiguration::kInaccessibleWillJitLater &&
+-      kUseMapJit) {
+-    map_flags |= MAP_JIT;
+-    // iOS devices do not support toggling the page permissions after a MAP_JIT
+-    // call, they must be set initially. iOS has per-thread W^X state that
+-    // takes precedence over the mapping's permissions for MAP_JIT regions.
+-    // See https://developer.apple.com/forums/thread/672804
++          PageAccessibilityConfiguration::kInaccessibleWillJitLater) {
++    // Consult entitlements only for JIT regions; ordinary data mappings do not
++    // need Security.framework. Static initialization serializes the first check.
++    static const bool kUseMapJit = UseMapJit();
++    if (kUseMapJit) {
++      map_flags |= MAP_JIT;
++      // iOS devices do not support toggling the page permissions after a MAP_JIT
++      // call, they must be set initially. iOS has per-thread W^X state that
++      // takes precedence over the mapping's permissions for MAP_JIT regions.
++      // See https://developer.apple.com/forums/thread/672804
+ #if PA_BUILDFLAG(IS_IOS)
+-    access_flag = PROT_READ | PROT_WRITE | PROT_EXEC;
++      access_flag = PROT_READ | PROT_WRITE | PROT_EXEC;
+ #endif
++    }
+   }
+ #endif
+ 
+diff --git a/src/partition_alloc/partition_alloc_base/time/time_apple.mm b/src/partition_alloc/partition_alloc_base/time/time_apple.mm
+index ee2c8de1..0de5ca22 100644
+--- a/src/partition_alloc/partition_alloc_base/time/time_apple.mm
++++ b/src/partition_alloc/partition_alloc_base/time/time_apple.mm
+@@ -9,7 +9,9 @@
+ 
+ #include "partition_alloc/partition_alloc_base/time/time.h"
+ 
++#if defined(__OBJC__)
+ #import <Foundation/Foundation.h>
++#endif
+ #include <mach/mach.h>
+ #include <mach/mach_time.h>
+ #include <sys/sysctl.h>
+@@ -143,6 +145,8 @@ Time TimeNowFromSystemTimeIgnoringOverride() {
+ }  // namespace subtle
+ 
+ // static
++// Accepts/returns copied time values; retains no resources. CF's epoch is
++// 2001-01-01, exactly 978307200 seconds after the Unix epoch.
+ Time Time::FromCFAbsoluteTime(CFAbsoluteTime t) {
+   static_assert(std::numeric_limits<CFAbsoluteTime>::has_infinity,
+                 "CFAbsoluteTime must have an infinity value");
+@@ -152,9 +156,10 @@ Time Time::FromCFAbsoluteTime(CFAbsoluteTime t) {
+   return (t == std::numeric_limits<CFAbsoluteTime>::infinity())
+              ? Max()
+              : (UnixEpoch() +
+-                Seconds(double{t + kCFAbsoluteTimeIntervalSince1970}));
++                Seconds(double{t + 978307200.0}));
+ }
+ 
++// Borrows this through return; returns a copied time value and retains nothing.
+ CFAbsoluteTime Time::ToCFAbsoluteTime() const {
+   static_assert(std::numeric_limits<CFAbsoluteTime>::has_infinity,
+                 "CFAbsoluteTime must have an infinity value");
+@@ -163,18 +168,23 @@ CFAbsoluteTime Time::ToCFAbsoluteTime() const {
+   }
+   return is_max() ? std::numeric_limits<CFAbsoluteTime>::infinity()
+                   : (CFAbsoluteTime{(*this - UnixEpoch()).InSecondsF()} -
+-                     kCFAbsoluteTimeIntervalSince1970);
++                     978307200.0);
+ }
+ 
++#if defined(__OBJC__)
+ // static
++// Borrows date through return; returns a copied time and retains no input object.
+ Time Time::FromNSDate(NSDate* date) {
+   PA_BASE_DCHECK(date);
+   return FromCFAbsoluteTime(date.timeIntervalSinceReferenceDate);
+ }
+ 
++// Borrows this through return; returns an autoreleased NSDate, valid until its
++// autorelease pool drains. Retain it to extend that lifetime.
+ NSDate* Time::ToNSDate() const {
+   return [NSDate dateWithTimeIntervalSinceReferenceDate:ToCFAbsoluteTime()];
+ }
++#endif
+ 
+ // TimeDelta ------------------------------------------------------------------
+ 
+diff --git a/src/partition_alloc/partition_alloc_base/time/time_apple.cc b/src/partition_alloc/partition_alloc_base/time/time_apple.cc
+new file mode 100644
+index 00000000..08758e71
+--- /dev/null
++++ b/src/partition_alloc/partition_alloc_base/time/time_apple.cc
+@@ -0,0 +1,3 @@
++// Compile common macOS clocks without emitting unused ObjC image metadata.
++// NSDate bridges live in a separate archive member, pulled only by NSDate users.
++#include "partition_alloc/partition_alloc_base/time/time_apple.mm"
+diff --git a/src/partition_alloc/partition_alloc_base/time/time_apple_nsdate.mm b/src/partition_alloc/partition_alloc_base/time/time_apple_nsdate.mm
+new file mode 100644
+index 00000000..6a9214de
+--- /dev/null
++++ b/src/partition_alloc/partition_alloc_base/time/time_apple_nsdate.mm
+@@ -0,0 +1,18 @@
++#include "partition_alloc/partition_alloc_base/time/time.h"
++#import <Foundation/Foundation.h>
++
++namespace partition_alloc::internal::base {
++
++// Borrows date through return; returns a copied time and retains no input object.
++Time Time::FromNSDate(NSDate* date) {
++  PA_BASE_DCHECK(date);
++  return FromCFAbsoluteTime(date.timeIntervalSinceReferenceDate);
++}
++
++// Borrows this through return; returns an autoreleased NSDate valid until the
++// current autorelease pool drains. Caller retains it to extend that lifetime.
++NSDate* Time::ToNSDate() const {
++  return [NSDate dateWithTimeIntervalSinceReferenceDate:ToCFAbsoluteTime()];
++}
++
++}  // namespace partition_alloc::internal::base
+diff --git a/src/partition_alloc/partition_alloc_base/apple/foundation_util.cc b/src/partition_alloc/partition_alloc_base/apple/foundation_util.cc
+new file mode 100644
+index 00000000..2e2a2abe
+--- /dev/null
++++ b/src/partition_alloc/partition_alloc_base/apple/foundation_util.cc
+@@ -0,0 +1,2 @@
++// These CF utilities are C++, not Objective-C; avoid unused ObjC image metadata.
++#include "partition_alloc/partition_alloc_base/apple/foundation_util.mm"
+diff --git a/src/partition_alloc/partition_alloc_base/mac/mac_util.cc b/src/partition_alloc/partition_alloc_base/mac/mac_util.cc
+new file mode 100644
+index 00000000..7c4588dc
+--- /dev/null
++++ b/src/partition_alloc/partition_alloc_base/mac/mac_util.cc
+@@ -0,0 +1,2 @@
++// Darwin version detection uses uname only; it needs no Objective-C runtime.
++#include "partition_alloc/partition_alloc_base/mac/mac_util.mm"

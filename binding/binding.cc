@@ -5,7 +5,9 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
+#include <string_view>
 #include <thread>
 
 #include "cppgc/allocation.h"
@@ -24,9 +26,14 @@
 #include "v8.h"
 #include "../../src/flags/flags.h"
 #include "../../src/libplatform/default-platform.h"
+#include "../../src/api/api-inl.h"
+#include "../../src/builtins/builtins.h"
+#include "../../src/objects/contexts-inl.h"
+#include "../../src/objects/js-function-inl.h"
 
 #include "binding.hpp"
 #include "layout.gen.h"
+#include "icu-compressed.h"
 
 using namespace support;
 
@@ -130,6 +137,131 @@ extern "C" bool v8__V8__IsSandboxEnabled() {
 }
 
 extern "C" {
+
+// Host-only access to original public method functions retained by the engine
+// patch. Never traverses JS properties, invokes getters, or constructs functions.
+// Borrows context/name bytes through return on the entered isolate thread, with
+// a live HandleScope. Returns a GC-owned local handle expiring with that scope;
+// null for unavailable names. No ownership transfer or caller allocations.
+const v8::Function* v8__Intrinsics__Get(const v8::Context& context,
+                                     const uint8_t* name, size_t name_len) {
+  namespace i = v8::internal;
+  auto local_context = ref_to_local(context);
+  auto native_context = v8::Utils::OpenDirectHandle(*local_context);
+  auto* isolate = i::Isolate::Current();
+  const std::string_view requested(reinterpret_cast<const char*>(name), name_len);
+  i::DisallowGarbageCollection no_gc;
+  auto table = native_context->zig_intrinsic_functions();
+  for (int index = 0; index < i::Builtins::kBuiltinCount; ++index) {
+    auto builtin = static_cast<i::Builtin>(index);
+    if (requested != i::Builtins::name(builtin)) continue;
+    auto value = table->get(index);
+    if (!i::IsJSFunction(value)) return nullptr;
+    return local_to_ptr(v8::Utils::ToLocal(
+        i::direct_handle(i::Cast<i::JSFunction>(value), isolate)));
+  }
+  return nullptr;
+}
+
+// Borrows the context on its entered isolate thread through return. Requires a
+// live HandleScope; returns a GC-owned local object valid until that scope ends.
+// Temporary handles clean up on failure; no caller resources are consumed.
+const v8::Object* v8__Intrinsics__GetAll(const v8::Context& context) {
+  namespace i = v8::internal;
+  auto local_context = ref_to_local(context);
+  v8::Context::Scope context_scope(local_context);
+  auto* isolate = i::Isolate::Current();
+  auto* api_isolate = v8::Isolate::GetCurrent();
+  auto native_context = v8::Utils::OpenDirectHandle(*local_context);
+  // Allocating the result and its keys can trigger GC: root the table and
+  // each function before allocating, rather than retaining raw tagged values.
+  auto table = i::direct_handle(native_context->zig_intrinsic_functions(), isolate);
+  auto result = v8::Object::New(api_isolate, v8::Null(api_isolate), nullptr,
+                                nullptr, 0);
+  for (int index = 0; index < i::Builtins::kBuiltinCount; ++index) {
+    auto value = table->get(index);
+    if (!i::IsJSFunction(value)) continue;
+    auto function = v8::Utils::ToLocal(
+        i::direct_handle(i::Cast<i::JSFunction>(value), isolate));
+    v8::Local<v8::String> name;
+    if (!v8::String::NewFromUtf8(api_isolate,
+            i::Builtins::name(static_cast<i::Builtin>(index))).ToLocal(&name)) {
+      return nullptr;
+    }
+    if (!result->CreateDataProperty(local_context, name, function).FromMaybe(false)) {
+      return nullptr;
+    }
+  }
+  if (!result->SetIntegrityLevel(local_context, v8::IntegrityLevel::kFrozen)
+           .FromMaybe(false)) return nullptr;
+  return local_to_ptr(result);
+}
+
+// Borrows context on its entered isolate thread with a live HandleScope. Returns
+// a new GC-owned frozen array of this realm's frozen engine intrinsic objects;
+// its local handle expires with the HandleScope. Empty means not finalized.
+// Failure returns null and releases temporary handles; consumes no resources.
+const v8::Array* v8__Intrinsics__GetObjects(const v8::Context& context) {
+  namespace i = v8::internal;
+  auto local_context = ref_to_local(context);
+  v8::Context::Scope context_scope(local_context);
+  auto* isolate = i::Isolate::Current();
+  auto native_context = v8::Utils::OpenDirectHandle(*local_context);
+  auto table = i::direct_handle(native_context->zig_intrinsic_objects(), isolate);
+  const int length = static_cast<int>(table->length().value());
+  auto result = v8::Array::New(v8::Isolate::GetCurrent(), length);
+  for (int index = 0; index < length; ++index) {
+    auto object = v8::Utils::ToLocal(
+        i::direct_handle(i::Cast<i::JSObject>(table->get(index)), isolate));
+    if (!result->CreateDataProperty(local_context, index, object).FromMaybe(false)) {
+      return nullptr;
+    }
+  }
+  if (!result->SetIntegrityLevel(local_context, v8::IntegrityLevel::kFrozen)
+           .FromMaybe(false)) return nullptr;
+  return local_to_ptr(result);
+}
+
+// Borrows context/name bytes through return on the entered isolate thread with
+// a live HandleScope. Returns the original context-owned prototype as a local
+// handle expiring with that scope, or null for unknown/disabled entries. Reads
+// native roots directly; runs no getters/constructors and consumes no resources.
+const v8::Object* v8__Intrinsics__GetPrototype(const v8::Context& context,
+                                            const uint8_t* name, size_t length) {
+  namespace i = v8::internal;
+  auto* isolate = i::Isolate::Current();
+  auto native = v8::Utils::OpenDirectHandle(*ref_to_local(context));
+  const std::string_view requested(reinterpret_cast<const char*>(name), length);
+  i::Tagged<i::Object> value = i::ReadOnlyRoots(isolate).undefined_value();
+  i::DisallowGarbageCollection no_gc;
+  constexpr struct {
+    std::string_view name;
+    int index;
+    bool map;
+  } entries[] = {
+      {"array_iterator", i::Context::INITIAL_ARRAY_ITERATOR_PROTOTYPE_INDEX, false},
+      {"string_iterator", i::Context::INITIAL_STRING_ITERATOR_PROTOTYPE_INDEX, false},
+      {"regexp_string_iterator", i::Context::INITIAL_REGEXP_STRING_ITERATOR_PROTOTYPE_MAP_INDEX, true},
+      {"iterator_helper", i::Context::INITIAL_ITERATOR_HELPER_PROTOTYPE_INDEX, false},
+      {"iterator_wrapper", i::Context::VALID_ITERATOR_WRAPPER_MAP_INDEX, true},
+#ifdef V8_INTL_SUPPORT
+      {"intl_segments", i::Context::INTL_SEGMENTS_MAP_INDEX, true},
+      {"intl_segment_iterator", i::Context::INTL_SEGMENT_ITERATOR_MAP_INDEX, true},
+#endif
+  };
+  for (const auto& entry : entries) {
+    if (entry.name != requested) continue;
+    value = native->GetNoCell(entry.index);
+    if (entry.map) {
+      if (!i::IsMap(value)) return nullptr;
+      value = i::Cast<i::Map>(value)->prototype();
+    }
+    break;
+  }
+  if (!i::IsJSObject(value)) return nullptr;
+  return local_to_ptr(v8::Utils::ToLocal(i::direct_handle(i::Cast<i::JSObject>(value), isolate)));
+}
+
 void v8__V8__SetFlagsFromCommandLine(int* argc, char** argv,
                                      const char* usage) {
   namespace i = v8::internal;
@@ -152,9 +284,17 @@ void v8__V8__InitializePlatform(v8::Platform* platform) {
   v8::V8::InitializePlatform(platform);
 }
 
-void v8__V8__Initialize() { v8::V8::Initialize(); }
+// Registers the lazy ICU provider and initializes V8; owns no caller storage.
+// Does not expand the ICU package. Configuration failure aborts; first ICU data
+// use publishes immutable process-lifetime storage or reports an ICU error.
+void v8__V8__Initialize() {
+  if (!v8_zig_initialize_compressed_icu()) std::abort();
+  v8::V8::Initialize();
+}
 
-bool v8__V8__InitializeICU() { return v8::V8::InitializeICU(); }
+// Registers the lazy process-lifetime ICU provider once; retains no inputs and
+// does not expand data. False means configuration failure; no caller cleanup.
+bool v8__V8__InitializeICU() { return v8_zig_initialize_compressed_icu(); }
 
 bool v8__V8__Dispose() { return v8::V8::Dispose(); }
 
@@ -1973,8 +2113,8 @@ memory_span_t v8__ArrayBufferView__GetContents(const v8::ArrayBufferView& self,
 }
 
 struct ZigAllocatorTable {
-  void* (*allocate_zeroed)(void* handle, size_t length);
-  void* (*allocate)(void* handle, size_t length);
+  void* (*alloc_zeroed)(void* handle, size_t length);
+  void* (*alloc)(void* handle, size_t length);
   void (*free)(void* handle, void* data, size_t length);
   void (*deinit)(void* handle);
 };
@@ -1998,11 +2138,11 @@ class ZigAllocator : public v8::ArrayBuffer::Allocator {
   virtual ~ZigAllocator() { vtable->deinit(handle); }
 
   void* Allocate(size_t length) final {
-    return vtable->allocate_zeroed(handle, length);
+    return vtable->alloc_zeroed(handle, length);
   }
 
   void* AllocateUninitialized(size_t length) final {
-    return vtable->allocate(handle, length);
+    return vtable->alloc(handle, length);
   }
 
   void Free(void* data, size_t length) final {
@@ -2192,7 +2332,7 @@ v8::MicrotaskQueue* v8__MicrotaskQueue__New(v8::Isolate* isolate,
 }
 
 void v8__MicrotaskQueue__DESTRUCT(v8::MicrotaskQueue* self) {
-  self->~MicrotaskQueue();
+  delete self;
 }
 
 void v8__MicrotaskQueue__PerformCheckpoint(v8::Isolate* isolate,
@@ -3435,6 +3575,7 @@ const v8::Module* v8__Module__CreateSyntheticModule(
     size_t export_names_len, const v8::String* export_names_raw[],
     v8::Module::SyntheticModuleEvaluationSteps evaluation_steps) {
   std::vector<v8::Local<v8::String>> export_names_vec{};
+  export_names_vec.reserve(export_names_len);
   for (size_t i = 0; i < export_names_len; i += 1) {
     export_names_vec.push_back(ptr_to_local(export_names_raw[i]));
   }

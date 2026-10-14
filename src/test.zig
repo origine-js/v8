@@ -11,7 +11,7 @@ const binding = @import("binding.zig");
 var platform: v8.Platform = undefined;
 var v8_ready = false;
 
-fn ensureV8() void {
+pub fn ensureV8() void {
     if (v8_ready) return;
     platform = .initDefault(0, true);
     v8.V8.initializePlatform(platform);
@@ -64,7 +64,7 @@ const Env = struct {
         return self.tryEval(src) orelse @panic("script threw");
     }
 
-    /// `String(value)` as UTF-8, owned by the testing allocator.
+    /// `String(value)` as UTF-8, owned by the testing alloc.
     fn utf8(self: *Env, value: v8.Value) ![]u8 {
         const s = value.toString(self.context).?;
         const buf = try t.allocator.alloc(u8, s.lenUtf8(self.isolate));
@@ -92,10 +92,193 @@ fn withEnv(comptime body: fn (*Env) anyerror!void) !void {
 
 // ------------------------------------------------------------------ V8 / Platform
 
+test "Intrinsics: frozen identity, rejected tampering, realm ownership and GC" {
+    try withEnv(struct {
+        /// Borrows env and its entered context/live HandleScope through return;
+        /// all created local handles expire with that scope; retains no resources.
+        fn run(env: *Env) !void {
+            const push = v8.Intrinsics.get(env.context, "ArrayPrototypePush").?;
+            try t.expect(push.object.value.strictEquals(env.eval("Array.prototype.push")));
+            const methods = .{
+                .{ "ObjectFreeze", "Object.freeze" },
+                .{ "ReflectApply", "Reflect.apply" },
+                .{ "MapPrototypeGet", "Map.prototype.get" },
+                .{ "ArrayPrototypeValues", "Array.prototype[Symbol.iterator]" },
+            };
+            inline for (methods) |method| {
+                try t.expect(v8.Intrinsics.get(env.context, method[0]).?.object.value.strictEquals(env.eval(method[1])));
+            }
+            const other = v8.Context.init(env.isolate, null, null, null);
+            try t.expect(!push.object.value.strictEquals(v8.Intrinsics.get(other, "ArrayPrototypePush").?.object.value));
+
+            try t.expect(env.eval(
+                \\!Reflect.defineProperty(Array.prototype, 'push', {
+                \\  get() { throw 'poisoned push getter'; }, configurable: true
+                \\}) && !Reflect.set(Function.prototype, 'call', () => {}) &&
+                \\!Reflect.set(globalThis, 'Array', () => {})
+            ).isTrue());
+            env.isolate.lowMemoryNotification();
+            const recovered = v8.Intrinsics.get(env.context, "ArrayPrototypePush").?;
+            try t.expect(push.object.value.strictEquals(recovered.object.value));
+            const all = v8.Intrinsics.getAll(env.context).?;
+            try t.expect(all.getPrototype().?.isNull());
+            env.setGlobal("allIntrinsics", all.value);
+            try t.expect(env.eval("Object.isFrozen(allIntrinsics)").isTrue());
+            try t.expect(env.eval("!Object.hasOwn(allIntrinsics, 'ReturnReceiver') && !Object.hasOwn(allIntrinsics, 'Call_ReceiverIsAny')").isTrue());
+            const keys = all.getOwnPropertyNames(env.context, 0, 0).?;
+            try t.expect(keys.len() > 0);
+            var index: u32 = 0;
+            while (index < keys.len()) : (index += 1) {
+                const key = keys.object.getIndex(env.context, index).?;
+                const name = try env.utf8(key);
+                defer t.allocator.free(name);
+                try t.expect(all.get(env.context, key).?.strictEquals(v8.Intrinsics.get(env.context, name).?.object.value));
+            }
+            const array = v8.Array.init(env.isolate, 0);
+            const result = recovered.call(env.context, array.object.value, &.{env.eval("42")}).?;
+            try t.expectEqual(@as(i32, 1), result.i32Value(env.context).?);
+            try t.expectEqual(@as(u32, 1), array.len());
+            try t.expectEqual(@as(i32, 42), array.object.getIndex(env.context, 0).?.i32Value(env.context).?);
+            try t.expect(v8.Intrinsics.get(env.context, "NoSuchBuiltin") == null);
+            try t.expect(v8.Intrinsics.get(env.context, "ArrayPrototypePush\x00suffix") == null);
+            try t.expect(v8.Intrinsics.get(env.context, "") == null);
+            try t.expect(v8.Intrinsics.get(env.context, "Call_ReceiverIsAny") == null);
+            // Several public symbol methods have distinct identities but share
+            // ReturnReceiver's code. A builtin name cannot disambiguate them.
+            try t.expect(v8.Intrinsics.get(env.context, "ReturnReceiver") == null);
+        }
+    }.run);
+}
+
+// Local V8 scopes are released before return; no resources escape.
+test "Intrinsics: frozen graph and bindings survive a custom context snapshot" {
+    ensureV8();
+    const aba = v8.ArrayBuffer.Allocator.initDefault();
+    defer aba.deinit();
+    var params = v8.Isolate.CreateParams.init();
+    params.array_buffer_allocator = aba;
+    const blob = make: {
+        var creator: v8.SnapshotCreator = undefined;
+        creator.init(&params);
+        defer creator.deinit();
+        const isolate = creator.getIsolate().?;
+        {
+            var h_scope: v8.HandleScope = undefined;
+            h_scope.init(isolate);
+            defer h_scope.deinit();
+            const context = v8.Context.init(isolate, null, null, null);
+            context.enter();
+            defer context.exit();
+            const script = v8.Script.compile(context, v8.String.initUtf8(isolate, "Object.isFrozen(Array.prototype) && !Reflect.set(globalThis, 'Array', () => {})"), null).?;
+            try t.expect(script.run(context).?.isTrue());
+            try t.expect(v8.Intrinsics.getObjects(context).?.len() > 0);
+            creator.setDefaultContext(context);
+        }
+        // CreateBlob must run outside all handle scopes.
+        break :make creator.createBlob(0);
+    };
+    defer blob.deinit();
+    try t.expect(blob.slice().len > 0);
+    params.snapshot_blob = &blob;
+    const isolate = v8.Isolate.init(&params);
+    defer isolate.deinit();
+    isolate.enter();
+    defer isolate.exit();
+    var h_scope: v8.HandleScope = undefined;
+    h_scope.init(isolate);
+    defer h_scope.deinit();
+    const context = v8.Context.init(isolate, null, null, null);
+    context.enter();
+    defer context.exit();
+    isolate.lowMemoryNotification();
+    const push = v8.Intrinsics.get(context, "ArrayPrototypePush").?;
+    const all = v8.Intrinsics.getAll(context).?;
+    try t.expect(all.get(context, v8.String.initUtf8(isolate, "ArrayPrototypePush").name.primitive.value).?.strictEquals(push.object.value));
+    const array = v8.Array.init(isolate, 0);
+    try t.expectEqual(@as(i32, 0), push.call(context, array.object.value, &.{}).?.i32Value(context).?);
+    const restored = v8.Script.compile(context, v8.String.initUtf8(isolate, "Array.prototype.push"), null).?.run(context).?;
+    try t.expect(push.object.value.strictEquals(restored));
+    const inventory = v8.Intrinsics.getObjects(context).?;
+    try t.expect(inventory.len() > 0);
+    try t.expect(v8.Script.compile(context, v8.String.initUtf8(isolate, "Object.isFrozen(Array.prototype) && !Reflect.deleteProperty(globalThis, 'Date') && !Object.hasOwn(RegExp, '$1') && typeof RegExp[Symbol.species] === 'function'"), null).?.run(context).?.isTrue());
+}
+
+test "Intrinsics: raw contexts finalize complete graph and keep host globals extensible" {
+    try withEnv(struct {
+        /// Borrows env and its entered context/live HandleScope through return.
+        /// Exposes only test-local GC-owned inventory; no resources escape.
+        fn run(env: *Env) !void {
+            const inventory = v8.Intrinsics.getObjects(env.context).?;
+            env.setGlobal("inventory", inventory.object.value);
+            env.setGlobal("segmentsPrototype", v8.Intrinsics.getPrototype(env.context, .intl_segments).?.value);
+            env.setGlobal("segmentIteratorPrototype", v8.Intrinsics.getPrototype(env.context, .intl_segment_iterator).?.value);
+            try t.expect(env.eval(
+                \\Object.isFrozen(inventory) && inventory.length > 0 &&
+                \\inventory.every(Object.isFrozen) &&
+                \\Object.isExtensible(globalThis) &&
+                \\Reflect.defineProperty(globalThis, 'hostGlobal', {value: 42, configurable: true}) &&
+                \\Reflect.deleteProperty(globalThis, 'hostGlobal') &&
+                \\['Date', 'Object', 'Array', 'Intl', 'RegExp', 'globalThis'].every(name => {
+                \\  const d = Object.getOwnPropertyDescriptor(globalThis, name);
+                \\  return !d.writable && !d.configurable &&
+                \\    !Reflect.set(globalThis, name, () => {}) &&
+                \\    !Reflect.deleteProperty(globalThis, name) &&
+                \\    !Reflect.defineProperty(globalThis, name, {value: () => {}});
+                \\}) &&
+                \\['input','$_','lastMatch','$&','lastParen','$+','leftContext','$`',
+                \\ 'rightContext',"$'",'$1','$2','$3','$4','$5','$6','$7','$8','$9']
+                \\.every(name => !Object.hasOwn(RegExp, name)) &&
+                \\RegExp[Symbol.species] === RegExp &&
+                \\['WebAssembly', 'SharedArrayBuffer', 'Atomics', 'ShadowRealm']
+                \\.every(name => !Object.hasOwn(globalThis, name))
+            ).isTrue());
+            try t.expect(env.eval(
+                \\(() => {
+                \\  const p = Object.getPrototypeOf;
+                \\  const segments = new Intl.Segmenter().segment('x');
+                \\  const hidden = [p(segments), p(segments[Symbol.iterator]()),
+                \\    p([][Symbol.iterator]()), p(''[Symbol.iterator]()),
+                \\    p(new Map().entries()), p(new Set().values()),
+                \\    p(''.matchAll(/x/g)), p(function*(){}), p(p((function*(){})())),
+                \\    p(async()=>{}), p(async function*(){}), p(p((async function*(){})())),
+                \\    p(Iterator.from({next(){return {done:true}}})),
+                \\    p([][Symbol.iterator]().map(x=>x))];
+                \\  return hidden[0] === segmentsPrototype && hidden[1] === segmentIteratorPrototype &&
+                \\    hidden.every(x => inventory.includes(x) && Object.isFrozen(x));
+                \\})()
+            ).isTrue());
+        }
+    }.run);
+}
+
 test "V8: initialize and ICU" {
     ensureV8();
-    // ICU is built into V8 (icu_use_data_file = false), so initialisation succeeds.
+    // Lazy provider registration is idempotent and never forces data expansion.
     try t.expect(v8.V8.initializeICU());
+    try t.expect(v8.V8.initializeICU());
+}
+
+test "ICU: compressed data preserves multilingual Intl services" {
+    try withEnv(struct {
+        /// Borrows env and its entered context/live handle scope through this
+        /// call; temporary script/value handles expire with that scope.
+        fn run(env: *Env) !void {
+            try t.expect(env.eval(
+                \\(() => {
+                \\  const locales = ['en', 'de', 'zh', 'ja', 'ar', 'th'];
+                \\  for (const service of [Intl.NumberFormat, Intl.DateTimeFormat, Intl.Collator, Intl.Segmenter]) {
+                \\    if (service.supportedLocalesOf(locales).length !== locales.length) return false;
+                \\  }
+                \\  if (new Intl.NumberFormat('de-DE').format(1234.5) !== '1.234,5') return false;
+                \\  if (new Intl.Collator('de').compare('a', 'z') >= 0) return false;
+                \\  if (new Intl.DateTimeFormat('en', {timeZone:'Asia/Tokyo', hour:'numeric', hourCycle:'h23'}).format(0) !== '09') return false;
+                \\  if ([...new Intl.Segmenter('ja', {granularity:'grapheme'}).segment('あいう')].length !== 3) return false;
+                \\  if ([...new Intl.Segmenter('th', {granularity:'word'}).segment('ภาษาไทย')].length < 2) return false;
+                \\  return 'e\u0301'.normalize('NFC') === '\u00e9';
+                \\})()
+            ).isTrue());
+        }
+    }.run);
 }
 
 test "Platform: message loop pumps without work" {
@@ -143,29 +326,33 @@ test "Isolate: heap statistics and policies" {
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "Isolate: throwException surfaces in a TryCatch" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
-            var tc: v8.TryCatch = undefined;
-            tc.init(env.isolate);
-            defer tc.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
             _ = env.isolate.throwException(env.str("thrown from zig").name.primitive.value);
-            try t.expect(tc.hasCaught());
-            const msg = try env.utf8(tc.getException().?);
+            try t.expect(tc_scope.hasCaught());
+            const msg = try env.utf8(tc_scope.getException().?);
             defer t.allocator.free(msg);
             try t.expectEqualStrings("thrown from zig", msg);
         }
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "HandleScope: nested scopes release handles" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
             var i: u32 = 0;
             while (i < 1000) : (i += 1) {
-                var scope: v8.HandleScope = undefined;
-                scope.init(env.isolate);
-                defer scope.deinit();
+                var h_scope: v8.HandleScope = undefined;
+                h_scope.init(env.isolate);
+                defer h_scope.deinit();
                 _ = env.str("temporary");
             }
         }
@@ -386,7 +573,7 @@ test "Object: createDataProperty and defineOwnProperty honour attributes" {
             try t.expect(obj.defineOwnProperty(env.context, env.name("fixed"), num(env, 2), .{ .ReadOnly = true, .DontEnum = true }).?);
             env.setGlobal("o", obj.value);
             try env.expectEval("Object.keys(o).join()", "x");
-            try env.expectEval("(o.fixed = 99, o.fixed)", "2");
+            try env.expectEval("try { o.fixed = 99; } catch (e) { if (!(e instanceof TypeError)) throw e; } o.fixed", "2");
         }
     }.run);
 }
@@ -511,17 +698,19 @@ test "FunctionCallbackInfo: this and new.target" {
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "FunctionTemplate: Throw constructor behaviour rejects new" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
-            var tc: v8.TryCatch = undefined;
-            tc.init(env.isolate);
-            defer tc.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
             var builder: v8.FunctionTemplate.Builder = .{};
             const tmpl = builder.constructor_behavior(.Throw).build(env.isolate, cbUndefined, &.{});
             env.setGlobal("NotCtor", tmpl.getFunction(env.context).?.object.value);
             try t.expect(env.tryEval("new NotCtor()") == null);
-            try t.expect(tc.hasCaught());
+            try t.expect(tc_scope.hasCaught());
         }
     }.run);
 }
@@ -640,7 +829,7 @@ test "ObjectTemplate and Template.set" {
             const inst = tmpl.initInstance(env.context).?;
             env.setGlobal("inst", inst.value);
             try env.expectEval("inst.version", "3");
-            try env.expectEval("(inst.version = 9, inst.version)", "3");
+            try env.expectEval("try { inst.version = 9; } catch (e) { if (!(e instanceof TypeError)) throw e; } inst.version", "3");
         }
     }.run);
 }
@@ -666,12 +855,13 @@ test "Context: embedded global template and embedder data" {
 
 test "Global: survives its handle scope" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
             var persistent: v8.Global = undefined;
             {
-                var scope: v8.HandleScope = undefined;
-                scope.init(env.isolate);
-                defer scope.deinit();
+                var h_scope: v8.HandleScope = undefined;
+                h_scope.init(env.isolate);
+                defer h_scope.deinit();
                 persistent = .new(env.isolate, num(env, 123).data);
             }
             defer persistent.deinit();
@@ -743,88 +933,96 @@ fn evalNamed(env: *Env, src: []const u8, name: []const u8) ?v8.Value {
     return script.run(env.context);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "Script: compile and run, syntax errors, runtime errors" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
-            var tc: v8.TryCatch = undefined;
-            tc.init(env.isolate);
-            defer tc.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
 
             const script = v8.Script.compile(env.context, env.str("6 * 7"), null).?;
             try t.expectEqual(@as(?i32, 42), script.run(env.context).?.i32Value(env.context));
-            try t.expect(!tc.hasCaught());
+            try t.expect(!tc_scope.hasCaught());
 
             try t.expect(v8.Script.compile(env.context, env.str("let = ;"), null) == null);
-            try t.expect(tc.hasCaught());
-            tc.reset();
-            try t.expect(!tc.hasCaught());
+            try t.expect(tc_scope.hasCaught());
+            tc_scope.reset();
+            try t.expect(!tc_scope.hasCaught());
 
             const failing = v8.Script.compile(env.context, env.str("null.x"), null).?;
             try t.expect(failing.run(env.context) == null);
-            try t.expect(tc.hasCaught());
+            try t.expect(tc_scope.hasCaught());
         }
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "TryCatch: exception, flags and reset" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
-            var tc: v8.TryCatch = undefined;
-            tc.init(env.isolate);
-            defer tc.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
 
-            try t.expect(!tc.hasCaught());
-            try t.expect(!tc.isVerbose());
-            tc.setVerbose(false);
-            tc.setCaptureMessage(true);
+            try t.expect(!tc_scope.hasCaught());
+            try t.expect(!tc_scope.isVerbose());
+            tc_scope.setVerbose(false);
+            tc_scope.setCaptureMessage(true);
 
             try t.expect(env.tryEval("throw new RangeError('out of range')") == null);
-            try t.expect(tc.hasCaught());
-            try t.expect(tc.canContinue());
-            try t.expect(!tc.hasTerminated());
+            try t.expect(tc_scope.hasCaught());
+            try t.expect(tc_scope.canContinue());
+            try t.expect(!tc_scope.hasTerminated());
 
-            const text = try env.utf8(tc.getException().?);
+            const text = try env.utf8(tc_scope.getException().?);
             defer t.allocator.free(text);
             try t.expectEqualStrings("RangeError: out of range", text);
 
-            tc.reset();
-            try t.expect(!tc.hasCaught());
-            try t.expect(tc.getException() == null);
+            tc_scope.reset();
+            try t.expect(!tc_scope.hasCaught());
+            try t.expect(tc_scope.getException() == null);
         }
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "TryCatch: reThrow hands the exception to the outer catcher" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
-            var outer: v8.TryCatch = undefined;
-            outer.init(env.isolate);
-            defer outer.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
             {
-                var inner: v8.TryCatch = undefined;
-                inner.init(env.isolate);
-                defer inner.deinit();
+                var inner_tc_scope: v8.TryCatch = undefined;
+                inner_tc_scope.init(env.isolate);
+                defer inner_tc_scope.deinit();
                 try t.expect(env.tryEval("throw 'inner'") == null);
-                try t.expect(inner.hasCaught());
-                _ = inner.reThrow();
+                try t.expect(inner_tc_scope.hasCaught());
+                _ = inner_tc_scope.reThrow();
             }
-            try t.expect(outer.hasCaught());
-            const text = try env.utf8(outer.getException().?);
+            try t.expect(tc_scope.hasCaught());
+            const text = try env.utf8(tc_scope.getException().?);
             defer t.allocator.free(text);
             try t.expectEqualStrings("inner", text);
         }
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "Message: location and text of an uncaught error" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
-            var tc: v8.TryCatch = undefined;
-            tc.init(env.isolate);
-            defer tc.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
 
             try t.expect(evalNamed(env, "var a = 1;\nvar b = oops + a;", "messages.js") == null);
-            const msg = tc.getMessage().?;
+            const msg = tc_scope.getMessage().?;
 
             const text = try env.utf8(msg.get().name.primitive.value);
             defer t.allocator.free(text);
@@ -850,12 +1048,14 @@ test "Message: location and text of an uncaught error" {
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "ScriptOrigin: resource name and offsets reach error locations" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
-            var tc: v8.TryCatch = undefined;
-            tc.init(env.isolate);
-            defer tc.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
 
             const origin = v8.ScriptOrigin.init(
                 env.str("shifted.js").name.primitive.value,
@@ -871,20 +1071,22 @@ test "ScriptOrigin: resource name and offsets reach error locations" {
             );
             const script = v8.Script.compile(env.context, env.str("throw new Error('x')"), origin).?;
             try t.expect(script.run(env.context) == null);
-            const msg = tc.getMessage().?;
+            const msg = tc_scope.getMessage().?;
             try t.expectEqual(@as(?c_uint, 11), msg.getLineNumber(env.context));
             try t.expect(msg.isSharedCrossOrigin());
         }
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "StackTrace and StackFrame: captured from an uncaught error" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
             env.isolate.setCaptureStackTraceForUncaughtExceptions(true, 10);
-            var tc: v8.TryCatch = undefined;
-            tc.init(env.isolate);
-            defer tc.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
 
             const src =
                 \\function inner() { throw new Error('deep'); }
@@ -892,7 +1094,7 @@ test "StackTrace and StackFrame: captured from an uncaught error" {
                 \\outer();
             ;
             try t.expect(evalNamed(env, src, "stack.js") == null);
-            const trace = tc.getMessage().?.getStackTrace().?;
+            const trace = tc_scope.getMessage().?.getStackTrace().?;
             try t.expect(trace.getFrameCount() >= 3);
 
             const top = trace.getFrame(env.isolate, 0);
@@ -952,23 +1154,25 @@ fn cbTerminate(info: v8.FunctionCallbackInfo) callconv(.c) void {
     info.isolate().terminateExecution();
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "Isolate: terminateExecution stops a runaway script" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
-            var tc: v8.TryCatch = undefined;
-            tc.init(env.isolate);
-            defer tc.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
             const f = v8.Function.init(env.context, cbTerminate, null, 0, .Allow, .HasSideEffect);
             env.setGlobal("stop", f.object.value);
 
             try t.expect(env.tryEval("stop(); while (true) {}") == null);
             try t.expect(env.isolate.isExecutionTerminating());
-            try t.expect(tc.hasTerminated());
-            try t.expect(!tc.canContinue());
+            try t.expect(tc_scope.hasTerminated());
+            try t.expect(!tc_scope.canContinue());
 
             env.isolate.cancelTerminateExecution();
             try t.expect(!env.isolate.isExecutionTerminating());
-            tc.reset();
+            tc_scope.reset();
             try env.expectEval("1 + 1", "2");
         }
     }.run);
@@ -999,11 +1203,11 @@ fn cbHostImport(
     _: v8.Value,
     specifier: v8.String,
     attributes: v8.FixedArray,
-) callconv(.c) v8.Promise {
+) callconv(.c) v8.MaybeHandle {
     import_attribute_count = attributes.len();
     const resolver = v8.Promise.Resolver.init(ctx).?;
     _ = resolver.reject(ctx, specifier.name.primitive.value);
-    return resolver.getPromise();
+    return resolver.getPromise().object.value.data.handle;
 }
 
 fn cbImportMeta(_: v8.Context, _: v8.Module, _: v8.Object) callconv(.c) void {}
@@ -1200,8 +1404,10 @@ test "String ValueView, persistent references and execution scopes" {
     }.run);
 }
 
+// Local V8 scopes are released before return; no resources escape.
 test "JSON, RegExp, Proxy and Function invocation" {
     try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
         fn run(env: *Env) !void {
             const parsed = v8.JSON.parse(env.context, env.str("{\"answer\":42}")).?;
             const json = v8.JSON.stringify(env.context, parsed).?;
@@ -1221,11 +1427,11 @@ test "JSON, RegExp, Proxy and Function invocation" {
             try t.expectEqual(function.scriptId(), function.getScriptOrigin().scriptId());
             const result = function.call(env.context, env.eval("undefined"), &.{env.eval("41")}).?;
             try t.expectEqual(@as(f64, 42), result.numberValue(env.context).?);
-            var caught: v8.TryCatch = undefined;
-            caught.init(env.isolate);
-            defer caught.deinit();
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
             try t.expect(v8.JSON.parse(env.context, env.str("invalid json")) == null);
-            try t.expect(caught.hasCaught());
+            try t.expect(tc_scope.hasCaught());
         }
     }.run);
 }
@@ -1322,6 +1528,22 @@ test "zero values: native handles, arrays, callbacks and persistent locals" {
             try t.expectEqual(@as(?i32, 0), typed.deref().i32Value(env.context));
             const raw = v8.toRawLocal(zero.data.handle);
             try t.expectEqual(zero.data.handle, v8.fromRawLocal(raw));
+        }
+    }.run);
+}
+
+// Local V8 scopes are released before return; no resources escape.
+test "V8: native strict default applies without source rewriting" {
+    try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
+        fn run(env: *Env) !void {
+            try env.expectEval("(function(){return this})() === undefined", "true");
+            try env.expectEval("#!/usr/bin/env js\n(function(){return this})() === undefined", "true");
+            var tc_scope: v8.TryCatch = undefined;
+            tc_scope.init(env.isolate);
+            defer tc_scope.deinit();
+            try t.expect(env.tryEval("implicitNativeGlobal = 1") == null);
+            try t.expect(tc_scope.hasCaught());
         }
     }.run);
 }

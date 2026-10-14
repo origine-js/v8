@@ -4,9 +4,39 @@ Builds V8 from official source and provides C bindings and a Zig API. This would
 
 V8 is the JavaScript runtime that powers Google Chrome.
 
+## Native managed scopes
+
+The managed API provides hardened V8 contexts, explicitly shared capabilities,
+backend-independent ESM loading (including asynchronous backends), and optional
+per-scope import maps and module maps with update/delete APIs. See [Native V8 scopes](docs/native-scopes.md) for the API,
+ownership rules, implementation checkpoints, and isolation limits.
+
+`zig build shell` demonstrates two scopes with different import maps over an in-memory backend
+and a shared counter with private state. Switch scopes with `:a` and `:b`.
+
+## Allocators
+
+The Zig build compiles pinned mimalloc 3.5.3 into `libmimalloc.a` and links it into
+the exported V8 module, tests, and shell. It uses the `mi_*` interface without
+overriding libc allocation functions. `mimalloc.zig` exposes a thread-safe
+`std.mem.Allocator`; the shell uses it for ArrayBuffer backing stores.
+
+```zig
+const mimalloc = @import("mimalloc.zig");
+var rt = try m.Runtime.initWithOptions(metadata_alloc, .{
+    .array_buffer_allocator = .{ .zig = mimalloc.allocator },
+});
+defer rt.deinit();
+```
+
+Any thread-safe Zig allocator works with `v8.ArrayBuffer.Allocator.fromZig`.
+The existing `Runtime.init` retains V8's default backing-store allocator.
+See [allocator ownership and limits](docs/native-scopes.md#allocators) for borrowed
+allocators, retained backing stores, and sandbox requirements.
+
 ## System Requirements
 - Zig 0.17.0. Download from https://ziglang.org/download/.
-- Python 3 (2.7 seems to work as well)
+- Python 3 and uv (runs the pinned ICU compression script dependencies)
 - unzip
 - rsync
 - For native macOS builds:
@@ -26,6 +56,26 @@ If V8 fails to compile against your newest macOS SDK (e.g. ICU: `use of undeclar
 `-Dmac_sdk_path=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`.
 
 Once complete, you can find v8 in: `zig-out/libv8_zig.a`
+
+The library embeds the complete ICU data package compressed with zstd 1.5.7.
+The C binding expands it once, before V8 initialization, into aligned immutable
+storage retained until process exit. No external `icudtl.dat` is required at
+runtime, and all bundled locales/features are preserved. This trades startup
+decompression and expanded heap storage for a smaller executable. The build-time
+snapshot generator still uses an uncompressed data file in the V8 output directory.
+The build runs `build-tools/compress-icu.py` through uv to generate the embedded
+frame; the library includes only the zstd decoder, not its compressor.
+Zig builds that decoder with `.small` optimization and stripped debug information,
+then flattens it into `libv8_zig.a`; consumers need no additional zstd link flag.
+`zig build build-zstd` builds the decoder alone and installs it as
+`zig-out/lib/libzstd_decoder.a` for inspection.
+
+## Original builtin references
+
+`v8.Intrinsics.get(context, "ArrayPrototypePush")` retrieves original builtin
+method references from a private, snapshotted native-context table. See
+[Original builtin references](docs/intrinsics.md) for supported entries, the trust
+boundary, and maintenance of the versioned V8 Git patch.
 
 ## Generated bindings
 `zig build gen` asks V8's own clang (with the exact flags used for `binding.cc`) and regenerates, in place:

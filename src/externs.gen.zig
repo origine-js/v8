@@ -243,6 +243,34 @@ pub const support = struct {
 /// bool ()
 pub extern fn v8__V8__IsSandboxEnabled() bool;
 
+/// const v8::Function *(const v8::Context &, const uint8_t *, size_t)
+/// Borrows context and any name bytes through return on the entered isolate
+/// thread, with a live HandleScope. Returns a GC-owned local handle valid
+/// until that HandleScope ends, or null on failure/unavailable entries.
+/// No ownership transfer or manual release; failed temporary objects are GC-owned.
+pub extern fn v8__Intrinsics__Get(context: Ref("Context"), name: ?[*]const u8, name_len: usize) Ptr("Function", true);
+
+/// const v8::Object *(const v8::Context &)
+/// Borrows context and any name bytes through return on the entered isolate
+/// thread, with a live HandleScope. Returns a GC-owned local handle valid
+/// until that HandleScope ends, or null on failure/unavailable entries.
+/// No ownership transfer or manual release; failed temporary objects are GC-owned.
+pub extern fn v8__Intrinsics__GetAll(context: Ref("Context")) Ptr("Object", true);
+
+/// const v8::Array *(const v8::Context &)
+/// Borrows context and any name bytes through return on the entered isolate
+/// thread, with a live HandleScope. Returns a GC-owned local handle valid
+/// until that HandleScope ends, or null on failure/unavailable entries.
+/// No ownership transfer or manual release; failed temporary objects are GC-owned.
+pub extern fn v8__Intrinsics__GetObjects(context: Ref("Context")) Ptr("Array", true);
+
+/// const v8::Object *(const v8::Context &, const uint8_t *, size_t)
+/// Borrows context and any name bytes through return on the entered isolate
+/// thread, with a live HandleScope. Returns a GC-owned local handle valid
+/// until that HandleScope ends, or null on failure/unavailable entries.
+/// No ownership transfer or manual release; failed temporary objects are GC-owned.
+pub extern fn v8__Intrinsics__GetPrototype(context: Ref("Context"), name: ?[*]const u8, length: usize) Ptr("Object", true);
+
 /// void (int *, char **, const char *)
 pub extern fn v8__V8__SetFlagsFromCommandLine(argc: ?*c_int, argv: ?[*]?[*]u8, usage: ?[*]const u8) void;
 
@@ -259,9 +287,16 @@ pub extern fn v8__V8__GetVersion() ?[*]const u8;
 pub extern fn v8__V8__InitializePlatform(platform: Ptr("Platform", false)) void;
 
 /// void ()
+/// Retains no caller resources. Call once before creating isolates. Registers
+/// a process-lifetime lazy ICU provider without expanding data; configuration
+/// failure aborts. First ICU data use owns published storage until process exit.
 pub extern fn v8__V8__Initialize() void;
 
 /// bool ()
+/// Retains no caller resources; returns copied lazy-provider configuration
+/// success without expanding data. Thread-safe/idempotent. First ICU data use
+/// publishes process-lifetime immutable storage or caches/reports an ICU error.
+/// Do not externally clean up or reinitialize ICU afterward.
 pub extern fn v8__V8__InitializeICU() bool;
 
 /// bool ()

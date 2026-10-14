@@ -1,0 +1,449 @@
+diff --git a/src/objects/contexts.h b/src/objects/contexts.h
+--- a/src/objects/contexts.h
++++ b/src/objects/contexts.h
+@@ -258,6 +258,7 @@
+     temporal_time_zone_function)                                               \
+   V(JS_TEMPORAL_ZONED_DATE_TIME_FUNCTION_INDEX, JSFunction,                    \
+     temporal_zoned_date_time_function)                                         \
++  V(ZIG_INTRINSIC_OBJECTS_INDEX, FixedArray, zig_intrinsic_objects)            \
+   V(JSON_OBJECT, JSObject, json_object)                                        \
+   V(PROMISE_WITHRESOLVERS_RESULT_MAP_INDEX, Map,                               \
+     promise_withresolvers_result_map)                                          \
+diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
+--- a/src/init/bootstrapper.cc
++++ b/src/init/bootstrapper.cc
+@@ -3,6 +3,11 @@
+ // found in the LICENSE file.
+ 
+ #include "src/init/bootstrapper.h"
++
++#include <vector>
++#include <string_view>
++#include "src/objects/js-objects-inl.h"
++#include "src/objects/lookup-inl.h"
+ 
+ #include "include/v8-function.h"
+ #include "src/api/api-inl.h"
+@@ -351,6 +356,134 @@
+   v->Synchronize(VisitorSynchronization::kExtensions);
+ }
+ 
++// Borrows isolate/context on the isolate thread with a live HandleScope. Roots
++// all temporary handles across GC; commits the context-owned, serialized graph
++// only on success. Failure leaves an unexposed partially finalized context for
++// GC, never a context usable by the caller. No JS getters or constructors run.
++bool FinalizeZigIntrinsics(Isolate* isolate,
++                           DirectHandle<NativeContext> context) {
++  SaveContext saved_context(isolate);
++  isolate->set_context(*context);
++  DirectHandle<JSGlobalObject> global(context->global_object(), isolate);
++  // This engine's context policy omits alternative realms and shared memory.
++  for (const char* name : {"WebAssembly", "SharedArrayBuffer", "Atomics",
++                           "ShadowRealm"}) {
++    DirectHandle<String> key = isolate->factory()->InternalizeUtf8String(name);
++    if (!JSReceiver::DeleteProperty(isolate, global, key, LanguageMode::kStrict)
++             .FromMaybe(false)) return false;
++  }
++
++  std::vector<Handle<JSObject>> graph;
++  // Borrows a tagged value until return; retains ordinary intrinsic objects in
++  // GC-rooted handles for this call. Does not retain globals or internal tables.
++  auto add = [&](Tagged<Object> value) {
++    if (!IsJSObject(value) || IsJSGlobalObject(value) ||
++        IsJSGlobalProxy(value)) return;
++    Tagged<JSObject> object = Cast<JSObject>(value);
++    for (auto prior : graph) {
++      if (*prior == object) return;
++    }
++    graph.push_back(handle(object, isolate));
++  };
++
++  // Context slots provide hidden prototypes (including Segments and
++  // SegmentIterator) directly, without allocating guest-visible instances.
++#define ZIG_INTRINSIC_ROOT(index, type, name)                               \
++  {                                                                         \
++    Tagged<Object> value = context->GetNoCell(Context::index);              \
++    if (std::string_view(#type) == "Map" && IsMap(value)) {                 \
++      add(Cast<Map>(value)->prototype());                                   \
++    } else if ((std::string_view(#type) == "JSObject" ||                    \
++                std::string_view(#type) == "JSFunction") &&                 \
++               Context::index != Context::EXTRAS_BINDING_OBJECT_INDEX &&    \
++               Context::index != Context::GLOBAL_PROXY_FUNCTION_INDEX) {    \
++      add(value);                                                           \
++    }                                                                       \
++  }
++  NATIVE_CONTEXT_FIELDS(ZIG_INTRINSIC_ROOT)
++#undef ZIG_INTRINSIC_ROOT
++
++  // Explicit ECMAScript binding inventory: application and host globals stay
++  // extensible and are never traversed merely because they are on the global.
++  constexpr const char* bindings[] = {
++      "globalThis", "Infinity", "NaN", "undefined", "eval", "isFinite", "isNaN",
++      "parseFloat", "parseInt", "decodeURI", "decodeURIComponent", "encodeURI",
++      "encodeURIComponent", "escape", "unescape", "Object", "Function",
++      "Boolean", "Symbol", "Error", "AggregateError", "EvalError", "RangeError",
++      "ReferenceError", "SyntaxError", "TypeError", "URIError", "Number",
++      "BigInt", "Math", "Date", "String", "RegExp", "Array", "Int8Array",
++      "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array",
++      "Uint32Array", "BigInt64Array", "BigUint64Array", "Float16Array",
++      "Float32Array", "Float64Array", "Map", "Set", "WeakMap", "WeakSet",
++      "ArrayBuffer", "DataView", "JSON", "Promise", "Proxy", "Reflect", "Intl",
++      "WeakRef", "FinalizationRegistry", "Iterator", "AsyncIterator",
++      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal"};
++  std::vector<Handle<String>> installed;
++  for (const char* name : bindings) {
++    Handle<String> key = isolate->factory()->InternalizeUtf8String(name);
++    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
++    if (it.state() == LookupIterator::NOT_FOUND) continue;
++    // All builtin global bindings must be data properties by finalization.
++    if (it.state() != LookupIterator::DATA) return false;
++    installed.push_back(key);
++    add(*it.GetDataValue());
++  }
++
++  // Read data and accessor-pair fields directly: descriptor materialization
++  // would invoke native AccessorInfo getters, including lazy properties.
++  for (size_t index = 0; index < graph.size(); ++index) {
++    Handle<JSObject> object = graph[index];
++    add(object->map()->prototype());
++    if (IsJSFunction(*object)) {
++      Tagged<JSFunction> function = Cast<JSFunction>(*object);
++      if (function->has_prototype_slot() && function->has_instance_prototype()) {
++        add(function->instance_prototype());
++      }
++    }
++    DirectHandle<FixedArray> keys;
++    if (!JSReceiver::OwnPropertyKeys(isolate, object).ToHandle(&keys)) return false;
++    for (int k = 0; k < static_cast<int>(keys->length().value()); ++k) {
++      DirectHandle<Object> key(keys->get(k), isolate);
++      LookupIterator it(isolate, object, PropertyKey(isolate, key),
++                        LookupIterator::OWN_SKIP_INTERCEPTOR);
++      if (it.state() == LookupIterator::DATA) {
++        add(*it.GetDataValue());
++      } else if (it.state() == LookupIterator::ACCESSOR) {
++        DirectHandle<Object> accessors = it.GetAccessors();
++        if (IsAccessorPair(*accessors)) {
++          auto pair = Cast<AccessorPair>(accessors);
++          add(pair->getter());
++          add(pair->setter());
++        }
++      }
++    }
++  }
++  for (auto object : graph) {
++    if (!JSReceiver::SetIntegrityLevel(isolate, object, FROZEN, kThrowOnError)
++             .FromMaybe(false)) return false;
++  }
++  for (auto key : installed) {
++    PropertyDescriptor desc;
++    desc.set_writable(false);
++    desc.set_configurable(false);
++    if (!JSReceiver::DefineOwnProperty(isolate, global, key, &desc,
++                                       Just(kThrowOnError)).FromMaybe(false)) {
++      return false;
++    }
++  }
++  Handle<FixedArray> inventory = isolate->factory()->NewFixedArray(
++      static_cast<int>(graph.size()), AllocationType::kOld);
++  for (size_t i = 0; i < graph.size(); ++i) {
++    inventory->set(static_cast<int>(i), *graph[i]);
++  }
++  context->set_zig_intrinsic_objects(*inventory);
++  return true;
++}
++
++// Borrows templates, callback state, and microtask queue during creation.
++// Returns a GC-owned context escaped into the caller HandleScope; the caller
++// must keep callback state/queue alive until context teardown. Failure exposes
++// no partially initialized context; V8 reclaims temporary objects. Isolate thread only.
+ DirectHandle<NativeContext> Bootstrapper::CreateEnvironment(
+     MaybeDirectHandle<JSGlobalProxy> maybe_global_proxy,
+     v8::Local<v8::ObjectTemplate> global_proxy_template,
+@@ -367,6 +500,9 @@
+     if (env.is_null() || !InstallExtensions(env, extensions)) {
+       return {};
+     }
++    if (v8_flags.zig_harden_intrinsics &&
++        env->zig_intrinsic_objects()->length().value() == 0 &&
++        !FinalizeZigIntrinsics(isolate_, env)) return {};
+   }
+   LogAllMaps();
+   isolate_->heap()->NotifyBootstrapComplete();
+@@ -690,14 +826,6 @@
+   JSObject::DefineOwnAccessorIgnoreAttributes(base, name, getter, setter,
+                                               DONT_ENUM)
+       .Check();
+-}
+-
+-void SimpleInstallGetterSetter(Isolate* isolate, DirectHandle<JSObject> base,
+-                               const char* name, Builtin call_getter,
+-                               Builtin call_setter) {
+-  SimpleInstallGetterSetter(isolate, base,
+-                            isolate->factory()->InternalizeUtf8String(name),
+-                            call_getter, call_setter);
+ }
+ 
+ V8_NOINLINE Handle<JSFunction> SimpleInstallGetter(
+@@ -1351,6 +1479,8 @@
+                    accessors);
+ }
+ 
++// Creates GC-owned native-context tables on the isolate thread. Retains them
++// in native_context_; temporary handles expire with the enclosing HandleScope.
+ void Genesis::CreateRoots() {
+   // Allocate the native context FixedArray first and then patch the
+   // closure and extension object later (we need the empty function
+@@ -1363,6 +1493,8 @@
+ 
+   isolate()->heap()->AddToWeakNativeContextList(*native_context());
+   isolate()->set_context(*native_context());
++  native_context()->set_zig_intrinsic_objects(
++      ReadOnlyRoots(isolate()).empty_fixed_array());
+ }
+ 
+ void Genesis::InstallGlobalThisBinding() {
+@@ -2103,29 +2235,14 @@
+   return temporal;
+ }
+ 
+-void LazyInitializeDateToTemporalInstant(
+-    v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info) {
+-  Isolate* isolate = reinterpret_cast<Isolate*>(info.GetIsolate());
+-  InitializeTemporal(isolate);
+-  DirectHandle<JSFunction> function = SimpleCreateFunction(
+-      isolate, isolate->factory()->InternalizeUtf8String("toTemporalInstant"),
+-      Builtin::kDatePrototypeToTemporalInstant, 0, kDontAdapt);
+-  info.GetReturnValue().Set(v8::Utils::ToLocal(function));
+-}
+-
+-void LazyInitializeGlobalThisTemporal(
+-    v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info) {
+-  Isolate* isolate = reinterpret_cast<Isolate*>(info.GetIsolate());
+-  DirectHandle<JSObject> temporal = InitializeTemporal(isolate);
+-  info.GetReturnValue().Set(v8::Utils::ToLocal(temporal));
+-}
+-
+ }  // namespace
+ 
+ #endif  // V8_TEMPORAL_SUPPORT
+ 
+ // This is only called if we are not using snapshots.  The equivalent
+ // work in the snapshot case is done in HookUpGlobalObject.
++// Borrows global_object/empty_function during installation on the isolate
++// thread; retains builtin references in GC-owned native-context fields.
+ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
+                                DirectHandle<JSFunction> empty_function) {
+   // --- N a t i v e   C o n t e x t ---
+@@ -3298,57 +3415,7 @@
+ 
+       InstallSpeciesGetter(isolate_, regexp_fun);
+ 
+-      // Static properties set by a successful match.
+-
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, factory->input_string(),
+-                                Builtin::kRegExpInputGetter,
+-                                Builtin::kRegExpInputSetter);
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "$_",
+-                                Builtin::kRegExpInputGetter,
+-                                Builtin::kRegExpInputSetter);
+-
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "lastMatch",
+-                                Builtin::kRegExpLastMatchGetter,
+-                                Builtin::kEmptyFunction1);
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "$&",
+-                                Builtin::kRegExpLastMatchGetter,
+-                                Builtin::kEmptyFunction1);
+-
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "lastParen",
+-                                Builtin::kRegExpLastParenGetter,
+-                                Builtin::kEmptyFunction1);
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "$+",
+-                                Builtin::kRegExpLastParenGetter,
+-                                Builtin::kEmptyFunction1);
+-
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "leftContext",
+-                                Builtin::kRegExpLeftContextGetter,
+-                                Builtin::kEmptyFunction1);
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "$`",
+-                                Builtin::kRegExpLeftContextGetter,
+-                                Builtin::kEmptyFunction1);
+-
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "rightContext",
+-                                Builtin::kRegExpRightContextGetter,
+-                                Builtin::kEmptyFunction1);
+-      SimpleInstallGetterSetter(isolate_, regexp_fun, "$'",
+-                                Builtin::kRegExpRightContextGetter,
+-                                Builtin::kEmptyFunction1);
+-
+-#define INSTALL_CAPTURE_GETTER(i)                               \
+-  SimpleInstallGetterSetter(isolate_, regexp_fun, "$" #i,       \
+-                            Builtin::kRegExpCapture##i##Getter, \
+-                            Builtin::kEmptyFunction1)
+-      INSTALL_CAPTURE_GETTER(1);
+-      INSTALL_CAPTURE_GETTER(2);
+-      INSTALL_CAPTURE_GETTER(3);
+-      INSTALL_CAPTURE_GETTER(4);
+-      INSTALL_CAPTURE_GETTER(5);
+-      INSTALL_CAPTURE_GETTER(6);
+-      INSTALL_CAPTURE_GETTER(7);
+-      INSTALL_CAPTURE_GETTER(8);
+-      INSTALL_CAPTURE_GETTER(9);
+-#undef INSTALL_CAPTURE_GETTER
++      // zig-v8: never install legacy realm-wide RegExp match-state accessors.
+     }
+     SetConstructorInstanceType(isolate_, regexp_fun,
+                                JS_REG_EXP_CONSTRUCTOR_TYPE);
+@@ -6047,34 +6114,23 @@
+ }
+ #endif  // V8_INTL_SUPPORT
+ 
++// Installs context-owned Temporal objects directly on the isolate thread;
++// temporary handles expire with the enclosing HandleScope. Runs no JS getters.
+ void Genesis::InitializeGlobal_harmony_temporal() {
+ #ifdef V8_TEMPORAL_SUPPORT
+   if (!v8_flags.harmony_temporal) return;
+ 
+-  // The Temporal object is set up lazily upon first access.
+-  {
+-    DirectHandle<JSGlobalObject> global(native_context()->global_object(),
+-                                        isolate());
+-    DirectHandle<String> name = factory()->InternalizeUtf8String("Temporal");
+-    DirectHandle<AccessorInfo> accessor = Accessors::MakeAccessor(
+-        isolate(), name, LazyInitializeGlobalThisTemporal, nullptr);
+-    accessor->set_replace_on_access(true);
+-    JSObject::SetAccessor(global, name, accessor, DONT_ENUM).Check();
+-  }
+-
+-  // Likewise Date.toTemporalInstant.
+-  {
+-    DirectHandle<JSFunction> date_func(native_context()->date_function(),
+-                                       isolate());
+-    DirectHandle<JSObject> date_prototype(
+-        Cast<JSObject>(date_func->instance_prototype()), isolate());
+-    DirectHandle<String> name =
+-        factory()->InternalizeUtf8String("toTemporalInstant");
+-    DirectHandle<AccessorInfo> accessor = Accessors::MakeAccessor(
+-        isolate(), name, LazyInitializeDateToTemporalInstant, nullptr);
+-    accessor->set_replace_on_access(true);
+-    JSObject::SetAccessor(date_prototype, name, accessor, DONT_ENUM).Check();
+-  }
++  // zig-v8: initialize directly before finalization; never freeze a
++  // replace-on-access property whose later replacement would fail.
++  DirectHandle<JSObject> temporal = InitializeTemporal(isolate());
++  JSObject::AddProperty(isolate(),
++      direct_handle(native_context()->global_object(), isolate()),
++      "Temporal", temporal, DONT_ENUM);
++  DirectHandle<JSObject> date_prototype(
++      Cast<JSObject>(native_context()->date_function()->instance_prototype()),
++      isolate());
++  SimpleInstallFunction(isolate(), date_prototype, "toTemporalInstant",
++                        Builtin::kDatePrototypeToTemporalInstant, 0, kDontAdapt);
+ #endif  // V8_TEMPORAL_SUPPORT
+ }
+ 
+@@ -6641,16 +6697,29 @@
+   }
+ }
+ 
++// Borrows native_context/configuration through installation on the isolate
++// thread. New globals are context-owned; errors leave an unexposed partial
++// context for GC. Already-finalized custom snapshots require no installation.
+ bool Bootstrapper::InstallExtensions(DirectHandle<NativeContext> native_context,
+                                      v8::ExtensionConfiguration* extensions) {
+-  // Don't install extensions into the snapshot.
+-  if (isolate_->serializer_enabled()) return true;
++  // Finalized custom snapshots retain their original feature set and frozen
++  // Error constructor. Neither extensions nor special objects may reinstall.
++  if (native_context->zig_intrinsic_objects()->length().value() != 0) return true;
++  if (isolate_->serializer_enabled() && !v8_flags.zig_harden_intrinsics) return true;
+   BootstrapperActive active(this);
+   v8::Context::Scope context_scope(Utils::ToLocal(native_context));
++  // Application SnapshotCreator contexts also need special objects before
++  // freezing, but keep the existing no-extensions-during-serialization rule.
++  if (isolate_->serializer_enabled()) {
++    return Genesis::InstallSpecialObjects(isolate_, native_context);
++  }
+   return Genesis::InstallExtensions(isolate_, native_context, extensions) &&
+          Genesis::InstallSpecialObjects(isolate_, native_context);
+ }
+ 
++// Borrows isolate/native_context through installation on the isolate thread.
++// New properties remain context-owned; skips runtime-only Wasm callbacks during
++// serialization. Errors retain only unexposed partial context state for GC.
+ bool Genesis::InstallSpecialObjects(
+     Isolate* isolate, DirectHandle<NativeContext> native_context) {
+   HandleScope scope(isolate);
+@@ -6665,7 +6734,9 @@
+   }
+ 
+ #if V8_ENABLE_WEBASSEMBLY
+-  WasmJs::Install(isolate);
++  // V8 does not serialize the runtime-only Wasm API callbacks. The context
++  // policy removes its global anyway; leave the seed-prepared objects intact.
++  if (!isolate->serializer_enabled()) WasmJs::Install(isolate);
+ #endif  // V8_ENABLE_WEBASSEMBLY
+ 
+ #ifdef V8_ENABLE_MEMORY_CORRUPTION_API
+@@ -7061,6 +7132,11 @@
+   return initial_map;
+ }
+ 
++
++// Borrows proxy/template/deserializer callback state during construction on
++// the isolate thread. Context retains its microtask queue until teardown.
++// Success stores a GC-owned context result; failure leaves result empty and
++// temporary allocations for GC. The enclosing HandleScope roots all handles.
+ Genesis::Genesis(Isolate* isolate,
+                  MaybeDirectHandle<JSGlobalProxy> maybe_global_proxy,
+                  v8::Local<v8::ObjectTemplate> global_proxy_template,
+@@ -7176,10 +7252,11 @@
+       isolate, microtask_queue ? static_cast<MicrotaskQueue*>(microtask_queue)
+                                : isolate->default_microtask_queue());
+ 
+-  // Install experimental natives. Do not include them into the
+-  // snapshot as we should be able to turn them off at runtime. Re-installing
+-  // them after they have already been deserialized would also fail.
+-  if (!isolate->serializer_enabled()) {
++  // The engine seed defers experimental installation until runtime. Fresh
++  // application snapshots install now; finalized snapshots preserve their
++  // selected features and must never reinstall into a frozen graph.
++  if (native_context()->zig_intrinsic_objects()->length().value() == 0 &&
++      (!isolate->serializer_enabled() || v8_flags.zig_harden_intrinsics)) {
+     InitializeExperimentalGlobal();
+ 
+     // Store String.prototype's map again in case it has been changed by
+diff --git a/src/flags/flag-definitions.h b/src/flags/flag-definitions.h
+--- a/src/flags/flag-definitions.h
++++ b/src/flags/flag-definitions.h
+@@ -280,6 +280,9 @@
+ DEFINE_BOOL(use_strict, false, "enforce strict mode")
+ 
+ DEFINE_BOOL(trace_temporal, false, "trace temporal code")
++
++// zig-v8: disabled only while building the extensible engine seed snapshot.
++DEFINE_BOOL(zig_harden_intrinsics, true, "freeze intrinsic graph and builtin globals")
+ 
+ DEFINE_BOOL(harmony, false, "enable all completed harmony features")
+ DEFINE_BOOL(harmony_shipping, true, "enable all shipped harmony features")
+diff --git a/src/snapshot/mksnapshot.cc b/src/snapshot/mksnapshot.cc
+--- a/src/snapshot/mksnapshot.cc
++++ b/src/snapshot/mksnapshot.cc
+@@ -222,6 +222,8 @@
+ 
+ }  // namespace
+ 
++// Borrows argv through process exit; owns engine/platform and output artifacts
++// for this seed-generation process. Failure exits without exposing a context.
+ int main(int argc, char** argv) {
+   v8::base::EnsureConsoleOutput();
+ 
+@@ -251,6 +253,9 @@
+   i::CpuFeatures::Probe(true);
+   v8::V8::InitializeICUDefaultLocation(argv[0]);
+   std::unique_ptr<v8::Platform> platform = v8::platform::NewDefaultPlatform();
++  // The seed must accept runtime feature installation. Application contexts,
++  // including SnapshotCreator contexts, finalize before returning to the host.
++  i::v8_flags.zig_harden_intrinsics = false;
+   v8::V8::InitializePlatform(platform.get());
+   v8::V8::Initialize();
+ 

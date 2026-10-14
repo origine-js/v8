@@ -1,0 +1,64 @@
+diff --git a/source/common/udata.cpp b/source/common/udata.cpp
+--- a/source/common/udata.cpp
++++ b/source/common/udata.cpp
+@@ -15,6 +15,8 @@
+ *   created on: 1999oct25
+ *   created by: Markus W. Scherer
+ */
++
++#include <atomic>
+ 
+ #include "unicode/utypes.h"  /* U_PLATFORM etc. */
+ 
+@@ -75,6 +77,19 @@
+ #   include <stdio.h>
+ #endif
+ 
++// zig-v8: provider code must remain alive until process exit. The callback
++// returns a copied ICU status, supports concurrent first calls, and must not
++// reenter common-data lookup. It retains published immutable data until exit.
++using V8ZigICUDataProvider = UErrorCode (*)();
++static std::atomic<V8ZigICUDataProvider> gV8ZigDataProvider{nullptr};
++
++// Borrows no storage; retains only provider code until process exit. Register
++// before ICU use. Atomic publication supports concurrent lookups. A null
++// provider preserves ICU's stock linked-data behavior (used by mksnapshot).
++extern "C" void v8_zig_icu_set_data_provider(V8ZigICUDataProvider provider) {
++    gV8ZigDataProvider.store(provider, std::memory_order_release);
++}
++
+ U_NAMESPACE_USE
+ 
+ /*
+@@ -666,6 +681,10 @@
+  *                       just return the cached UDataMem object.        *
+  *                                                                      *
+  *----------------------------------------------------------------------*/
++// Borrows path/error storage until return. Returns cached ICU-owned UDataMemory
++// valid until ICU cleanup; its embedded bytes remain provider-owned until exit.
++// Failure returns null, retaining any previously cached packages. Invokes the
++// provider outside ICU's cache mutex; concurrent first calls may block there.
+ static UDataMemory *
+ openCommonData(const char *path,          /*  Path from OpenChoice?          */
+                int32_t commonDataIndex,   /*  ICU Data (index >= 0) if path == nullptr */
+@@ -677,6 +696,20 @@
+ 
+     if (U_FAILURE(*pErrorCode)) {
+         return nullptr;
++    }
++
++    // Defer package expansion until a real common-data request. Do this before
++    // entering the ICU cache lock because registration takes that lock itself.
++    if (commonDataIndex == 0) {
++        V8ZigICUDataProvider provider =
++            gV8ZigDataProvider.load(std::memory_order_acquire);
++        if (provider != nullptr) {
++            UErrorCode status = provider();
++            if (U_FAILURE(status)) {
++                *pErrorCode = status;
++                return nullptr;
++            }
++        }
+     }
+ 
+     UDataMemory_init(&tData);

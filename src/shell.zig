@@ -1,286 +1,192 @@
+//! Native scope demo: all module bytes come from memory.
 const std = @import("std");
 const v8 = @import("v8.zig");
-const m = @import("./managed.zig");
+const m = @import("managed.zig");
+const mimalloc = @import("mimalloc.zig");
+var io_runtime: std.Io.Threaded = undefined;
 
-// Demo js repl.
+const StartupTrace = struct {
+    enabled: bool,
+    last: i64,
+    count: usize = 0,
+    samples: [16]struct { name: []const u8, ns: i64 } = undefined,
 
-// comptime {
-//     _ = @import("./alloc.zig");
-// }
-
-fn double(x: i32) i32 {
-    return x + x;
-}
-
-pub fn main() !void {
-    repl();
-    std.process.exit(0);
-}
-
-var runtime: std.Io.Threaded = undefined;
-
-fn hello_fn(info: v8.FunctionCallbackInfo) callconv(.c) void {
-    // var hscope: v8.HandleScope = undefined;
-    // hscope.init(info.isolate());
-    // defer hscope.deinit();
-    const arg_length = info.length();
-    std.debug.print("arg length: {}\n", .{arg_length});
-    const isolate = info.isolate();
-    const ctx = isolate.getCurrentContext();
-    var idx: c_int = 0;
-    var arr: std.ArrayList(u8) = .empty;
-    defer arr.deinit(std.heap.smp_allocator);
-    while (idx < arg_length) : (idx += 1) {
-        arr.clearRetainingCapacity();
-        const s = appendValueAsUtf8(std.heap.smp_allocator, &arr, isolate, ctx, info.get_arg(idx));
-        std.debug.print("arg {} = {s}\n", .{ idx, s });
+    /// Reads the process monotonic clock; retains no resources. Clock failure is fatal.
+    fn now() i64 {
+        var ts: std.c.timespec = undefined;
+        if (std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts) != 0) @panic("startup clock failed");
+        return @as(i64, @intCast(ts.sec)) * 1_000_000_000 + @as(i64, @intCast(ts.nsec));
     }
-    var retval = info.retval();
-    retval.setBool(true);
-}
 
-fn create_api(isolate: v8.Isolate) v8.ObjectTemplate {
-    var impl = v8.ObjectTemplate.initDefault(isolate).?;
-
-    // _ = impl.template.set(js_name, v8.Number.initInt(isolate, 1).numeric.primitive.value.data, .{
-    //     .DontDelete = true,
-    //     .ReadOnly = true,
-    // });
-    var builder: v8.FunctionTemplate.Builder = .{};
-    _ = impl.template.set(v8.String.initOneByte(isolate, "inspect").name, builder.build(isolate, &hello_fn, &.{}).template.data, .{
-        .DontDelete = true,
-        .ReadOnly = true,
-    });
-
-    return impl;
-}
-
-fn setup_global(isolate: v8.Isolate, ctx: v8.Context) void {
-    const global = ctx.getGlobal();
-    const js_name: v8.Name = v8.String.initOneByte(isolate, "core").name;
-    _ = global.set(ctx, js_name.primitive.value, create_api(isolate).initInstance(ctx).?.value);
-}
-
-fn repl() void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
-
-    runtime = .init(gpa.allocator(), .{});
-    defer runtime.deinit();
-
-    var input_buf: std.ArrayList(u8) = .empty;
-    defer input_buf.deinit(alloc);
-
-    const platform = v8.Platform.initDefault(0, true);
-    defer platform.deinit();
-
-    v8.V8.initializePlatform(platform);
-
-    v8.V8.initialize();
-    defer _ = v8.V8.dispose();
-
-    var rt: m.Runtime = .init(alloc);
-    defer rt.deinit();
-
-    rt.isolate.enter();
-    defer rt.isolate.exit();
-
-    var hscope: v8.HandleScope = undefined;
-    hscope.init(rt.isolate);
-    defer hscope.deinit();
-
-    var context: v8.Context = rt.context();
-    context.enter();
-    defer context.exit();
-
-    setup_global(rt.isolate, context);
-
-    const origin = v8.String.initUtf8(rt.isolate, "(shell)");
-
-    printFmt(
-        \\JS Repl
-        \\exit with Ctrl+D or "exit()"
-        \\
-    , .{});
-
-    while (true) {
-        input_buf.clearRetainingCapacity();
-        printFmt("\n> ", .{});
-        var writer = std.Io.Writer.Allocating.fromArrayList(alloc, &input_buf);
-        defer writer.deinit();
-        if (getInput(runtime.io(), &writer.writer)) {
-            const input = writer.written();
-            if (std.mem.eql(u8, input, "exit()")) {
-                break;
-            }
-
-            var res: ExecuteResult = undefined;
-            defer res.deinit();
-            executeString(alloc, &rt, input, origin, &res);
-            if (res.success) {
-                printFmt("{s}", .{res.result.?});
-            } else {
-                printFmt("{s}", .{res.err.?});
-            }
-
-            while (platform.pumpMessageLoop(rt.isolate, false)) {
-                continue;
-            }
-        } else {
-            printFmt("\n", .{});
-            return;
-        }
+    /// Reads but does not retain environment storage; returns an owning inline trace.
+    fn init() StartupTrace {
+        return .{ .enabled = std.c.getenv("V8_STARTUP_TRACE") != null, .last = now() };
     }
-}
 
-fn getInput(io: std.Io, writer: *std.Io.Writer) bool {
-    var buffer: [64]u8 = undefined;
-    var reader = std.Io.File.stdin().reader(io, &buffer);
-    _ = reader.interface.streamDelimiter(writer, '\n') catch |err| {
-        if (err == error.EndOfStream) {
-            return false;
-        } else {
-            unreachable;
+    /// Borrows self through this call and retains static name until report; allocates nothing.
+    fn mark(self: *StartupTrace, comptime name: []const u8) void {
+        if (!self.enabled) return;
+        const time = now();
+        self.samples[self.count] = .{ .name = name, .ns = time - self.last };
+        self.count += 1;
+        self.last = time;
+    }
+
+    /// Borrows recorded samples through this call; writes stderr after startup so
+    /// reporting I/O is excluded from stage times. Retains no resources.
+    fn report(self: *const StartupTrace) void {
+        if (!self.enabled) return;
+        var total: i64 = 0;
+        for (self.samples[0..self.count]) |sample| {
+            std.debug.print("startup {s}: {d} ns\n", .{ sample.name, sample.ns });
+            total += sample.ns;
         }
-    };
-    return true;
-}
-
-pub fn printFmt(comptime format: []const u8, args: anytype) void {
-    var buffer: [64]u8 = undefined;
-    var writer = std.Io.File.stdout().writer(runtime.io(), &buffer);
-    writer.interface.print(format, args) catch unreachable;
-    writer.interface.flush() catch unreachable;
-}
-
-pub const ExecuteResult = struct {
-    const Self = @This();
-
-    alloc: std.mem.Allocator,
-    result: ?[]const u8,
-    err: ?[]const u8,
-    success: bool,
-
-    pub fn deinit(self: Self) void {
-        if (self.result) |result| {
-            self.alloc.free(result);
-        }
-        if (self.err) |err| {
-            self.alloc.free(err);
-        }
+        std.debug.print("startup total: {d} ns\n", .{total});
     }
 };
 
-pub fn executeString(alloc: std.mem.Allocator, rt: *m.Runtime, src: []const u8, src_origin: v8.String, result: *ExecuteResult) void {
-    var hscope: v8.HandleScope = undefined;
-    hscope.init(rt.isolate);
-    defer hscope.deinit();
-
-    var tc_scope: v8.TryCatch = undefined;
-    tc_scope.init(rt.isolate);
-    defer tc_scope.deinit();
-
-    const origin = rt.script_origin(
-        src_origin.name.primitive.value,
-        0,
-        0,
-        false,
-        -1,
-        null,
-        false,
-        false,
-        false,
-    );
-
-    const context = rt.isolate.getCurrentContext();
-
-    const js_src = v8.String.initUtf8(rt.isolate, src);
-
-    const script = v8.Script.compile(context, js_src, origin) orelse {
-        setResultError(alloc, rt.isolate, tc_scope, result);
-        return;
-    };
-    const script_res = script.run(context) orelse {
-        setResultError(alloc, rt.isolate, tc_scope, result);
-        return;
-    };
-    result.* = .{
-        .alloc = alloc,
-        .result = valueToUtf8Alloc(alloc, rt.isolate, context, script_res),
-        .err = null,
-        .success = true,
-    };
+fn print(comptime format: []const u8, args: anytype) void {
+    var buffer: [1024]u8 = undefined;
+    var writer = std.Io.File.stdout().writer(io_runtime.io(), &buffer);
+    writer.interface.print(format, args) catch return;
+    writer.interface.flush() catch return;
 }
 
-fn setResultError(alloc: std.mem.Allocator, isolate: v8.Isolate, try_catch: v8.TryCatch, result: *ExecuteResult) void {
-    result.* = .{
-        .alloc = alloc,
-        .result = null,
-        .err = getTryCatchErrorString(alloc, isolate, try_catch),
-        .success = false,
-    };
-}
-
-pub fn valueToUtf8Alloc(alloc: std.mem.Allocator, isolate: v8.Isolate, ctx: v8.Context, val: v8.Value) []const u8 {
-    const str = val.toString(ctx) orelse unreachable;
-    const len = str.lenUtf8(isolate);
-    const buf = alloc.alloc(u8, len) catch unreachable;
-    _ = str.writeUtf8(isolate, buf);
-    return buf;
-}
-
-pub fn getTryCatchErrorString(alloc: std.mem.Allocator, isolate: v8.Isolate, tc_scope: v8.TryCatch) []const u8 {
-    var hscope: v8.HandleScope = undefined;
-    hscope.init(isolate);
-    defer hscope.deinit();
-
-    const ctx = isolate.getCurrentContext();
-
-    var buf: std.ArrayList(u8) = .empty;
-    if (tc_scope.getMessage()) |message| {
-        buf.clearRetainingCapacity();
-
-        // Append source line.
-        const source_line = message.getSourceLine(ctx).?;
-        _ = appendValueAsUtf8(alloc, &buf, isolate, ctx, source_line.name.primitive.value);
-        buf.append(alloc, '\n') catch unreachable;
-
-        // Print wavy underline.
-        const col_start = message.getStartColumn().?;
-        const col_end = message.getEndColumn().?;
-
-        var i: u32 = 0;
-        while (i < col_start) : (i += 1) {
-            buf.append(alloc, ' ') catch unreachable;
-        }
-        while (i < col_end) : (i += 1) {
-            buf.append(alloc, '^') catch unreachable;
-        }
-        buf.append(alloc, '\n') catch unreachable;
-
-        if (tc_scope.getStackTrace(ctx)) |trace| {
-            _ = appendValueAsUtf8(alloc, &buf, isolate, ctx, trace);
-            buf.append(alloc, '\n') catch unreachable;
-        }
-
-        return buf.toOwnedSlice(alloc) catch unreachable;
-    } else {
-        // V8 didn't provide any extra information about this error, just get exception str.
-        const exception = tc_scope.getException().?;
-        return valueToUtf8Alloc(alloc, isolate, ctx, exception);
+fn load(_: ?*anyopaque, request: m.LoadRequest) !m.LoadResult {
+    if (request.import_attributes.len != 0) {
+        return .{ .exception = v8.Exception.typeError(v8.String.initUtf8(v8.Isolate.getCurrent(), "The demo loader does not support import attributes")).? };
     }
+    if (std.mem.eql(u8, request.module_id, "app:/one.js")) return .{ .source = "export const value = 'scope A';" };
+    if (std.mem.eql(u8, request.module_id, "app:/two.js")) return .{ .source = "export const value = 'scope B';" };
+    return error.ModuleNotFound;
 }
 
-pub fn appendValueAsUtf8(alloc: std.mem.Allocator, arr: *std.ArrayList(u8), isolate: v8.Isolate, ctx: v8.Context, val: v8.Value) []const u8 {
-    const str = val.toString(ctx) orelse unreachable;
-    const len = str.lenUtf8(isolate);
-    arr.ensureTotalCapacityPrecise(alloc, len) catch unreachable;
-    const buf = arr.addManyAsSliceAssumeCapacity(len);
-    const actual_len = str.writeUtf8(
-        isolate,
-        buf,
-    );
-    std.debug.assert(len == actual_len);
-    return buf;
+/// Borrows scope/value through string conversion; caller keeps the runtime alive.
+/// Local V8 handles and UTF-8 storage are released before return.
+fn show(scope: *m.Scope, value: v8.Global.Of(v8.Value)) void {
+    const isolate = scope.runtime.isolate;
+    isolate.enter();
+    defer isolate.exit();
+    var h_scope: v8.HandleScope = undefined;
+    h_scope.init(isolate);
+    defer h_scope.deinit();
+    const ctx = scope.context.deref();
+    ctx.enter();
+    defer ctx.exit();
+    // toString may invoke arbitrary guest code, including a throwing getter.
+    var tc_scope: v8.TryCatch = undefined;
+    tc_scope.init(isolate);
+    defer tc_scope.deinit();
+    const text = value.deref().toString(ctx) orelse {
+        print("<value conversion threw>\n", .{});
+        return;
+    };
+    const buffer = std.heap.smp_allocator.alloc(u8, text.lenUtf8(isolate)) catch return;
+    defer std.heap.smp_allocator.free(buffer);
+    const length = text.writeUtf8(isolate, buffer);
+    print("{s}\n", .{buffer[0..length]});
+}
+
+/// Owns the demo engine/runtime and host allocations until exit; releases all V8
+/// values before teardown. Uses process-lifetime mimalloc for ArrayBuffer backing stores.
+/// Owns one V8 background worker until platform teardown; foreground jobs are
+/// pumped on the calling thread. No callback state escapes runtime teardown.
+pub fn main() !void {
+    var startup = StartupTrace.init();
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = debug_allocator.deinit();
+    const alloc = debug_allocator.allocator();
+    io_runtime = .init(alloc, .{});
+    defer io_runtime.deinit();
+    startup.mark("host_io");
+    const platform = v8.Platform.initDefault(1, true);
+    startup.mark("platform_create");
+    defer platform.deinit();
+    v8.V8.initializePlatform(platform);
+    defer v8.V8.disposePlatform();
+    v8.V8.initialize();
+    defer _ = v8.V8.dispose();
+    startup.mark("v8_initialize");
+    var rt = try m.Runtime.initWithOptions(alloc, .{ .array_buffer_allocator = .{ .zig = mimalloc.allocator } });
+    startup.mark("runtime_isolate");
+    defer rt.deinit();
+    var map_a = try m.ImportMap.init(alloc, .{
+        .base_url = "app:/map.json",
+        .urls = m.virtual_urls,
+        .imports = &.{.{
+            .key = "demo",
+            .target = "./one.js",
+        }},
+    });
+    defer map_a.deinit();
+    var map_b = try m.ImportMap.init(alloc, .{
+        .base_url = "app:/map.json",
+        .urls = m.virtual_urls,
+        .imports = &.{.{
+            .key = "demo",
+            .target = "./two.js",
+        }},
+    });
+    defer map_b.deinit();
+    startup.mark("import_maps");
+    const a = try rt.createScope(.{
+        .import_map = &map_a,
+        .loader = .{ .load = load },
+    });
+    startup.mark("scope_a");
+    const b = try rt.createScope(.{
+        .import_map = &map_b,
+        .loader = .{ .load = load },
+    });
+    startup.mark("scope_b");
+    // const counter = try a.eval("new (class Counter { #value = 0; inc(){return ++this.#value} get value(){return this.#value} })()", "app:/counter.js", null);
+    // defer counter.deinit();
+    // try a.installCapability("counter", counter, null);
+    // try b.installCapability("counter", counter, null);
+    // startup.mark("counter_capabilities");
+    for ([_]*m.Scope{ a, b }) |scope| {
+        const setup = try scope.eval("globalThis.moduleValue = ''; import('demo').then(m => { moduleValue = m.value }); 'ready'", "app:/setup.js", null);
+        setup.deinit();
+    }
+    rt.pump();
+    startup.mark("module_imports_pump");
+    startup.report();
+    @import("startup_trace.zig").report();
+    // print(
+    //     \\Native V8 scopes: :a / :b switches scope; exit() or Ctrl+D exits.
+    //     \\Try moduleValue, counter.inc(), counter.value, or Object.prototype.x = 1.
+    //     \\
+    // , .{});
+    _ = try a.eval("1", "main", null);
+    rt.pumpPlatform(platform);
+    // var current = a;
+    // var input_buffer: [8192]u8 = undefined;
+    // var reader = std.Io.File.stdin().reader(io_runtime.io(), &input_buffer);
+    // while (true) {
+    //     print("{s}> ", .{if (current == a) "A" else "B"});
+    //     const line = (reader.interface.takeDelimiter('\n') catch |err| {
+    //         print("Input error: {s}\n", .{@errorName(err)});
+    //         return;
+    //     }) orelse break;
+    //     const input = std.mem.trim(u8, line, " \r\t");
+    //     if (std.mem.eql(u8, input, "exit()")) break;
+    //     if (std.mem.eql(u8, input, ":a")) {
+    //         current = a;
+    //         continue;
+    //     }
+    //     if (std.mem.eql(u8, input, ":b")) {
+    //         current = b;
+    //         continue;
+    //     }
+    //     var error_info: m.ErrorInfo = .{};
+    //     defer error_info.deinit();
+    //     const result = current.eval(input, "app:/shell.js", &error_info) catch |err| {
+    //         print("Evaluation failed: {s}\n", .{@errorName(err)});
+    //         if (error_info.exception) |value| show(current, value);
+    //         continue;
+    //     };
+    //     defer result.deinit();
+    //     show(current, result);
+    //     rt.pumpPlatform(platform);
+    // }
 }

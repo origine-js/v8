@@ -4,7 +4,14 @@
 static_library("v8_zig") {
   complete_static_lib = true
 
-  sources = [ "./binding/binding.cc" ]
+  sources = [
+    "./binding/binding.cc",
+    "./binding/icu-compressed.cc",
+    "./binding/icu-data.gen.cc",
+  ]
+  if (is_mac) {
+    sources += [ "./binding/darwin-frameworks.cc" ]
+  }
   deps = [
     "//build/config:shared_library_deps",
     "//:v8",

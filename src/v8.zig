@@ -39,6 +39,7 @@ pub const Template = @import("v8/Template.zig").Template;
 pub const FunctionCallbackInfo = @import("v8/FunctionCallbackInfo.zig").FunctionCallbackInfo;
 pub const Signature = @import("v8/Signature.zig").Signature;
 pub const Function = @import("v8/Function.zig").Function;
+pub const Intrinsics = @import("v8/Intrinsics.zig").Intrinsics;
 pub const FunctionTemplate = @import("v8/FunctionTemplate.zig").FunctionTemplate;
 pub const ObjectTemplate = @import("v8/ObjectTemplate.zig").ObjectTemplate;
 pub const MicrotaskQueue = @import("v8/MicrotaskQueue.zig").MicrotaskQueue;
@@ -142,6 +143,7 @@ fn refAllNested(comptime T: type, comptime depth: u8) void {
 
 test {
     _ = @import("test.zig");
+    _ = @import("managed/test.zig");
 }
 
 test "wrappers type-check against the generated externs" {

@@ -1,0 +1,72 @@
+diff --git a/src/objects/contexts.h b/src/objects/contexts.h
+--- a/src/objects/contexts.h
++++ b/src/objects/contexts.h
+@@ -433,7 +433,8 @@
+   V(WRAPPED_FUNCTION_MAP_INDEX, Map, wrapped_function_map)                     \
+   V(RETAINED_MAPS, Object, retained_maps)                                      \
+   V(SHARED_SPACE_JS_OBJECT_HAS_INSTANCE_INDEX, JSFunction,                     \
+-    shared_space_js_object_has_instance)
++    shared_space_js_object_has_instance)                                      \
++  V(ZIG_INTRINSIC_FUNCTIONS_INDEX, FixedArray, zig_intrinsic_functions)
+ 
+ #include "torque-generated/src/objects/contexts-tq.inc"
+ 
+diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
+--- a/src/init/bootstrapper.cc
++++ b/src/init/bootstrapper.cc
+@@ -608,6 +608,21 @@
+   return fun;
+ }
+ 
++// zig-v8: retain original public builtin functions in a context-owned table.
++// The table is traced and serialized with NativeContext, never exposed to JS.
++// A builtin used for distinct function objects is ambiguous: fail closed.
++void RetainZigIntrinsic(Isolate* isolate, Builtin builtin,
++                        DirectHandle<JSFunction> function) {
++  Tagged<FixedArray> table = isolate->native_context()->zig_intrinsic_functions();
++  int index = static_cast<int>(builtin);
++  Tagged<Object> previous = table->get(index);
++  if (IsTheHole(previous, isolate)) {
++    table->set(index, *function);
++  } else if (previous != *function) {
++    table->set(index, ReadOnlyRoots(isolate).undefined_value());
++  }
++}
++
+ V8_NOINLINE Handle<JSFunction> InstallFunctionWithBuiltinId(
+     Isolate* isolate, DirectHandle<JSObject> base, const char* name,
+     Builtin call, int len, AdaptArguments adapt) {
+@@ -615,6 +630,7 @@
+       isolate->factory()->InternalizeUtf8String(name);
+   Handle<JSFunction> fun =
+       SimpleCreateFunction(isolate, internalized_name, call, len, adapt);
++  RetainZigIntrinsic(isolate, call, fun);
+   JSObject::AddProperty(isolate, base, internalized_name, fun, DONT_ENUM);
+   return fun;
+ }
+@@ -627,6 +643,7 @@
+       isolate->factory()->InternalizeUtf8String(symbol_string);
+   Handle<JSFunction> fun =
+       SimpleCreateFunction(isolate, internalized_symbol, call, len, adapt);
++  RetainZigIntrinsic(isolate, call, fun);
+   JSObject::AddProperty(isolate, base, symbol, fun, attrs);
+   return fun;
+ }
+@@ -1006,6 +1023,7 @@
+       isolate->factory()->InternalizeUtf8String(name);
+   Handle<JSFunction> fun =
+       SimpleCreateFunction(isolate, internalized_name, call, len, adapt);
++  RetainZigIntrinsic(isolate, call, fun);
+   JSObject::AddProperty(isolate, base, internalized_name, fun, attrs);
+   return fun;
+ }
+@@ -1339,6 +1357,9 @@
+   // and the global object, but in order to create those, we need the
+   // native context).
+   native_context_ = factory()->NewNativeContext();
++  native_context()->set_zig_intrinsic_functions(
++      *factory()->NewFixedArrayWithHoles(Builtins::kBuiltinCount,
++                                        AllocationType::kOld));
+ 
+   isolate()->heap()->AddToWeakNativeContextList(*native_context());
+   isolate()->set_context(*native_context());

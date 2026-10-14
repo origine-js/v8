@@ -17,8 +17,8 @@ pub const HeapSpaceStatistics = extern struct {
 
 /// Keep the table and its state alive until the allocator is destroyed.
 pub const ZigAllocatorTable = extern struct {
-    allocate_zeroed: *const fn (?*anyopaque, usize) callconv(.c) ?*anyopaque,
-    allocate: *const fn (?*anyopaque, usize) callconv(.c) ?*anyopaque,
+    alloc_zeroed: *const fn (?*anyopaque, usize) callconv(.c) ?*anyopaque,
+    alloc: *const fn (?*anyopaque, usize) callconv(.c) ?*anyopaque,
     free: *const fn (?*anyopaque, ?*anyopaque, usize) callconv(.c) void,
     deinit: *const fn (?*anyopaque) callconv(.c) void,
 };

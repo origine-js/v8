@@ -15,7 +15,7 @@ pub const MicrotaskQueue = struct {
         return .{ .handle = e.v8__MicrotaskQueue__New(isolate.handle, policy).? };
     }
 
-    /// Runs the queue's destructor. The shim does not release the storage itself.
+    /// Deletes the queue and releases the storage allocated by init.
     pub fn deinit(self: Self) void {
         e.v8__MicrotaskQueue__DESTRUCT(self.handle);
     }

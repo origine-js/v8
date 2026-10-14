@@ -23,13 +23,12 @@ Tests are grouped by these step numbers in `src/managed/test.zig`.
 
 ## Initialization and ownership
 
-Initialize the V8 platform and engine through `v8.V8.initialize()` before constructing a runtime. Keep the
-runtime at its final address once you create a scope:
+Initialize the V8 platform and engine through `v8.V8.initialize()` before constructing a runtime. `Runtime.create` returns a heap-allocated `*Runtime` with a stable address; release it with `destroy`:
 
 ```zig
 const m = @import("managed.zig");
-var rt = m.Runtime.init(allocator);
-defer rt.deinit();
+const rt = try m.Runtime.create(allocator, .{});
+defer rt.destroy();
 const scope = try rt.createScope(.{});
 const result = try scope.eval("({ answer: 42 })", "app:/entry.js", null);
 defer result.deinit();
@@ -63,18 +62,18 @@ scheduler with per-scope fairness or a CPU deadline.
 
 ### Allocators
 
-`Runtime.init(metadata_alloc)` preserves the native V8 backing-store allocator.
+`Runtime.create(metadata_alloc, .{})` preserves the native V8 backing-store allocator.
 The metadata allocator backs managed scopes, import maps, loader metadata, and
 other Zig runtime storage; it does not allocate the V8 GC heap.
 
-Use `initWithOptions` to choose backing-store allocation independently:
+Pass `Options` to `Runtime.create` to choose backing-store allocation independently:
 
 ```zig
 const mimalloc = @import("mimalloc.zig");
-var rt = try m.Runtime.initWithOptions(metadata_alloc, .{
+const rt = try m.Runtime.create(metadata_alloc, .{
     .array_buffer_allocator = .{ .zig = mimalloc.allocator },
 });
-defer rt.deinit();
+defer rt.destroy();
 ```
 
 The `.zig` option accepts any thread-safe `std.mem.Allocator`. It creates and owns
@@ -92,10 +91,10 @@ To retain backing stores beyond runtime teardown, own the adapter outside the ru
 ```zig
 const aba = try v8.ArrayBuffer.Allocator.fromZig(backing_alloc);
 defer aba.deinit(); // After runtime teardown AND release of all backing stores.
-var rt = try m.Runtime.initWithOptions(metadata_alloc, .{
+const rt = try m.Runtime.create(metadata_alloc, .{
     .array_buffer_allocator = .{ .borrowed = aba },
 });
-defer rt.deinit(); // Does not destroy the borrowed allocator.
+defer rt.destroy(); // Does not destroy the borrowed allocator.
 ```
 
 The caller must retain both the borrowed native allocator and its Zig allocator
@@ -308,7 +307,7 @@ delete, replace, or clear these mappings:
 const key: m.ModuleMapKey = .{ .module_id = "app:/plugins/main.js" };
 try scope.module_map.update(key, .{ .source = "export const version = 2" }, null);
 if (try scope.module_map.get(key, null)) |module| {
-    defer module.deinit(); // Caller-owned retained V8 Module; release before rt.deinit().
+    defer module.deinit(); // Caller-owned retained V8 Module; release before rt.destroy().
 }
 const removed = try scope.module_map.delete(key);
 const cleared = try scope.module_map.clear();

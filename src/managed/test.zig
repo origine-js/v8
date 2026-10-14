@@ -23,8 +23,8 @@ test "runtime allocators: owned Zig backing stores are zeroed and released" {
     var backing = std.heap.DebugAllocator(.{ .thread_safe = true, .enable_memory_limit = true }){};
     defer t.expect(backing.deinit() == .ok) catch @panic("backing-store leak");
     {
-        var rt = try m.Runtime.initWithOptions(t.allocator, .{ .array_buffer_allocator = .{ .zig = backing.allocator() } });
-        defer rt.deinit();
+        const rt = try m.Runtime.create(t.allocator, .{ .array_buffer_allocator = .{ .zig = backing.allocator() } });
+        defer rt.destroy();
         const scope = try rt.createScope(.{});
         try check(scope, "globalThis.buffer = new ArrayBuffer(65536); const view = new Uint8Array(buffer); view.every(x => x === 0) && (view[3] = 42) === 42");
         try t.expect(backing.total_requested_bytes >= 65536);
@@ -51,8 +51,8 @@ test "runtime allocators: borrowed adapter survives runtime with retained backin
     defer if (store_alive) store.deinit();
     var bytes: []u8 = undefined;
     {
-        var rt = try m.Runtime.initWithOptions(t.allocator, .{ .array_buffer_allocator = .{ .borrowed = aba } });
-        defer rt.deinit();
+        const rt = try m.Runtime.create(t.allocator, .{ .array_buffer_allocator = .{ .borrowed = aba } });
+        defer rt.destroy();
         const scope = try rt.createScope(.{});
         rt.isolate.enter();
         defer rt.isolate.exit();
@@ -80,8 +80,8 @@ test "runtime allocators: borrowed adapter survives runtime with retained backin
 
 test "runtime allocators: mimalloc metadata and ArrayBuffer integration" {
     @import("../test.zig").ensureV8();
-    var rt = try m.Runtime.initWithOptions(mimalloc.allocator, .{ .array_buffer_allocator = .{ .zig = mimalloc.allocator } });
-    defer rt.deinit();
+    const rt = try m.Runtime.create(mimalloc.allocator, .{ .array_buffer_allocator = .{ .zig = mimalloc.allocator } });
+    defer rt.destroy();
     const scope = try rt.createScope(.{});
     try check(scope, "const data = new Uint8Array(8192); data.every(x => x === 0) && (data[5] = 99) === 99 && new ArrayBuffer(0).byteLength === 0");
     try scope.module_map.update(.{ .module_id = "memory" }, .{ .source = "export const value = new Uint8Array(4096).every(x => x === 0)" }, null);
@@ -91,8 +91,8 @@ test "runtime allocators: mimalloc metadata and ArrayBuffer integration" {
 
 test "managed step 1: scopes, strict evaluation, persistent handles and context restoration" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const a = try rt.createScope(.{});
     const b = try rt.createScope(.{});
     try check(a, "globalThis.local = 1; local === 1");
@@ -130,22 +130,22 @@ fn sameRetainedValue(rt: *m.Runtime, a: v8.Global.Of(v8.Value), b: v8.Global.Of(
 // Local V8 scopes are released before return; no resources escape.
 test "error info: eval retains thrown identity, syntax errors and undefined" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const scope = try rt.createScope(.{});
     const marker = try scope.eval("globalThis.marker = {value: 42}; marker", "test:marker", null);
     defer marker.deinit();
     var error_info: m.ErrorInfo = .{};
     defer error_info.deinit();
     try t.expectError(error.JavaScriptException, scope.eval("throw marker", "test:throw", &error_info));
-    try sameRetainedValue(&rt, error_info.exception.?, marker);
+    try sameRetainedValue(rt, error_info.exception.?, marker);
     const success = try scope.eval("42", "test:success", &error_info);
     defer success.deinit();
     try t.expect(error_info.exception == null);
     try t.expectError(error.JavaScriptException, scope.eval("throw undefined", "test:undefined", &error_info));
     const undefined_value = try scope.eval("undefined", "test:undefined-value", null);
     defer undefined_value.deinit();
-    try sameRetainedValue(&rt, error_info.exception.?, undefined_value);
+    try sameRetainedValue(rt, error_info.exception.?, undefined_value);
     try t.expectError(error.JavaScriptException, scope.eval("const =", "test:syntax", &error_info));
     rt.isolate.enter();
     defer rt.isolate.exit();
@@ -162,8 +162,8 @@ test "error info: eval retains thrown identity, syntax errors and undefined" {
 
 test "error info: hardening and capability installation preserve caught errors" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const scope = try rt.createScope(.{});
     const proxy = try scope.eval("new Proxy({}, {})", "test:proxy", null);
     defer proxy.deinit();
@@ -182,8 +182,8 @@ test "error info: hardening and capability installation preserve caught errors" 
 
 test "error info: module-map compilation failures and promise rejections" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const scope = try rt.createScope(.{});
     const key: m.ModuleMapKey = .{ .module_id = "module" };
     var error_info: m.ErrorInfo = .{};
@@ -193,17 +193,17 @@ test "error info: module-map compilation failures and promise rejections" {
     var cached_error_info: m.ErrorInfo = .{};
     defer cached_error_info.deinit();
     try t.expectError(error.JavaScriptException, scope.module_map.get(key, &cached_error_info));
-    try sameRetainedValue(&rt, error_info.exception.?, cached_error_info.exception.?);
+    try sameRetainedValue(rt, error_info.exception.?, cached_error_info.exception.?);
     const rejected = try scope.importModule("module", &error_info);
     defer rejected.deinit();
     try t.expect(error_info.exception == null);
-    try expectState(&rt, rejected, .Rejected);
+    try expectState(rt, rejected, .Rejected);
     try scope.module_map.update(key, .{ .source = "export const value = 42" }, &error_info);
     try t.expect(error_info.exception == null);
     const recovered = try scope.importModuleWithAttributes("module", &.{}, &error_info);
     defer recovered.deinit();
     rt.pump();
-    try expectState(&rt, recovered, .Fulfilled);
+    try expectState(rt, recovered, .Fulfilled);
     try t.expect(error_info.exception == null);
     try t.expectError(error.JavaScriptException, scope.module_map.update(key, .{ .source = "export const =" }, &error_info));
     try t.expect(error_info.exception != null);
@@ -211,8 +211,8 @@ test "error info: module-map compilation failures and promise rejections" {
 
 test "managed step 2: intrinsic inventory and code generation lockdown" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const scope = try rt.createScope(.{});
     const attacks = [_][]const u8{
         "Object.prototype.polluted = true",                                               "Array.prototype.push = () => 0",
@@ -234,8 +234,8 @@ test "managed step 2: intrinsic inventory and code generation lockdown" {
 
 test "managed step 3: hardened sharing and private state" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const a = try rt.createScope(.{});
     const b = try rt.createScope(.{});
     const cap = try a.eval("new (class Counter { #n = 0; inc() { return ++this.#n; } })()", "test:counter", null);
@@ -311,8 +311,8 @@ fn exposeModule(scope: *m.Scope, id: []const u8, name: []const u8) !void {
 test "managed step 4: native ESM graphs, cycles, TLA and defining scope" {
     @import("../test.zig").ensureV8();
     var memory: Memory = .{};
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const a = try rt.createScope(memory.options());
     const b = try rt.createScope(memory.options());
     try exposeModule(a, "main", "main");
@@ -378,54 +378,54 @@ fn expectState(rt: *m.Runtime, promise: v8.Global.Of(v8.Promise), expected: v8.P
 test "managed step 5: deferred backend, deduplication, cycles and stale tokens" {
     @import("../test.zig").ensureV8();
     var backend: Deferred = .{};
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const scope = try rt.createScope(backend.options());
     const first = try scope.importModule("root", null);
     defer first.deinit();
     const again = try scope.importModule("root", null);
     defer again.deinit();
     try t.expectEqual(@as(usize, 1), backend.count);
-    try expectState(&rt, first, .Pending);
+    try expectState(rt, first, .Pending);
     try rt.completeLoad(backend.tokens[0], .{ .content = .{ .source = "import {a} from 'a'; import {b} from 'b'; export const value = await Promise.resolve(a() + b); export const root = 7;" } });
     try t.expectEqual(@as(usize, 3), backend.count);
     try rt.completeLoad(backend.tokens[2], .{ .content = .{ .source = "export const b = 2" } });
     rt.pump();
-    try expectState(&rt, first, .Pending);
+    try expectState(rt, first, .Pending);
     try rt.completeLoad(backend.tokens[1], .{ .content = .{ .source = "import {root} from 'root'; export function a(){return root}" } });
     rt.pump();
     // Calling a() before root initializes throws: cycle loading succeeds, evaluation correctly rejects.
-    try expectState(&rt, first, .Rejected);
-    try expectState(&rt, again, .Rejected);
+    try expectState(rt, first, .Rejected);
+    try expectState(rt, again, .Rejected);
     try t.expectError(error.StaleLoadToken, rt.completeLoad(backend.tokens[1], .{ .failure = error.NotFound }));
     try t.expectError(error.StaleLoadToken, rt.completeLoad(999, .{ .failure = error.NotFound }));
     const failed = try scope.importModule("failed", null);
     defer failed.deinit();
     try rt.completeLoad(backend.tokens[3], .{ .failure = error.NotFound });
     rt.pump();
-    try expectState(&rt, failed, .Rejected);
+    try expectState(rt, failed, .Rejected);
     const success = try scope.importModule("success", null);
     defer success.deinit();
     try rt.completeLoad(backend.tokens[4], .{ .content = .{ .source = "export const value = await Promise.resolve(42)" } });
     rt.pump();
-    try expectState(&rt, success, .Fulfilled);
+    try expectState(rt, success, .Fulfilled);
 }
 
 test "managed step 5: teardown cancels pending requests" {
     @import("../test.zig").ensureV8();
     var backend: Deferred = .{};
-    var rt = m.Runtime.init(t.allocator);
+    const rt = try m.Runtime.create(t.allocator, .{});
     const scope = try rt.createScope(backend.options());
     const promise = try scope.importModule("pending", null);
     promise.deinit();
-    rt.deinit();
+    rt.destroy();
     try t.expectEqual(@as(usize, 1), backend.cancelled);
 }
 
 test "managed steps 4-5: synthetic capability exports and asynchronous successful cycles" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const owner = try rt.createScope(.{});
     const value = try owner.eval("({answer:42})", "test:export", null);
     defer value.deinit();
@@ -446,7 +446,7 @@ test "managed steps 4-5: synthetic capability exports and asynchronous successfu
     try rt.completeLoad(backend.tokens[0], .{ .content = .{ .source = "import {read} from 'child'; export const n = 4; export const value = () => read();" } });
     try rt.completeLoad(backend.tokens[1], .{ .content = .{ .source = "import {n} from 'root'; export function read(){return n}" } });
     rt.pump();
-    try expectState(&rt, promise, .Fulfilled);
+    try expectState(rt, promise, .Fulfilled);
 }
 
 test "managed step 6: immutable maps, scope precedence, virtual URLs and blocked paths" {
@@ -481,8 +481,8 @@ test "managed step 6: immutable maps, scope precedence, virtual URLs and blocked
 
 test "typed import maps: caller construction and reuse outlive caller map" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     {
         var map = try m.ImportMap.init(t.allocator, .{
             .base_url = "app:/map.json",
@@ -509,8 +509,8 @@ test "typed import maps: caller construction and reuse outlive caller map" {
 
 test "managed module maps: independent mappings without a resolver or loader" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const a = try rt.createScope(.{});
     const b = try rt.createScope(.{});
     const key: m.ModuleMapKey = .{ .module_id = "same" };
@@ -540,8 +540,8 @@ test "managed module maps: independent mappings without a resolver or loader" {
 // Local V8 scopes are released before return; no resources escape.
 test "managed module maps: lookup normalizes attributes and retains native identity" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const scope = try rt.createScope(.{});
     const attrs = [_]m.ImportAttribute{ .{ .key = "type", .value = "custom" }, .{ .key = "mode", .value = "one" } };
     const key: m.ModuleMapKey = .{ .module_id = "payload", .import_attributes = &attrs };
@@ -571,8 +571,8 @@ test "managed module maps: lookup normalizes attributes and retains native ident
 
 test "managed module maps: alias imports share a loaded module and lookup never loads" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const Backend = struct {
         loads: usize = 0,
         fn resolve(_: ?*anyopaque, request: m.ResolveRequest) ![]const u8 {
@@ -607,8 +607,8 @@ test "managed module maps: alias imports share a loaded module and lookup never 
 
 test "managed module maps: pending and failed lookups recover through replacement" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     var backend: Deferred = .{};
     const scope = try rt.createScope(backend.options());
     const key: m.ModuleMapKey = .{ .module_id = "pending" };
@@ -618,7 +618,7 @@ test "managed module maps: pending and failed lookups recover through replacemen
     try t.expectEqual(@as(usize, 1), backend.count);
     try rt.completeLoad(backend.tokens[0], .{ .failure = error.NotFound });
     rt.pump();
-    try expectState(&rt, pending, .Rejected);
+    try expectState(rt, pending, .Rejected);
     try t.expectError(error.JavaScriptException, scope.module_map.get(key, null));
     try scope.module_map.update(key, .{ .source = "export const value = 42" }, null);
     const recovered = (try scope.module_map.get(key, null)).?;
@@ -635,8 +635,8 @@ test "managed module maps: pending and failed lookups recover through replacemen
 
 test "managed module maps: import rewriting precedes static and dynamic lookup" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     var import_map_1 = try m.ImportMap.parseJson(t.allocator, "{\"imports\":{\"root\":\"app:/main.js\",\"dep\":\"app:/one.js\"}}", .{ .base_url = "app:/map.json", .urls = m.virtual_urls });
     defer import_map_1.deinit();
     const a = try rt.createScope(.{ .import_map = &import_map_1 });
@@ -666,8 +666,8 @@ test "managed module maps: import rewriting precedes static and dynamic lookup" 
 
 test "managed step 6: different import maps with the same virtual backend" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const Backend = struct {
         fn load(_: ?*anyopaque, request: m.LoadRequest) !m.LoadResult {
             if (std.mem.eql(u8, request.module_id, "app:/one.js")) return .{ .source = "export const value = 1" };
@@ -713,8 +713,8 @@ const NativeCounter = struct {
 // Local V8 scopes are released before return; no resources escape.
 test "managed step 7: native private capabilities validate receivers without coercion" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const a = try rt.createScope(.{});
     const b = try rt.createScope(.{});
     rt.isolate.enter();
@@ -743,8 +743,8 @@ test "managed step 7: native private capabilities validate receivers without coe
 
 test "managed step 7: cross-scope exotic rejection, callbacks and failures" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const a = try rt.createScope(.{});
     const b = try rt.createScope(.{});
     for ([_][]const u8{ "new WeakRef({})", "new FinalizationRegistry(()=>{})", "[][Symbol.iterator]()", "new Proxy({}, {ownKeys(){throw 1}})" }) |source| {
@@ -827,8 +827,8 @@ const AttributeBackend = struct {
 test "loader receives context and attributes for static, dynamic and host imports" {
     @import("../test.zig").ensureV8();
     var backend: AttributeBackend = .{};
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const scope = try rt.createScope(backend.options());
     try exposeModule(scope, "main", "module");
     try check(scope, "module.values[0] === 1 && module.values[1] === 2");
@@ -838,7 +838,7 @@ test "loader receives context and attributes for static, dynamic and host import
     try check(scope, "dynamicValue === 1");
     const first = try scope.importModuleWithAttributes("payload", &.{ .{ .key = "type", .value = "custom" }, .{ .key = "mode", .value = "one" } }, null);
     defer first.deinit();
-    try expectState(&rt, first, .Fulfilled);
+    try expectState(rt, first, .Fulfilled);
     try t.expectEqual(@as(usize, 2), backend.payload_loads);
     try check(scope, "globalThis.dynamicTwo = 0; import('payload', {with:{type:'custom',mode:'new'}}).then(m=>{dynamicTwo=m.value}); true");
     rt.pump();
@@ -846,7 +846,7 @@ test "loader receives context and attributes for static, dynamic and host import
     try t.expectEqual(@as(usize, 3), backend.payload_loads);
     const duplicate = try scope.importModuleWithAttributes("payload", &.{ .{ .key = "type", .value = "one" }, .{ .key = "type", .value = "two" } }, null);
     defer duplicate.deinit();
-    try expectState(&rt, duplicate, .Rejected);
+    try expectState(rt, duplicate, .Rejected);
     try t.expectEqual(@as(usize, 3), backend.payload_loads);
 }
 
@@ -854,14 +854,14 @@ test "loader receives context and attributes for static, dynamic and host import
 test "custom loader and resolver exceptions preserve JavaScript errors" {
     @import("../test.zig").ensureV8();
     var backend: AttributeBackend = .{};
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     defer if (backend.custom_error) |exception| exception.deinit();
     const scope = try rt.createScope(backend.options());
     for ([_][]const u8{ "denied", "static-denied", "thrown" }) |id| {
         const promise = try scope.importModule(id, null);
         defer promise.deinit();
-        try expectState(&rt, promise, .Rejected);
+        try expectState(rt, promise, .Rejected);
         rt.isolate.enter();
         defer rt.isolate.exit();
         var h_scope: v8.HandleScope = undefined;
@@ -880,8 +880,8 @@ test "custom loader and resolver exceptions preserve JavaScript errors" {
 // Local V8 scopes are released before return; no resources escape.
 test "pending loads preserve attributes and accept custom async exceptions" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const Backend = struct {
         token: m.LoadToken = 0,
         attributes: []const m.ImportAttribute = &.{},
@@ -904,7 +904,7 @@ test "pending loads preserve attributes and accept custom async exceptions" {
     defer exception.deinit();
     try rt.completeLoad(backend.token, .{ .exception = exception });
     rt.pump();
-    try expectState(&rt, promise, .Rejected);
+    try expectState(rt, promise, .Rejected);
     rt.isolate.enter();
     defer rt.isolate.exit();
     var h_scope: v8.HandleScope = undefined;
@@ -917,8 +917,8 @@ test "pending loads preserve attributes and accept custom async exceptions" {
 test "strict mode is mandatory by default for scripts, hashbangs and ESM" {
     @import("../test.zig").ensureV8();
     var backend: AttributeBackend = .{};
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const scope = try rt.createScope(backend.options());
     try check(scope, "(function(){return this})() === undefined");
     try check(scope, "#!/usr/bin/env js\n(function(){return this})() === undefined");
@@ -955,8 +955,8 @@ const CacheBackend = struct {
 
 test "cache delete and update invalidate dependents while preserving old namespaces" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     var backend: CacheBackend = .{};
     const a = try rt.createScope(backend.options());
     const b = try rt.createScope(backend.options());
@@ -984,8 +984,8 @@ test "cache delete and update invalidate dependents while preserving old namespa
 
 test "cache replacement and eviction distinguish canonical import attributes" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     var backend: AttributeBackend = .{};
     const scope = try rt.createScope(backend.options());
     try exposeModule(scope, "main", "old");
@@ -1003,8 +1003,8 @@ test "cache replacement and eviction distinguish canonical import attributes" {
 // Local V8 scopes are released before return; no resources escape.
 test "cache updates preserve pending imports and retired synthetic metadata" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     var backend: Deferred = .{};
     const scope = try rt.createScope(backend.options());
     const old = try scope.importModule("module", null);
@@ -1012,14 +1012,14 @@ test "cache updates preserve pending imports and retired synthetic metadata" {
     try scope.updateImportCache(.{ .module_id = "module" }, .{ .source = "export const value = 3" }, null);
     const fresh = try scope.importModule("module", null);
     defer fresh.deinit();
-    try expectState(&rt, fresh, .Fulfilled);
-    try expectState(&rt, old, .Pending);
+    try expectState(rt, fresh, .Fulfilled);
+    try expectState(rt, old, .Pending);
     const seven = try scope.eval("7", "test:synthetic", null);
     defer seven.deinit();
     const exports = [_]m.Export{.{ .name = "value", .value = seven }};
     try rt.completeLoad(backend.tokens[0], .{ .content = .{ .exports = &exports } });
     rt.pump();
-    try expectState(&rt, old, .Fulfilled);
+    try expectState(rt, old, .Fulfilled);
     rt.isolate.enter();
     defer rt.isolate.exit();
     var h_scope: v8.HandleScope = undefined;
@@ -1039,15 +1039,15 @@ test "cache updates preserve pending imports and retired synthetic metadata" {
     try rt.completeLoad(backend.tokens[1], .{ .content = .{ .source = "export const old = true" } });
     try rt.completeLoad(backend.tokens[2], .{ .content = .{ .source = "export const old = false" } });
     rt.pump();
-    try expectState(&rt, deleted, .Fulfilled);
-    try expectState(&rt, reloaded, .Fulfilled);
+    try expectState(rt, deleted, .Fulfilled);
+    try expectState(rt, reloaded, .Fulfilled);
     try t.expectError(error.StaleLoadToken, rt.completeLoad(backend.tokens[0], .{ .failure = error.NotFound }));
 }
 
 test "cache operations support cycles, cached failures and insertion without loading" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     var backend: Memory = .{};
     const scope = try rt.createScope(backend.options());
     try exposeModule(scope, "cycle-a", "old");
@@ -1057,7 +1057,7 @@ test "cache operations support cycles, cached failures and insertion without loa
     try t.expectError(error.JavaScriptException, scope.updateImportCache(.{ .module_id = "inserted" }, .{ .source = "export const =" }, null));
     const failed = try scope.importModule("inserted", null);
     defer failed.deinit();
-    try expectState(&rt, failed, .Rejected);
+    try expectState(rt, failed, .Rejected);
     const loads = backend.loads;
     try scope.updateImportCache(.{ .module_id = "inserted" }, .{ .source = "export const value = 42" }, null);
     try exposeModule(scope, "inserted", "inserted");
@@ -1065,14 +1065,14 @@ test "cache operations support cycles, cached failures and insertion without loa
     try t.expectEqual(loads, backend.loads);
     const missing = try scope.importModule("missing", null);
     defer missing.deinit();
-    try expectState(&rt, missing, .Rejected);
+    try expectState(rt, missing, .Rejected);
     try t.expectEqual(@as(usize, 1), try scope.deleteImportCache(.{ .module_id = "missing" }));
 }
 
 test "cache mutation is rejected during loader callbacks" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const Backend = struct {
         scope: *m.Scope = undefined,
         fn load(data: ?*anyopaque, _: m.LoadRequest) !m.LoadResult {
@@ -1102,7 +1102,7 @@ fn retainedBytes(alloc: *const t.FailingAllocator) usize {
 test "managed allocations: cache hits, deletion misses and resolution errors retain no scratch" {
     @import("../test.zig").ensureV8();
     var accounting = t.FailingAllocator.init(t.allocator, .{});
-    var rt = m.Runtime.init(accounting.allocator());
+    const rt = try m.Runtime.create(accounting.allocator(), .{});
     const Backend = struct {
         loads: usize = 0,
         saved_id: []const u8 = "",
@@ -1128,20 +1128,20 @@ test "managed allocations: cache hits, deletion misses and resolution errors ret
     {
         const first = try scope.importModuleWithAttributes("ok", &attributes, null);
         defer first.deinit();
-        try expectState(&rt, first, .Fulfilled);
+        try expectState(rt, first, .Fulfilled);
     }
     const baseline = retainedBytes(&accounting);
     for (0..100) |_| {
         const cached = try scope.importModuleWithAttributes("ok", &.{ attributes[1], attributes[0] }, null);
         defer cached.deinit();
-        try expectState(&rt, cached, .Fulfilled);
+        try expectState(rt, cached, .Fulfilled);
         try t.expectEqual(@as(usize, 0), try scope.deleteImportCache(.{ .module_id = "absent", .import_attributes = &attributes }));
         const denied = try scope.importModule("missing", null);
         defer denied.deinit();
-        try expectState(&rt, denied, .Rejected);
+        try expectState(rt, denied, .Rejected);
         const invalid = try scope.importModule("app:/bad%zz", null);
         defer invalid.deinit();
-        try expectState(&rt, invalid, .Rejected);
+        try expectState(rt, invalid, .Rejected);
         try t.expectEqual(baseline, retainedBytes(&accounting));
     }
     @memset(&key, 'x');
@@ -1150,7 +1150,7 @@ test "managed allocations: cache hits, deletion misses and resolution errors ret
     try t.expectEqualStrings("type", backend.saved_attributes[1].key);
     try t.expectEqualStrings("json", backend.saved_attributes[1].value);
     try t.expectEqual(@as(usize, 1), backend.loads);
-    rt.deinit();
+    rt.destroy();
     try t.expectEqual(@as(usize, 0), retainedBytes(&accounting));
 }
 
@@ -1206,11 +1206,11 @@ test "managed allocations: map creation and resolution clean up at every allocat
     try t.checkAllAllocationFailures(t.allocator, mapAllocationFailures, .{});
 }
 
-/// Borrows alloc through Runtime.deinit and releases all runtime/map allocations
+/// Borrows alloc through Runtime.destroy and releases all runtime/map allocations
 /// before return or error. Retains no resources.
 fn scopeAllocationFailures(alloc: std.mem.Allocator) !void {
-    var rt = m.Runtime.init(alloc);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(alloc, .{});
+    defer rt.destroy();
     var import_map_6 = try m.ImportMap.parseJson(t.allocator, "{\"imports\":{\"ok\":\"./ok.js\"}}", .{ .base_url = "app:/map.json", .urls = m.virtual_urls });
     defer import_map_6.deinit();
     _ = try rt.createScope(.{
@@ -1225,8 +1225,8 @@ test "managed allocations: scope creation cleans up at every allocation failure"
 
 test "managed allocations: nested dynamic imports keep operation scratch independent" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const Backend = struct {
         fn load(_: ?*anyopaque, request: m.LoadRequest) !m.LoadResult {
             if (std.mem.eql(u8, request.module_id, "outer")) return .{ .source = "export const value = (await import('middle')).value + 1" };
@@ -1247,8 +1247,8 @@ test "managed allocations: replacement OOM preserves old cache and pending impor
     while (offset < 64) : (offset += 1) {
         var accounting = t.FailingAllocator.init(t.allocator, .{ .resize_fail_index = 0 });
         {
-            var rt = m.Runtime.init(accounting.allocator());
-            defer rt.deinit();
+            const rt = try m.Runtime.create(accounting.allocator(), .{});
+            defer rt.destroy();
             var backend: Deferred = .{};
             const scope = try rt.createScope(backend.options());
             const pending = try scope.importModule("module", null);
@@ -1271,7 +1271,7 @@ test "managed allocations: replacement OOM preserves old cache and pending impor
             }
             const imported = try scope.importModuleWithAttributes("stable", &attributes, null);
             defer imported.deinit();
-            try expectState(&rt, imported, .Fulfilled);
+            try expectState(rt, imported, .Fulfilled);
             rt.isolate.enter();
             {
                 defer rt.isolate.exit();
@@ -1284,10 +1284,10 @@ test "managed allocations: replacement OOM preserves old cache and pending impor
                 const actual = imported.deref().result().toObject(ctx).?.get(ctx, v8.String.initUtf8(rt.isolate, "value").name.primitive.value).?.i32Value(ctx).?;
                 try t.expectEqual(@as(i32, if (accounting.has_induced_failure) 1 else 99), actual);
             }
-            try expectState(&rt, pending, .Pending);
+            try expectState(rt, pending, .Pending);
             try rt.completeLoad(backend.tokens[0], .{ .content = .{ .source = "export const value = 7" } });
             rt.pump();
-            try expectState(&rt, pending, .Fulfilled);
+            try expectState(rt, pending, .Fulfilled);
         }
         try t.expectEqual(@as(usize, 0), retainedBytes(&accounting));
         if (!accounting.has_induced_failure) break;
@@ -1308,20 +1308,20 @@ test "managed allocations: import OOM releases lookup and entry storage at teard
     while (offset < 64) : (offset += 1) {
         var accounting = t.FailingAllocator.init(t.allocator, .{ .resize_fail_index = 0 });
         {
-            var rt = m.Runtime.init(accounting.allocator());
-            defer rt.deinit();
+            const rt = try m.Runtime.create(accounting.allocator(), .{});
+            defer rt.destroy();
             const scope = try rt.createScope(.{ .resolver = .{ .resolve = Memory.resolve }, .loader = .{ .load = Backend.load } });
             accounting.fail_index = accounting.alloc_index + offset;
             const outcome = scope.importModuleWithAttributes("new-entry", &.{.{ .key = "type", .value = "custom" }}, null);
             accounting.fail_index = std.math.maxInt(usize);
             if (outcome) |promise| {
                 defer promise.deinit();
-                try expectState(&rt, promise, if (accounting.has_induced_failure) .Rejected else .Fulfilled);
+                try expectState(rt, promise, if (accounting.has_induced_failure) .Rejected else .Fulfilled);
             } else |err| try t.expectEqual(error.OutOfMemory, err);
             if (accounting.has_induced_failure) failures += 1;
             const recovered = try scope.importModule("recovery", null);
             defer recovered.deinit();
-            try expectState(&rt, recovered, .Fulfilled);
+            try expectState(rt, recovered, .Fulfilled);
         }
         try t.expectEqual(@as(usize, 0), retainedBytes(&accounting));
         if (!accounting.has_induced_failure) break;
@@ -1332,8 +1332,8 @@ test "managed allocations: import OOM releases lookup and entry storage at teard
 
 test "ownership contract: public slice inputs may be released immediately after return" {
     @import("../test.zig").ensureV8();
-    var rt = m.Runtime.init(t.allocator);
-    defer rt.deinit();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
     const json = try t.allocator.dupe(u8, "{\"imports\":{\"item\":\"./item.js\"}}");
     const base = try t.allocator.dupe(u8, "app:/map.json");
     var import_map_7 = try m.ImportMap.parseJson(t.allocator, json, .{ .base_url = base, .urls = m.virtual_urls });
@@ -1368,4 +1368,24 @@ test "ownership contract: public slice inputs may be released immediately after 
     t.allocator.free(replacement_source);
     try exposeModule(scope, "item", "replacement");
     try check(scope, "replacement.value === 99 && owned.value.answer === 42");
+}
+
+// Local V8 handles are confined to the Session; the persistent result is released before destroy.
+test "scope session: enters context and captures exceptions through the guard" {
+    @import("../test.zig").ensureV8();
+    const rt = try m.Runtime.create(t.allocator, .{});
+    defer rt.destroy();
+    const scope = try rt.createScope(.{});
+    const value = try scope.eval("globalThis.marker = 7", "test:session", null);
+    defer value.deinit();
+    var session: m.Scope.Session = undefined;
+    session.init(scope);
+    defer session.deinit();
+    try t.expect(session.isolate().getCurrentContext().eq(scope.context.deref()));
+    try t.expectEqual(@as(i32, 7), value.deref().i32Value(session.ctx).?);
+    _ = v8.Script.compile(session.ctx, v8.String.initUtf8(session.isolate(), "throw 1"), null).?.run(session.ctx);
+    var info: m.ErrorInfo = .{};
+    defer info.deinit();
+    session.retainException(&info);
+    try t.expect(info.exception != null);
 }

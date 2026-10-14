@@ -23,14 +23,14 @@ overriding libc allocation functions. `mimalloc.zig` exposes a thread-safe
 
 ```zig
 const mimalloc = @import("mimalloc.zig");
-var rt = try m.Runtime.initWithOptions(metadata_alloc, .{
+const rt = try m.Runtime.create(metadata_alloc, .{
     .array_buffer_allocator = .{ .zig = mimalloc.allocator },
 });
-defer rt.deinit();
+defer rt.destroy();
 ```
 
 Any thread-safe Zig allocator works with `v8.ArrayBuffer.Allocator.fromZig`.
-The existing `Runtime.init` retains V8's default backing-store allocator.
+The default options retain V8's default backing-store allocator.
 See [allocator ownership and limits](docs/native-scopes.md#allocators) for borrowed
 allocators, retained backing stores, and sandbox requirements.
 

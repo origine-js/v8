@@ -44,3 +44,7 @@ Prefer these names for local variables and parameters of the corresponding types
 | `v8.HandleScope` | `h_scope` |
 | `std.mem.Allocator` | `alloc` |
 | `v8.ArrayBuffer.Allocator` | `aba` |
+
+# Modding V8
+
+Write your changes to a git patch (reproducible by re-applying patch on top of the upstream v8).

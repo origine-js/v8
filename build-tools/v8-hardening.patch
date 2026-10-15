@@ -1,30 +1,34 @@
-diff --git a/src/objects/contexts.h b/src/objects/contexts.h
---- a/src/objects/contexts.h
-+++ b/src/objects/contexts.h
-@@ -258,6 +258,7 @@
-     temporal_time_zone_function)                                               \
-   V(JS_TEMPORAL_ZONED_DATE_TIME_FUNCTION_INDEX, JSFunction,                    \
-     temporal_zoned_date_time_function)                                         \
-+  V(ZIG_INTRINSIC_OBJECTS_INDEX, FixedArray, zig_intrinsic_objects)            \
-   V(JSON_OBJECT, JSObject, json_object)                                        \
-   V(PROMISE_WITHRESOLVERS_RESULT_MAP_INDEX, Map,                               \
-     promise_withresolvers_result_map)                                          \
+diff --git a/src/flags/flag-definitions.h b/src/flags/flag-definitions.h
+index cb05b58a148..0cec540d041 100644
+--- a/src/flags/flag-definitions.h
++++ b/src/flags/flag-definitions.h
+@@ -312,6 +312,9 @@ DEFINE_BOOL(use_strict, false, "enforce strict mode")
+ 
+ DEFINE_DEVELOPER_FLAG(trace_temporal, "trace temporal code")
+ 
++// zig-v8: disabled only while building the extensible engine seed snapshot.
++DEFINE_BOOL(zig_harden_intrinsics, true, "freeze intrinsic graph and builtin globals")
++
+ DEFINE_BOOL(harmony, false, "enable all completed harmony features")
+ DEFINE_BOOL(harmony_shipping, true, "enable all shipped harmony features")
+ 
 diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
+index a21b8a2eceb..01b3bdf14a3 100644
 --- a/src/init/bootstrapper.cc
 +++ b/src/init/bootstrapper.cc
-@@ -3,6 +3,11 @@
- // found in the LICENSE file.
+@@ -4,6 +4,11 @@
  
  #include "src/init/bootstrapper.h"
-+
+ 
 +#include <vector>
 +#include <string_view>
 +#include "src/objects/js-objects-inl.h"
 +#include "src/objects/lookup-inl.h"
- 
++
  #include "include/v8-function.h"
  #include "src/api/api-inl.h"
-@@ -351,6 +356,134 @@
+ #include "src/api/api-natives.h"
+@@ -351,6 +356,134 @@ void Bootstrapper::Iterate(RootVisitor* v) {
    v->Synchronize(VisitorSynchronization::kExtensions);
  }
  
@@ -159,7 +163,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  DirectHandle<NativeContext> Bootstrapper::CreateEnvironment(
      MaybeDirectHandle<JSGlobalProxy> maybe_global_proxy,
      v8::Local<v8::ObjectTemplate> global_proxy_template,
-@@ -367,6 +500,9 @@
+@@ -367,6 +500,9 @@ DirectHandle<NativeContext> Bootstrapper::CreateEnvironment(
      if (env.is_null() || !InstallExtensions(env, extensions)) {
        return {};
      }
@@ -169,22 +173,22 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
    }
    LogAllMaps();
    isolate_->heap()->NotifyBootstrapComplete();
-@@ -690,14 +826,6 @@
-   JSObject::DefineOwnAccessorIgnoreAttributes(base, name, getter, setter,
-                                               DONT_ENUM)
+@@ -689,14 +825,6 @@ V8_NOINLINE void SimpleInstallGetterSetter(Isolate* isolate,
        .Check();
--}
--
+ }
+ 
 -void SimpleInstallGetterSetter(Isolate* isolate, DirectHandle<JSObject> base,
 -                               const char* name, Builtin call_getter,
 -                               Builtin call_setter) {
 -  SimpleInstallGetterSetter(isolate, base,
 -                            isolate->factory()->InternalizeUtf8String(name),
 -                            call_getter, call_setter);
- }
- 
+-}
+-
  V8_NOINLINE Handle<JSFunction> SimpleInstallGetter(
-@@ -1351,6 +1479,8 @@
+     Isolate* isolate, DirectHandle<JSObject> base, DirectHandle<Name> name,
+     DirectHandle<Name> property_name, Builtin call, AdaptArguments adapt) {
+@@ -1349,6 +1477,8 @@ void Genesis::AddRestrictedFunctionProperties(DirectHandle<JSFunction> empty) {
                     accessors);
  }
  
@@ -193,7 +197,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::CreateRoots() {
    // Allocate the native context FixedArray first and then patch the
    // closure and extension object later (we need the empty function
-@@ -1363,6 +1493,8 @@
+@@ -1361,6 +1491,8 @@ void Genesis::CreateRoots() {
  
    isolate()->heap()->AddToWeakNativeContextList(*native_context());
    isolate()->set_context(*native_context());
@@ -202,7 +206,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  }
  
  void Genesis::InstallGlobalThisBinding() {
-@@ -2103,29 +2235,14 @@
+@@ -2101,23 +2233,6 @@ Handle<JSObject> InitializeTemporal(Isolate* isolate) {
    return temporal;
  }
  
@@ -226,6 +230,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  }  // namespace
  
  #endif  // V8_TEMPORAL_SUPPORT
+@@ -2151,6 +2266,8 @@ void Bootstrapper::InitializeLazyPartOfContext(
  
  // This is only called if we are not using snapshots.  The equivalent
  // work in the snapshot case is done in HookUpGlobalObject.
@@ -234,7 +239,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
                                 DirectHandle<JSFunction> empty_function) {
    // --- N a t i v e   C o n t e x t ---
-@@ -3298,57 +3415,7 @@
+@@ -3321,57 +3438,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
  
        InstallSpeciesGetter(isolate_, regexp_fun);
  
@@ -293,7 +298,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
      }
      SetConstructorInstanceType(isolate_, regexp_fun,
                                 JS_REG_EXP_CONSTRUCTOR_TYPE);
-@@ -6047,34 +6114,23 @@
+@@ -6116,34 +6183,23 @@ void Genesis::InitializeGlobal_js_intl_locale_variants() {
  }
  #endif  // V8_INTL_SUPPORT
  
@@ -341,7 +346,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  #endif  // V8_TEMPORAL_SUPPORT
  }
  
-@@ -6641,16 +6697,29 @@
+@@ -6701,16 +6757,29 @@ void Genesis::InitializeMapCaches() {
    }
  }
  
@@ -373,7 +378,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  bool Genesis::InstallSpecialObjects(
      Isolate* isolate, DirectHandle<NativeContext> native_context) {
    HandleScope scope(isolate);
-@@ -6665,7 +6734,9 @@
+@@ -6725,7 +6794,9 @@ bool Genesis::InstallSpecialObjects(
    }
  
  #if V8_ENABLE_WEBASSEMBLY
@@ -384,7 +389,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  #endif  // V8_ENABLE_WEBASSEMBLY
  
  #ifdef V8_ENABLE_MEMORY_CORRUPTION_API
-@@ -7061,6 +7132,11 @@
+@@ -7116,6 +7187,11 @@ DirectHandle<Map> Genesis::CreateInitialMapForArraySubclass(
    return initial_map;
  }
  
@@ -396,7 +401,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  Genesis::Genesis(Isolate* isolate,
                   MaybeDirectHandle<JSGlobalProxy> maybe_global_proxy,
                   v8::Local<v8::ObjectTemplate> global_proxy_template,
-@@ -7176,10 +7252,11 @@
+@@ -7231,10 +7307,11 @@ Genesis::Genesis(Isolate* isolate,
        isolate, microtask_queue ? static_cast<MicrotaskQueue*>(microtask_queue)
                                 : isolate->default_microtask_queue());
  
@@ -412,23 +417,23 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
      InitializeExperimentalGlobal();
  
      // Store String.prototype's map again in case it has been changed by
-diff --git a/src/flags/flag-definitions.h b/src/flags/flag-definitions.h
---- a/src/flags/flag-definitions.h
-+++ b/src/flags/flag-definitions.h
-@@ -280,6 +280,9 @@
- DEFINE_BOOL(use_strict, false, "enforce strict mode")
- 
- DEFINE_BOOL(trace_temporal, false, "trace temporal code")
-+
-+// zig-v8: disabled only while building the extensible engine seed snapshot.
-+DEFINE_BOOL(zig_harden_intrinsics, true, "freeze intrinsic graph and builtin globals")
- 
- DEFINE_BOOL(harmony, false, "enable all completed harmony features")
- DEFINE_BOOL(harmony_shipping, true, "enable all shipped harmony features")
+diff --git a/src/objects/contexts.h b/src/objects/contexts.h
+index cc55ce17953..4e4dc568f81 100644
+--- a/src/objects/contexts.h
++++ b/src/objects/contexts.h
+@@ -268,6 +268,7 @@ enum ContextLookupFlags {
+   V(JS_WEAK_REF_FUNCTION_INDEX, JSFunction, js_weak_ref_fun)                   \
+   V(JS_FINALIZATION_REGISTRY_FUNCTION_INDEX, JSFunction,                       \
+     js_finalization_registry_fun)                                              \
++  V(ZIG_INTRINSIC_OBJECTS_INDEX, FixedArray, zig_intrinsic_objects)            \
+   V(JSON_OBJECT, JSObject, json_object)                                        \
+   V(PROMISE_WITHRESOLVERS_RESULT_MAP_INDEX, Map,                               \
+     promise_withresolvers_result_map)                                          \
 diff --git a/src/snapshot/mksnapshot.cc b/src/snapshot/mksnapshot.cc
+index fa87f4d98e3..37261fb86d1 100644
 --- a/src/snapshot/mksnapshot.cc
 +++ b/src/snapshot/mksnapshot.cc
-@@ -222,6 +222,8 @@
+@@ -222,6 +222,8 @@ void MaybeSetCounterFunction(v8::Isolate* isolate) {
  
  }  // namespace
  
@@ -437,9 +442,9 @@ diff --git a/src/snapshot/mksnapshot.cc b/src/snapshot/mksnapshot.cc
  int main(int argc, char** argv) {
    v8::base::EnsureConsoleOutput();
  
-@@ -251,6 +253,9 @@
-   i::CpuFeatures::Probe(true);
-   v8::V8::InitializeICUDefaultLocation(argv[0]);
+@@ -254,6 +256,9 @@ int main(int argc, char** argv) {
+     return 1;
+   }
    std::unique_ptr<v8::Platform> platform = v8::platform::NewDefaultPlatform();
 +  // The seed must accept runtime feature installation. Application contexts,
 +  // including SnapshotCreator contexts, finalize before returning to the host.

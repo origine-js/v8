@@ -52,8 +52,10 @@ Compiling v8 will take 20+ minutes.
 zig build
 ```
 
-If V8 fails to compile against your newest macOS SDK (e.g. ICU: `use of undeclared identifier 'NAN'`), point it at an older one with
-`-Dmac_sdk_path=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`.
+V8 15.2 requires GN to place the macOS SDK inside the build directory, so GN selects the SDK itself
+(the active Xcode / Command Line Tools) and links it there. Do not pass an absolute `-Dmac_sdk_path`
+pointing outside the build directory: GN rejects it (`File is not inside output directory`). To build
+against a different SDK, switch it with `xcode-select` or `DEVELOPER_DIR`.
 
 Once complete, you can find v8 in: `zig-out/libv8_zig.a`
 

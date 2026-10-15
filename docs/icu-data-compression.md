@@ -1,6 +1,6 @@
 # ICU data compression feasibility
 
-Research date: 2026-10-14. Inspected the pinned V8 14.7.173.20 tree, which contains ICU 77.1.
+Research date: 2026-10-14. Inspected the pinned V8 15.2.124.1 tree, which contains ICU 78.2.
 
 ## Implemented size-focused path
 

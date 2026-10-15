@@ -23,6 +23,11 @@ pub const Script = extern struct {
         return @This().from_opaque(e.v8__Script__Compile(context, source, ptr));
     }
 
+    /// Borrows `self` for this call; returns V8's script id. Retains nothing.
+    pub fn scriptId(self: Self) c_int {
+        return e.v8__Script__ScriptId(self);
+    }
+
     pub fn run(self: Self, context: Context) ?Value {
         return Value.from_opaque(e.v8__Script__Run(self, context));
     }

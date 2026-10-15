@@ -56,6 +56,12 @@ pub const String = extern struct {
         return e.v8__String__Length(self);
     }
 
+    /// Requires the entered isolate with a live HandleScope. Borrows both strings for this call;
+    /// returns a new local handle, or null if the result would exceed the maximum string length.
+    pub fn concat(isolate: Isolate, left: Self, right: Self) ?Self {
+        return from_opaque(e.v8__String__Concat(isolate.handle, left, right));
+    }
+
     pub fn lenUtf8(self: Self, isolate: Isolate) usize {
         return e.v8__String__Utf8Length(self, isolate.handle);
     }

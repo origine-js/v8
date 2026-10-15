@@ -9,6 +9,11 @@ pub const Module = extern struct {
         return .{ .data = v8.Data.from_opaque(o) orelse return null };
     }
 
+    /// Borrows `self` for this call; true if the module uses top-level await. Retains nothing.
+    pub fn hasTopLevelAwait(self: v8.Module) bool {
+        return e.v8__Module__HasTopLevelAwait(self);
+    }
+
     pub fn getStatus(self: v8.Module) u32 {
         return e.v8__Module__GetStatus(self);
     }

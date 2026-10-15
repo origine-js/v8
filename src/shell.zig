@@ -139,11 +139,11 @@ pub fn main() !void {
         .loader = .{ .load = load },
     });
     startup.mark("scope_b");
-    // const counter = try a.eval("new (class Counter { #value = 0; inc(){return ++this.#value} get value(){return this.#value} })()", "app:/counter.js", null);
-    // defer counter.deinit();
-    // try a.installCapability("counter", counter, null);
-    // try b.installCapability("counter", counter, null);
-    // startup.mark("counter_capabilities");
+    const counter = try a.eval("new (class Counter { #value = 0; inc(){return ++this.#value} get value(){return this.#value} })()", "app:/counter.js", null);
+    defer counter.deinit();
+    try a.installCapability("counter", counter, null);
+    try b.installCapability("counter", counter, null);
+    startup.mark("counter_capabilities");
     for ([_]*m.Scope{ a, b }) |scope| {
         const setup = try scope.eval("globalThis.moduleValue = ''; import('demo').then(m => { moduleValue = m.value }); 'ready'", "app:/setup.js", null);
         setup.deinit();
@@ -152,41 +152,39 @@ pub fn main() !void {
     startup.mark("module_imports_pump");
     startup.report();
     @import("startup_trace.zig").report();
-    // print(
-    //     \\Native V8 scopes: :a / :b switches scope; exit() or Ctrl+D exits.
-    //     \\Try moduleValue, counter.inc(), counter.value, or Object.prototype.x = 1.
-    //     \\
-    // , .{});
-    _ = try a.eval("1", "main", null);
-    rt.pumpPlatform(platform);
-    // var current = a;
-    // var input_buffer: [8192]u8 = undefined;
-    // var reader = std.Io.File.stdin().reader(io_runtime.io(), &input_buffer);
-    // while (true) {
-    //     print("{s}> ", .{if (current == a) "A" else "B"});
-    //     const line = (reader.interface.takeDelimiter('\n') catch |err| {
-    //         print("Input error: {s}\n", .{@errorName(err)});
-    //         return;
-    //     }) orelse break;
-    //     const input = std.mem.trim(u8, line, " \r\t");
-    //     if (std.mem.eql(u8, input, "exit()")) break;
-    //     if (std.mem.eql(u8, input, ":a")) {
-    //         current = a;
-    //         continue;
-    //     }
-    //     if (std.mem.eql(u8, input, ":b")) {
-    //         current = b;
-    //         continue;
-    //     }
-    //     var error_info: m.ErrorInfo = .{};
-    //     defer error_info.deinit();
-    //     const result = current.eval(input, "app:/shell.js", &error_info) catch |err| {
-    //         print("Evaluation failed: {s}\n", .{@errorName(err)});
-    //         if (error_info.exception) |value| show(current, value);
-    //         continue;
-    //     };
-    //     defer result.deinit();
-    //     show(current, result);
-    //     rt.pumpPlatform(platform);
-    // }
+    print(
+        \\Native V8 scopes: :a / :b switches scope; exit() or Ctrl+D exits.
+        \\Try moduleValue, counter.inc(), counter.value, or Object.prototype.x = 1.
+        \\
+    , .{});
+    var current = a;
+    var input_buffer: [8192]u8 = undefined;
+    var reader = std.Io.File.stdin().reader(io_runtime.io(), &input_buffer);
+    while (true) {
+        print("{s}> ", .{if (current == a) "A" else "B"});
+        const line = (reader.interface.takeDelimiter('\n') catch |err| {
+            print("Input error: {s}\n", .{@errorName(err)});
+            return;
+        }) orelse break;
+        const input = std.mem.trim(u8, line, " \r\t");
+        if (std.mem.eql(u8, input, "exit()")) break;
+        if (std.mem.eql(u8, input, ":a")) {
+            current = a;
+            continue;
+        }
+        if (std.mem.eql(u8, input, ":b")) {
+            current = b;
+            continue;
+        }
+        var error_info: m.ErrorInfo = .{};
+        defer error_info.deinit();
+        const result = current.eval(input, "app:/shell.js", &error_info) catch |err| {
+            print("Evaluation failed: {s}\n", .{@errorName(err)});
+            if (error_info.exception) |value| show(current, value);
+            continue;
+        };
+        defer result.deinit();
+        show(current, result);
+        rt.pumpPlatform(platform);
+    }
 }

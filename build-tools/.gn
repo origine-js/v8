@@ -102,8 +102,9 @@ default_args = {
 
   icu_use_data_file = false
 
-  # requires rust toolchain
-  v8_enable_temporal_support = false
+  # Temporal (v8_enable_temporal_support, on by default) builds temporal_capi with the
+  # Rust toolchain that gclient fetches into third_party/rust-toolchain.
+  enable_rust = true
 
   # build fails on some linux systems without this
   use_llvm_libatomic = false

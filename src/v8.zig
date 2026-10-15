@@ -43,6 +43,7 @@ pub const Intrinsics = @import("v8/Intrinsics.zig").Intrinsics;
 pub const FunctionTemplate = @import("v8/FunctionTemplate.zig").FunctionTemplate;
 pub const ObjectTemplate = @import("v8/ObjectTemplate.zig").ObjectTemplate;
 pub const MicrotaskQueue = @import("v8/MicrotaskQueue.zig").MicrotaskQueue;
+pub const MicrotaskQueueHandle = @import("v8/MicrotaskQueue.zig").MicrotaskQueueHandle;
 pub const Context = @import("v8/Context.zig").Context;
 pub const Address = @import("v8/handle.zig").Address;
 pub const Handle = @import("v8/handle.zig").Handle;

@@ -3,7 +3,7 @@ const v8 = @import("../v8.zig");
 const modules = @import("modules.zig");
 const import_map = @import("import_map.zig");
 const startup_trace = @import("../startup_trace.zig");
-pub const supported_v8_version = "14.7.173.20";
+pub const supported_v8_version = "15.2.124.1";
 
 /// Caller-owned error details. Initialize with .{}; do not copy populated instances.
 /// Passing &info borrows it through the call and releases any previous details first.

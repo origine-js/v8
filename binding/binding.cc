@@ -1298,6 +1298,16 @@ const v8::String* v8__String__NewFromTwoByte(v8::Isolate* isolate,
 }
 
 int v8__String__Length(const v8::String& self) { return self.Length(); }
+// Requires the isolate entered on this thread with a live HandleScope. Borrows
+// `left` and `right` for this call; the result is a new local handle in the
+// current scope, or null if the combined length exceeds String::kMaxLength.
+const v8::String* v8__String__Concat(v8::Isolate* isolate,
+                                     const v8::String& left,
+                                     const v8::String& right) {
+  return local_to_ptr(v8::String::Concat(isolate, ref_to_local(left),
+                                         ref_to_local(right)));
+}
+
 
 size_t v8__String__Utf8Length(const v8::String& self, v8::Isolate* isolate) {
   return self.Utf8LengthV2(isolate);
@@ -1565,11 +1575,11 @@ void v8__ObjectTemplate__SetNativeDataProperty(
 
 void v8__ObjectTemplate__SetNamedPropertyHandler(
     const v8::ObjectTemplate& self, v8::NamedPropertyGetterCallback getter,
-    v8::NamedPropertySetterCallback setter,
+    v8::NamedPropertySetterCallbackV2 setter,
     v8::NamedPropertyQueryCallback query,
     v8::NamedPropertyDeleterCallback deleter,
     v8::NamedPropertyEnumeratorCallback enumerator,
-    v8::NamedPropertyDefinerCallback definer,
+    v8::NamedPropertyDefinerCallbackV2 definer,
     v8::NamedPropertyDescriptorCallback descriptor,
     const v8::Value* data_or_null, v8::PropertyHandlerFlags flags) {
   ref_to_local(self)->SetHandler(v8::NamedPropertyHandlerConfiguration(
@@ -1579,11 +1589,11 @@ void v8__ObjectTemplate__SetNamedPropertyHandler(
 
 void v8__ObjectTemplate__SetIndexedPropertyHandler(
     const v8::ObjectTemplate& self, v8::IndexedPropertyGetterCallbackV2 getter,
-    v8::IndexedPropertySetterCallbackV2 setter,
+    v8::IndexedPropertySetterCallback setter,
     v8::IndexedPropertyQueryCallbackV2 query,
     v8::IndexedPropertyDeleterCallbackV2 deleter,
     v8::IndexedPropertyEnumeratorCallback enumerator,
-    v8::IndexedPropertyDefinerCallbackV2 definer,
+    v8::IndexedPropertyDefinerCallback definer,
     v8::IndexedPropertyDescriptorCallbackV2 descriptor,
     const v8::Value* data_or_null, v8::PropertyHandlerFlags flags) {
   ref_to_local(self)->SetHandler(v8::IndexedPropertyHandlerConfiguration(
@@ -1650,6 +1660,16 @@ void v8__Object__SetAlignedPointerInInternalField(const v8::Object& self,
                                                   int index, void* value) {
   ref_to_local(self)->SetAlignedPointerInInternalField(
       index, value, v8::kEmbedderDataTypeTagDefault);
+}
+
+// Borrows `self` for this call; accepts and returns values, retains nothing.
+bool v8__Object__IsCallable(const v8::Object& self) {
+  return ref_to_local(self)->IsCallable();
+}
+
+// Borrows `self` for this call; accepts and returns values, retains nothing.
+bool v8__Object__IsConstructor(const v8::Object& self) {
+  return ref_to_local(self)->IsConstructor();
 }
 
 bool v8__Object__IsApiWrapper(const v8::Object& self) {
@@ -2326,13 +2346,43 @@ const v8::Value* v8__Context__GetContinuationPreservedEmbedderData(
   return local_to_ptr(value);
 }
 
-v8::MicrotaskQueue* v8__MicrotaskQueue__New(v8::Isolate* isolate,
-                                            v8::MicrotasksPolicy policy) {
-  return v8::MicrotaskQueue::New(isolate, policy).release();
+// Roots a MicrotaskQueue created for an isolate. With the default
+// v8_cppgc_microtask_queue setting the queue is cppgc-managed and this handle
+// only holds a persistent root (associated contexts keep it alive afterwards);
+// otherwise the handle owns the queue.
+class MicrotaskQueueHandle {
+ public:
+  MicrotaskQueueHandle(v8::Isolate* isolate, v8::MicrotasksPolicy policy)
+      : queue_(v8::MicrotaskQueue::New(isolate, policy)) {}
+
+  v8::MicrotaskQueue* Get() const {
+#ifdef V8_CPPGC_MICROTASK_QUEUE
+    return queue_.Get();
+#else
+    return queue_.get();
+#endif
+  }
+
+ private:
+#ifdef V8_CPPGC_MICROTASK_QUEUE
+  cppgc::Persistent<v8::MicrotaskQueue> queue_;
+#else
+  std::unique_ptr<v8::MicrotaskQueue> queue_;
+#endif
+};
+
+MicrotaskQueueHandle* v8__MicrotaskQueueHandle__New(
+    v8::Isolate* isolate, v8::MicrotasksPolicy policy) {
+  return new MicrotaskQueueHandle(isolate, policy);
 }
 
-void v8__MicrotaskQueue__DESTRUCT(v8::MicrotaskQueue* self) {
+void v8__MicrotaskQueueHandle__DELETE(MicrotaskQueueHandle* self) {
   delete self;
+}
+
+v8::MicrotaskQueue* v8__MicrotaskQueueHandle__Get(
+    const MicrotaskQueueHandle* self) {
+  return self->Get();
 }
 
 void v8__MicrotaskQueue__PerformCheckpoint(v8::Isolate* isolate,
@@ -2855,6 +2905,11 @@ const v8::UnboundScript* v8__Script__GetUnboundScript(
   return local_to_ptr(ref_to_local(script)->GetUnboundScript());
 }
 
+// Borrows `unbound_script` for this call; returns the V8 script id, retains nothing.
+int v8__UnboundScript__ScriptId(const v8::UnboundScript& unbound_script) {
+  return ref_to_local(unbound_script)->ScriptId();
+}
+
 const v8::Script* v8__UnboundScript__BindToCurrentContext(
     const v8::UnboundScript& unbound_script) {
   return local_to_ptr(ref_to_local(unbound_script)->BindToCurrentContext());
@@ -2895,6 +2950,11 @@ v8::Value* v8__UnboundModuleScript__GetSourceURL(
 v8::ScriptCompiler::CachedData* v8__Function__CreateCodeCache(
     const v8::Function& self) {
   return v8::ScriptCompiler::CreateCodeCacheForFunction(ref_to_local(self));
+}
+
+// Borrows `script` for this call; returns the V8 script id, retains nothing.
+int v8__Script__ScriptId(const v8::Script& script) {
+  return ref_to_local(script)->ScriptId();
 }
 
 const v8::Value* v8__Script__Run(const v8::Script& script,
@@ -3010,6 +3070,12 @@ MaybeBool v8__Promise__Resolver__Reject(const v8::Promise::Resolver& self,
 
 v8::Promise::PromiseState v8__Promise__State(const v8::Promise& self) {
   return ref_to_local(self)->State();
+}
+
+// Borrows `self` for this call; marks the promise so a rejection does not
+// report as unhandled. Retains nothing.
+void v8__Promise__MarkAsHandled(const v8::Promise& self) {
+  ref_to_local(self)->MarkAsHandled();
 }
 
 bool v8__Promise__HasHandler(const v8::Promise& self) {
@@ -3509,6 +3575,11 @@ int v8__Location__GetLineNumber(v8::Location* self) {
 
 int v8__Location__GetColumnNumber(v8::Location* self) {
   return self->GetColumnNumber();
+}
+
+// Borrows `self` for this call; accepts and returns values, retains nothing.
+bool v8__Module__HasTopLevelAwait(const v8::Module& self) {
+  return self.HasTopLevelAwait();
 }
 
 v8::Module::Status v8__Module__GetStatus(const v8::Module& self) {
@@ -4042,8 +4113,8 @@ void v8__CompiledWasmModule__DELETE(v8::CompiledWasmModule* self) {
 extern "C" {
 
 size_t icu_get_default_locale(char* output, size_t output_len) {
-  const icu_77::Locale& default_locale = icu::Locale::getDefault();
-  icu_77::CheckedArrayByteSink sink(output, static_cast<uint32_t>(output_len));
+  const icu::Locale& default_locale = icu::Locale::getDefault();
+  icu::CheckedArrayByteSink sink(output, static_cast<uint32_t>(output_len));
   UErrorCode status = U_ZERO_ERROR;
   default_locale.toLanguageTag(sink, status);
   assert(status == U_ZERO_ERROR);

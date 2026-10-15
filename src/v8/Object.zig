@@ -66,6 +66,16 @@ pub const Object = extern struct {
         e.v8__Object__SetAlignedPointerInInternalField(self, index, value);
     }
 
+    /// Borrows `self` for this call; true if the object can be called as a function. Retains nothing.
+    pub fn isCallable(self: Object) bool {
+        return e.v8__Object__IsCallable(self);
+    }
+
+    /// Borrows `self` for this call; true if the object can be used with `new`. Retains nothing.
+    pub fn isConstructor(self: Object) bool {
+        return e.v8__Object__IsConstructor(self);
+    }
+
     pub fn isApiWrapper(self: Object) bool {
         return e.v8__Object__IsApiWrapper(self);
     }

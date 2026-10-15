@@ -9,7 +9,7 @@ const zstd_build = @import("zstd.build.zig");
 
 const LazyPath = std.Build.LazyPath;
 
-pub const version = "14.7.173.20";
+pub const version = "15.2.124.1";
 
 pub const V8 = struct {
     /// `libv8_zig.a`, a complete static library containing V8 and the shim.
@@ -46,6 +46,18 @@ const GnArgs = struct {
     v8_enable_direct_handle: bool,
     /// macOS SDK to compile against; GN picks the newest installed one when null.
     mac_sdk_path: ?[]const u8,
+    /// Drop C++ unwind tables. V8 is built without exceptions, so they only
+    /// serve backtraces. Spelled out only when enabled, like the other opt-ins.
+    exclude_unwind_tables: bool,
+    /// Compile with size-favouring inlining and optimisation levels.
+    optimize_for_size: bool,
+    /// Build the per-call runtime statistics counters (slower, larger).
+    runtime_call_stats: bool,
+    /// Compile V8 as ThinLTO bitcode. On by default off Darwin; on Darwin it is opt-in
+    /// because Zig's Mach-O linker cannot consume bitcode (link with ld64.lld, see the justfile).
+    thin_lto: bool,
+    /// Build the Temporal API (pulls in the Rust temporal_capi and time zone data).
+    temporal: bool,
 
     /// Borrows self and target for this call; returns build-allocator-owned GN text
     /// valid until build teardown. Allocation failure panics; retains no inputs.
@@ -64,8 +76,7 @@ const GnArgs = struct {
         lines.append(a, b.fmt("is_debug={}", .{self.is_debug})) catch @panic("OOM");
         if (!self.is_debug) {
             lines.append(a, "is_clang=true") catch @panic("OOM");
-            // Darwin consumers use Zig's Mach-O linker, which cannot consume LTO objects.
-            lines.append(a, b.fmt("use_thin_lto={}", .{!target.result.os.tag.isDarwin()})) catch @panic("OOM");
+            lines.append(a, b.fmt("use_thin_lto={}", .{self.thin_lto})) catch @panic("OOM");
         }
         lines.append(a, b.fmt("symbol_level={d}", .{self.symbol_level})) catch @panic("OOM");
         lines.append(a, b.fmt("is_asan={}", .{self.is_asan})) catch @panic("OOM");
@@ -73,6 +84,10 @@ const GnArgs = struct {
         lines.append(a, b.fmt("v8_enable_sandbox={}", .{self.v8_enable_sandbox})) catch @panic("OOM");
         // Only spelled out when enabled so the default configuration keeps its build directory.
         if (self.v8_enable_direct_handle) lines.append(a, "v8_enable_direct_handle=true") catch @panic("OOM");
+        if (self.exclude_unwind_tables) lines.append(a, "exclude_unwind_tables=true") catch @panic("OOM");
+        if (self.optimize_for_size) lines.append(a, "optimize_for_size=true") catch @panic("OOM");
+        if (!self.runtime_call_stats) lines.append(a, "v8_enable_runtime_call_stats=false") catch @panic("OOM");
+        if (!self.temporal) lines.append(a, "v8_enable_temporal_support=false") catch @panic("OOM");
 
         if (self.mac_sdk_path) |path| {
             lines.append(a, b.fmt("mac_sdk_path=\"{s}\"", .{path})) catch @panic("OOM");
@@ -136,7 +151,12 @@ pub fn add(
         .is_tsan = b.option(bool, "is_tsan", "Build V8 with ThreadSanitizer") orelse false,
         .v8_enable_sandbox = b.option(bool, "v8_enable_sandbox", "Enable the V8 sandbox") orelse false,
         .v8_enable_direct_handle = b.option(bool, "v8_enable_direct_handle", "Use V8 direct handles (changes the C ABI; re-run `zig build gen`)") orelse false,
-        .mac_sdk_path = b.option([]const u8, "mac_sdk_path", "macOS SDK directory to build V8 against (e.g. an older SDK when V8 does not build with the newest)"),
+        .exclude_unwind_tables = b.option(bool, "exclude_unwind_tables", "Omit C++ unwind tables from V8") orelse false,
+        .optimize_for_size = b.option(bool, "optimize_for_size", "Favour code size over speed when compiling V8") orelse false,
+        .runtime_call_stats = b.option(bool, "runtime_call_stats", "Build V8 runtime call statistics") orelse true,
+        .thin_lto = b.option(bool, "thin_lto", "Build V8 as ThinLTO bitcode (default: off on Darwin, whose Zig linker cannot read it)") orelse !target.result.os.tag.isDarwin(),
+        .temporal = b.option(bool, "temporal", "Build the Temporal API") orelse true,
+        .mac_sdk_path = b.option([]const u8, "mac_sdk_path", "macOS SDK directory to build V8 against; V8 15.2 GN rejects paths outside the build directory, so leave unset and select the SDK with xcode-select/DEVELOPER_DIR"),
     };
     const cache_root = b.option([]const u8, "cache_root", "Directory holding the V8 and depot_tools checkouts") orelse b.root.joinString(b.allocator, ".lp-cache") catch @panic("OOM");
 
@@ -157,6 +177,7 @@ pub fn add(
     for (shims) |shim| _ = staged.addCopyFile(b.path(shim.src), shim.dest);
     const zstd = b.dependency("zstd", .{});
     _ = staged.addCopyFile(zstd.path("lib/zstd.h"), "zig/zstd/lib/zstd.h");
+    _ = staged.addCopyFile(zstd.path("lib/zstd_errors.h"), "zig/zstd/lib/zstd_errors.h");
     _ = staged.addCopyFile(zstd.path("LICENSE"), "zig/zstd/LICENSE");
 
     const stage = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && rsync -rc \"$1/\" \"$2/\"", "stage" });
@@ -203,8 +224,7 @@ pub fn add(
     compress.addFileArg(b.path("build-tools/compress-icu.py"));
     const icu_data_dir = if (target.result.os.tag == .ios) "ios" else "common";
     compress.addArg(b.fmt("{s}/third_party/icu/{s}/icudtl.dat", .{ v8_dir, icu_data_dir }));
-    compress.addArg(b.fmt("{s}/zig/binding/icu-data.gen.cc", .{v8_dir}));
-    compress.has_side_effects = true;
+    _ = compress.addOutputFileArg2(b.fmt("{s}/zig/binding/icu-data.gen.cc", .{v8_dir}), .{});
     compress.step.dependOn(&icu_patch.step);
 
     // 5. Generate and build.
@@ -237,8 +257,21 @@ pub fn add(
     b.step("build-zstd", "Build and install the size-optimized zstd decoder").dependOn(&b.addInstallArtifact(decoder, .{}).step);
     const bundle = b.addSystemCommand(&.{"sh"});
     bundle.addFileArg(b.path("build-tools/bundle-archives.sh"));
-    bundle.addArg(b.graph.zig_exe);
+    // `zig ar` writes no symbol index for bitcode members, so ThinLTO Darwin archives
+    // are flattened with the llvm-ar that shipped with (and matches) V8's clang.
+    const bitcode_darwin = !gn_args.is_debug and gn_args.thin_lto and target.result.os.tag.isDarwin();
+    if (bitcode_darwin) {
+        bundle.addArg(b.fmt("{s}/third_party/llvm-build/Release+Asserts/bin/llvm-ar", .{v8_dir}));
+        bundle.addArg("-");
+    } else {
+        bundle.addArgs(&.{ b.graph.zig_exe, "ar" });
+    }
     const lib = bundle.addOutputFileArg("libv8_zig.a");
+    if (gn_args.temporal) {
+        // temporal_capi is Rust; GN's alink drops rlibs from static libraries (rusty_v8 gets
+        // them through Cargo), so the bundler adds them. Host-side proc-macro rlibs are skipped.
+        bundle.addArgs(&.{ "--rust", b.fmt("{s}/third_party/ninja/ninja", .{v8_dir}), b.fmt("{s}/{s}", .{ v8_dir, out_dir }), "v8_zig" });
+    }
     bundle.addFileArg(.{ .cwd_relative = b.fmt("{s}/{s}/obj/zig/libv8_zig.a", .{ v8_dir, out_dir }) });
     bundle.addArtifactArg(decoder);
     bundle.step.dependOn(&ninja.step);

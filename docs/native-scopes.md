@@ -393,7 +393,7 @@ Opaque non-URL identities can use a custom resolver without the map adapter.
 
 ## Boundary and maintenance
 
-The intrinsic inventory targets V8 14.7.173.20. Update and test it whenever V8 changes.
+The intrinsic inventory targets V8 15.2.124.1. Update and test it whenever V8 changes.
 Scope creation rejects other engine versions until the inventory is updated.
 Built-in bindings and prototype graphs are immutable; scope-local globals remain
 writable. String code generation, WebAssembly, shared memory, and ShadowRealm are
@@ -410,13 +410,14 @@ memory quotas, fairness guarantees, or automatic termination of an infinite loop
 
 The experimental loader types are replaced. Low-level dynamic-import callbacks now
 return `v8.MaybeHandle`, matching V8's nullable promise-handle ABI; existing callbacks
-should return `promise.object.value.data.handle`. Microtask queue deinitialization now
-deletes its allocation as well as running its destructor.
+should return `promise.object.value.data.handle`. `v8.MicrotaskQueue.init` now returns a rooted
+handle (`MicrotaskQueueHandle` in the shim) because V8 15.2 allocates queues in cppgc by default
+(`v8_cppgc_microtask_queue=true`): `deinit` releases the root and must run on the isolate thread before
+the isolate is disposed. Contexts associated with the queue keep it alive afterwards; with the GN
+option disabled the handle owns the queue and must outlive every associated context.
 
 Run `zig build test`, `zig build check-generated`, and `zig build check-bindings`.
-For macOS configurations requiring the older installed SDK, add
-`-Dmac_sdk_path=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`.
-Run `zig build shell` with the same configuration; switch scopes with `:a` and `:b`.
+Run `zig build shell`; switch scopes with `:a` and `:b`.
 
 Module-map lookups use operation-local scratch storage. Only new module entries
 retain IDs, canonical attributes, keys, and dependency metadata. Growing module-map

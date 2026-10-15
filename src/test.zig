@@ -284,6 +284,9 @@ test "ICU: compressed data preserves multilingual Intl services" {
 test "Platform: message loop pumps without work" {
     try withEnv(struct {
         fn run(env: *Env) !void {
+            // V8 15.2 may queue startup foreground tasks; drain them, then the loop must report idle.
+            var drained: usize = 0;
+            while (platform.pumpMessageLoop(env.isolate, false)) : (drained += 1) try t.expect(drained < 1000);
             try t.expect(!platform.pumpMessageLoop(env.isolate, false));
         }
     }.run);
@@ -954,6 +957,33 @@ test "Script: compile and run, syntax errors, runtime errors" {
             const failing = v8.Script.compile(env.context, env.str("null.x"), null).?;
             try t.expect(failing.run(env.context) == null);
             try t.expect(tc_scope.hasCaught());
+        }
+    }.run);
+}
+
+test "String/Script/Object/Promise: concat, script ids, callability, markAsHandled" {
+    try withEnv(struct {
+        /// Local V8 scopes are released before return; no resources escape.
+        fn run(env: *Env) !void {
+            const joined = v8.String.concat(env.isolate, env.str("foo"), env.str("bar")).?;
+            try t.expectEqual(@as(c_int, 6), joined.len());
+
+            const script = v8.Script.compile(env.context, env.str("1"), null).?;
+            const other = v8.Script.compile(env.context, env.str("2"), null).?;
+            try t.expect(script.scriptId() != other.scriptId());
+            try t.expectEqual(script.scriptId(), script.getUnboundScript().?.scriptId());
+
+            const fn_obj = v8.Object.from_opaque(env.eval("(function () {})").data.handle).?;
+            const arrow = v8.Object.from_opaque(env.eval("(() => 1)").data.handle).?;
+            const plain = v8.Object.from_opaque(env.eval("({})").data.handle).?;
+            try t.expect(fn_obj.isCallable() and fn_obj.isConstructor());
+            try t.expect(arrow.isCallable() and !arrow.isConstructor());
+            try t.expect(!plain.isCallable() and !plain.isConstructor());
+
+            const rejected = v8.Promise.from_opaque(env.eval("Promise.reject(1)").data.handle).?;
+            try t.expect(!rejected.hasHandler());
+            rejected.markAsHandled();
+            try t.expect(rejected.hasHandler());
         }
     }.run);
 }

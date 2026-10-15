@@ -46,6 +46,11 @@ pub const Promise = extern struct {
         return e.v8__Promise__State(self);
     }
 
+    /// Borrows `self` for this call; a later rejection is then not reported as unhandled. Retains nothing.
+    pub fn markAsHandled(self: v8.Promise) void {
+        e.v8__Promise__MarkAsHandled(self);
+    }
+
     pub fn hasHandler(self: v8.Promise) bool {
         return e.v8__Promise__HasHandler(self);
     }

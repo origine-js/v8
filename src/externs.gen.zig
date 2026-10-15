@@ -129,6 +129,7 @@ pub const types = struct {
     pub const Map = opaque {};
     pub const Message = opaque {};
     pub const MicrotaskQueue = opaque {};
+    pub const MicrotaskQueueHandle = opaque {};
     pub const Module = opaque {};
     pub const ModuleRequest = opaque {};
     pub const Name = opaque {};
@@ -965,6 +966,9 @@ pub extern fn v8__String__NewFromTwoByte(isolate: Ptr("Isolate", false), data: ?
 /// int (const v8::String &)
 pub extern fn v8__String__Length(self: Ref("String")) c_int;
 
+/// const v8::String *(v8::Isolate *, const v8::String &, const v8::String &)
+pub extern fn v8__String__Concat(isolate: Ptr("Isolate", false), left: Ref("String"), right: Ref("String")) Ptr("String", true);
+
 /// size_t (const v8::String &, v8::Isolate *)
 pub extern fn v8__String__Utf8Length(self: Ref("String"), isolate: Ptr("Isolate", false)) usize;
 
@@ -1109,11 +1113,11 @@ pub extern fn v8__ObjectTemplate__SetInternalFieldCount(self: Ref("ObjectTemplat
 /// void (const v8::ObjectTemplate &, const v8::Name &, v8::AccessorNameGetterCallback, v8::AccessorNameSetterCallback, const v8::Value *, v8::PropertyAttribute)
 pub extern fn v8__ObjectTemplate__SetNativeDataProperty(self: Ref("ObjectTemplate"), key: Ref("Name"), getter: Named("AccessorNameGetterCallback", ?*const fn (Ref("Name"), Ref("PropertyCallbackInfo_Value")) callconv(.c) void), setter: Named("AccessorNameSetterCallback", ?*const fn (Ref("Name"), Ref("Value"), Ref("PropertyCallbackInfo_void")) callconv(.c) void), data_or_null: Ptr("Value", true), attr: Named("PropertyAttribute", u32)) void;
 
-/// void (const v8::ObjectTemplate &, v8::NamedPropertyGetterCallback, v8::NamedPropertySetterCallback, v8::NamedPropertyQueryCallback, v8::NamedPropertyDeleterCallback, v8::NamedPropertyEnumeratorCallback, v8::NamedPropertyDefinerCallback, v8::NamedPropertyDescriptorCallback, const v8::Value *, v8::PropertyHandlerFlags)
-pub extern fn v8__ObjectTemplate__SetNamedPropertyHandler(self: Ref("ObjectTemplate"), getter: Named("NamedPropertyGetterCallback", ?*const anyopaque), setter: Named("NamedPropertySetterCallback", ?*const anyopaque), query: Named("NamedPropertyQueryCallback", ?*const anyopaque), deleter: Named("NamedPropertyDeleterCallback", ?*const anyopaque), enumerator: Named("NamedPropertyEnumeratorCallback", ?*const fn (Ref("PropertyCallbackInfo_Array")) callconv(.c) void), definer: Named("NamedPropertyDefinerCallback", ?*const anyopaque), descriptor: Named("NamedPropertyDescriptorCallback", ?*const anyopaque), data_or_null: Ptr("Value", true), flags: Named("PropertyHandlerFlags", i32)) void;
+/// void (const v8::ObjectTemplate &, v8::NamedPropertyGetterCallback, v8::NamedPropertySetterCallbackV2, v8::NamedPropertyQueryCallback, v8::NamedPropertyDeleterCallback, v8::NamedPropertyEnumeratorCallback, v8::NamedPropertyDefinerCallbackV2, v8::NamedPropertyDescriptorCallback, const v8::Value *, v8::PropertyHandlerFlags)
+pub extern fn v8__ObjectTemplate__SetNamedPropertyHandler(self: Ref("ObjectTemplate"), getter: Named("NamedPropertyGetterCallback", ?*const anyopaque), setter: Named("NamedPropertySetterCallbackV2", ?*const anyopaque), query: Named("NamedPropertyQueryCallback", ?*const anyopaque), deleter: Named("NamedPropertyDeleterCallback", ?*const anyopaque), enumerator: Named("NamedPropertyEnumeratorCallback", ?*const fn (Ref("PropertyCallbackInfo_Array")) callconv(.c) void), definer: Named("NamedPropertyDefinerCallbackV2", ?*const anyopaque), descriptor: Named("NamedPropertyDescriptorCallback", ?*const anyopaque), data_or_null: Ptr("Value", true), flags: Named("PropertyHandlerFlags", i32)) void;
 
-/// void (const v8::ObjectTemplate &, v8::IndexedPropertyGetterCallbackV2, v8::IndexedPropertySetterCallbackV2, v8::IndexedPropertyQueryCallbackV2, v8::IndexedPropertyDeleterCallbackV2, v8::IndexedPropertyEnumeratorCallback, v8::IndexedPropertyDefinerCallbackV2, v8::IndexedPropertyDescriptorCallbackV2, const v8::Value *, v8::PropertyHandlerFlags)
-pub extern fn v8__ObjectTemplate__SetIndexedPropertyHandler(self: Ref("ObjectTemplate"), getter: Named("IndexedPropertyGetterCallbackV2", ?*const anyopaque), setter: Named("IndexedPropertySetterCallbackV2", ?*const anyopaque), query: Named("IndexedPropertyQueryCallbackV2", ?*const anyopaque), deleter: Named("IndexedPropertyDeleterCallbackV2", ?*const anyopaque), enumerator: Named("IndexedPropertyEnumeratorCallback", ?*const fn (Ref("PropertyCallbackInfo_Array")) callconv(.c) void), definer: Named("IndexedPropertyDefinerCallbackV2", ?*const anyopaque), descriptor: Named("IndexedPropertyDescriptorCallbackV2", ?*const anyopaque), data_or_null: Ptr("Value", true), flags: Named("PropertyHandlerFlags", i32)) void;
+/// void (const v8::ObjectTemplate &, v8::IndexedPropertyGetterCallbackV2, v8::IndexedPropertySetterCallback, v8::IndexedPropertyQueryCallbackV2, v8::IndexedPropertyDeleterCallbackV2, v8::IndexedPropertyEnumeratorCallback, v8::IndexedPropertyDefinerCallback, v8::IndexedPropertyDescriptorCallbackV2, const v8::Value *, v8::PropertyHandlerFlags)
+pub extern fn v8__ObjectTemplate__SetIndexedPropertyHandler(self: Ref("ObjectTemplate"), getter: Named("IndexedPropertyGetterCallbackV2", ?*const anyopaque), setter: Named("IndexedPropertySetterCallback", ?*const anyopaque), query: Named("IndexedPropertyQueryCallbackV2", ?*const anyopaque), deleter: Named("IndexedPropertyDeleterCallbackV2", ?*const anyopaque), enumerator: Named("IndexedPropertyEnumeratorCallback", ?*const fn (Ref("PropertyCallbackInfo_Array")) callconv(.c) void), definer: Named("IndexedPropertyDefinerCallback", ?*const anyopaque), descriptor: Named("IndexedPropertyDescriptorCallbackV2", ?*const anyopaque), data_or_null: Ptr("Value", true), flags: Named("PropertyHandlerFlags", i32)) void;
 
 /// void (const v8::ObjectTemplate &, const v8::Name &, v8::FunctionTemplate &, v8::FunctionTemplate &, v8::PropertyAttribute)
 pub extern fn v8__ObjectTemplate__SetAccessorProperty(self: Ref("ObjectTemplate"), key: Ref("Name"), getter: Ref("FunctionTemplate"), setter: Ref("FunctionTemplate"), attr: Named("PropertyAttribute", u32)) void;
@@ -1141,6 +1145,12 @@ pub extern fn v8__Object__GetAlignedPointerFromInternalField(self: Ref("Object")
 
 /// void (const v8::Object &, int, void *)
 pub extern fn v8__Object__SetAlignedPointerInInternalField(self: Ref("Object"), index: c_int, value: ?*anyopaque) void;
+
+/// bool (const v8::Object &)
+pub extern fn v8__Object__IsCallable(self: Ref("Object")) bool;
+
+/// bool (const v8::Object &)
+pub extern fn v8__Object__IsConstructor(self: Ref("Object")) bool;
 
 /// bool (const v8::Object &)
 pub extern fn v8__Object__IsApiWrapper(self: Ref("Object")) bool;
@@ -1469,11 +1479,14 @@ pub extern fn v8__Context__SetContinuationPreservedEmbedderData(isolate: Ptr("Is
 /// const v8::Value *(v8::Isolate *)
 pub extern fn v8__Context__GetContinuationPreservedEmbedderData(isolate: Ptr("Isolate", false)) Ptr("Value", true);
 
-/// v8::MicrotaskQueue *(v8::Isolate *, v8::MicrotasksPolicy)
-pub extern fn v8__MicrotaskQueue__New(isolate: Ptr("Isolate", false), policy: Named("MicrotasksPolicy", i32)) Ptr("MicrotaskQueue", false);
+/// MicrotaskQueueHandle *(v8::Isolate *, v8::MicrotasksPolicy)
+pub extern fn v8__MicrotaskQueueHandle__New(isolate: Ptr("Isolate", false), policy: Named("MicrotasksPolicy", i32)) Ptr("MicrotaskQueueHandle", false);
 
-/// void (v8::MicrotaskQueue *)
-pub extern fn v8__MicrotaskQueue__DESTRUCT(self: Ptr("MicrotaskQueue", false)) void;
+/// void (MicrotaskQueueHandle *)
+pub extern fn v8__MicrotaskQueueHandle__DELETE(self: Ptr("MicrotaskQueueHandle", false)) void;
+
+/// v8::MicrotaskQueue *(const MicrotaskQueueHandle *)
+pub extern fn v8__MicrotaskQueueHandle__Get(self: Ptr("MicrotaskQueueHandle", true)) Ptr("MicrotaskQueue", false);
 
 /// void (v8::Isolate *, v8::MicrotaskQueue *)
 pub extern fn v8__MicrotaskQueue__PerformCheckpoint(isolate: Ptr("Isolate", false), self: Ptr("MicrotaskQueue", false)) void;
@@ -1826,6 +1839,9 @@ pub extern fn v8__Script__Compile(context: Ref("Context"), source: Ref("String")
 /// const v8::UnboundScript *(const v8::Script &)
 pub extern fn v8__Script__GetUnboundScript(script: Ref("Script")) Ptr("UnboundScript", true);
 
+/// int (const v8::UnboundScript &)
+pub extern fn v8__UnboundScript__ScriptId(unbound_script: Ref("UnboundScript")) c_int;
+
 /// const v8::Script *(const v8::UnboundScript &)
 pub extern fn v8__UnboundScript__BindToCurrentContext(unbound_script: Ref("UnboundScript")) Ptr("Script", true);
 
@@ -1849,6 +1865,9 @@ pub extern fn v8__UnboundModuleScript__GetSourceURL(unbound_module_script: Ref("
 
 /// v8::ScriptCompiler::CachedData *(const v8::Function &)
 pub extern fn v8__Function__CreateCodeCache(self: Ref("Function")) Ptr("ScriptCompiler_CachedData", false);
+
+/// int (const v8::Script &)
+pub extern fn v8__Script__ScriptId(script: Ref("Script")) c_int;
 
 /// const v8::Value *(const v8::Script &, const v8::Context &)
 pub extern fn v8__Script__Run(script: Ref("Script"), context: Ref("Context")) Ptr("Value", true);
@@ -1909,6 +1928,9 @@ pub extern fn v8__Promise__Resolver__Reject(self: Ref("Promise_Resolver"), conte
 
 /// v8::Promise::PromiseState (const v8::Promise &)
 pub extern fn v8__Promise__State(self: Ref("Promise")) Named("Promise_PromiseState", u32);
+
+/// void (const v8::Promise &)
+pub extern fn v8__Promise__MarkAsHandled(self: Ref("Promise")) void;
 
 /// bool (const v8::Promise &)
 pub extern fn v8__Promise__HasHandler(self: Ref("Promise")) bool;
@@ -2008,6 +2030,9 @@ pub extern fn v8__Location__GetLineNumber(self: Ptr("Location", false)) c_int;
 
 /// int (v8::Location *)
 pub extern fn v8__Location__GetColumnNumber(self: Ptr("Location", false)) c_int;
+
+/// bool (const v8::Module &)
+pub extern fn v8__Module__HasTopLevelAwait(self: Ref("Module")) bool;
 
 /// v8::Module::Status (const v8::Module &)
 pub extern fn v8__Module__GetStatus(self: Ref("Module")) Named("Module_Status", u32);
@@ -2179,15 +2204,15 @@ test "every generated extern resolves against v8.zig" {
 //   v8::Isolate::UseCounterCallback: by-value `UseCounterFeature` has no typemap entry
 //   v8::Isolate::GCCallbackWithData: by-value `GCCallbackFlags` has no typemap entry
 //   v8::NamedPropertyGetterCallback: by-value `Intercepted` has no typemap entry
-//   v8::NamedPropertySetterCallback: by-value `Intercepted` has no typemap entry
+//   v8::NamedPropertySetterCallbackV2: by-value `Intercepted` has no typemap entry
 //   v8::NamedPropertyQueryCallback: by-value `Intercepted` has no typemap entry
 //   v8::NamedPropertyDeleterCallback: by-value `Intercepted` has no typemap entry
-//   v8::NamedPropertyDefinerCallback: by-value `Intercepted` has no typemap entry
+//   v8::NamedPropertyDefinerCallbackV2: by-value `Intercepted` has no typemap entry
 //   v8::NamedPropertyDescriptorCallback: by-value `Intercepted` has no typemap entry
 //   v8::IndexedPropertyGetterCallbackV2: by-value `Intercepted` has no typemap entry
-//   v8::IndexedPropertySetterCallbackV2: by-value `Intercepted` has no typemap entry
+//   v8::IndexedPropertySetterCallback: by-value `Intercepted` has no typemap entry
 //   v8::IndexedPropertyQueryCallbackV2: by-value `Intercepted` has no typemap entry
 //   v8::IndexedPropertyDeleterCallbackV2: by-value `Intercepted` has no typemap entry
-//   v8::IndexedPropertyDefinerCallbackV2: by-value `Intercepted` has no typemap entry
+//   v8::IndexedPropertyDefinerCallback: by-value `Intercepted` has no typemap entry
 //   v8::IndexedPropertyDescriptorCallbackV2: by-value `Intercepted` has no typemap entry
 

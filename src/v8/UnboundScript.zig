@@ -8,6 +8,11 @@ pub const UnboundScript = extern struct {
         return .{ .data = v8.Data.from_opaque(o) orelse return null };
     }
 
+    /// Borrows `unbound_script` for this call; returns V8's script id. Retains nothing.
+    pub fn scriptId(unbound_script: v8.UnboundScript) c_int {
+        return e.v8__UnboundScript__ScriptId(unbound_script);
+    }
+
     pub fn bindToCurrentContext(unbound_script: v8.UnboundScript) ?v8.Script {
         return v8.Script.from_opaque(e.v8__UnboundScript__BindToCurrentContext(unbound_script));
     }

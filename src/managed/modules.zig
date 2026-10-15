@@ -27,7 +27,7 @@ pub const ResolveRequest = struct {
     import_attributes: []const ImportAttribute = &.{},
 };
 pub const Resolver = struct {
-    /// Host-owned state, borrowed without destruction; must outlive Runtime.deinit.
+    /// Host-owned state, borrowed without destruction; must outlive Runtime.destroy.
     data: ?*anyopaque = null,
     /// Return canonical ID bytes owned by request.allocator, never input aliases.
     /// Release temporaries on success and clean up on failure.
@@ -51,10 +51,10 @@ pub const LoadRequest = struct {
     /// Borrowed entered context; valid only during the loader callback.
     context: v8.Context,
     scope_id: usize,
-    /// Runtime-owned immutable bytes, valid until Runtime.deinit begins.
+    /// Runtime-owned immutable bytes, valid until Runtime.destroy begins.
     module_id: ModuleId,
     token: LoadToken,
-    /// Runtime-owned array and nested strings, valid until Runtime.deinit begins.
+    /// Runtime-owned array and nested strings, valid until Runtime.destroy begins.
     import_attributes: []const ImportAttribute,
 };
 /// Returned slices/names are borrowed and copied/consumed before the enclosing
@@ -71,7 +71,7 @@ pub const LoadResult = union(enum) { source: []const u8, exports: []const Export
 /// releases its own memory/exception handle. Handles must belong to this runtime.
 pub const Completion = union(enum) { content: Content, failure: anyerror, exception: v8.Global.Of(v8.Value) };
 pub const Loader = struct {
-    /// Host-owned state, borrowed without destruction; must outlive Runtime.deinit.
+    /// Host-owned state, borrowed without destruction; must outlive Runtime.destroy.
     data: ?*anyopaque = null,
     /// Synchronous callback in request.context. See LoadRequest/LoadResult for
     /// borrowing rules. For async work return pending, keep only the numeric token
@@ -79,7 +79,7 @@ pub const Loader = struct {
     /// owned alloc off-thread. Do not retain the local context handle or use
     /// request.allocator off-thread. Results are later borrowed by completeLoad.
     load: *const fn (data: ?*anyopaque, request: LoadRequest) anyerror!LoadResult,
-    /// Called during Runtime.deinit for pending tokens. data is still borrowed.
+    /// Called during Runtime.destroy for pending tokens. data is still borrowed.
     /// Request bytes for this token remain readable during this callback, then
     /// become invalid as teardown proceeds. No result or ownership is transferred.
     cancel: ?*const fn (data: ?*anyopaque, token: LoadToken) void = null,
@@ -144,7 +144,7 @@ pub const ModuleMap = struct {
 
     /// Look up a resolved specifier/attribute set without resolving or loading it.
     /// Borrows key/nested strings through return. Returns a caller-owned persistent
-    /// V8 module handle: deinit it before Runtime.deinit. Null means absent or still
+    /// V8 module handle: deinit it before Runtime.destroy. Null means absent or still
     /// loading; cached failures return JavaScriptException. Input ownership stays
     /// with the caller; the returned handle independently retains the same module.
     /// error_info follows ErrorInfo ownership; returns the cached failure value
@@ -489,7 +489,7 @@ pub const ModuleMap = struct {
     /// Borrows key/content, nested names and handles through return, including error
     /// returns. Retained metadata/handles are independently copied; no ownership transfer.
     /// error_info must be initialized; previous details are released on entry.
-    /// Its exception field owns caught values; deinit the ErrorInfo before Runtime.deinit.
+    /// Its exception field owns caught values; deinit the ErrorInfo before Runtime.destroy.
     pub fn updateCache(self: *ModuleMap, key: ImportCacheKey, content: Content, error_info: ?*ErrorInfo) !void {
         if (error_info) |out| out.deinit();
         if (self.driving or self.preparing_depth != 0) return error.ImportCacheBusy;

@@ -107,9 +107,9 @@ pub fn main() !void {
     v8.V8.initialize();
     defer _ = v8.V8.dispose();
     startup.mark("v8_initialize");
-    var rt = try m.Runtime.initWithOptions(alloc, .{ .array_buffer_allocator = .{ .zig = mimalloc.allocator } });
+    const rt = try m.Runtime.create(alloc, .{ .array_buffer_allocator = .{ .zig = mimalloc.allocator } });
     startup.mark("runtime_isolate");
-    defer rt.deinit();
+    defer rt.destroy();
     var map_a = try m.ImportMap.init(alloc, .{
         .base_url = "app:/map.json",
         .urls = m.virtual_urls,

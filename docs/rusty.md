@@ -31,8 +31,15 @@ Command Line Tools).
   archive member, so Zig links never pull it in (it calls functions only Rust defines).
   `zig build check-bindings` treats these as expected exports.
 * **No Date.** `Date` and `v8__Date__*` are gone from both sides (patch 0003/0005).
-* **No v8_inspector/CRDTP yet**: behind the `inspector` cargo feature (off); the C++ shims are not
-  ported. ShadowRealm is not installed by the hardened engine.
+* **v8_inspector and CRDTP** are behind the `inspector` cargo feature (off by default; V8's inspector
+  is always inside `libv8_zig.a`). Their shims (`v8_inspector__*`, `crdtp__*`, from upstream
+  `binding.cc` and `crdtp_binding.cc`) live at the end of `binding/rusty.cc`. The functions Rust
+  defines (`*__BASE__*`, `crdtp__FallthroughCallback__*`) are declared `__attribute__((weak))`, so a Rust
+  build without the `inspector` feature still links. The generated `deno_inspector` protocol
+  domains are not built.
+  ShadowRealm is not installed by the hardened engine.
+  `zig build test-rusty -Drusty_cargo_args="--features inspector --no-fail-fast"` runs the
+  `inspector_tests` and `crdtp_tests` modules.
 * **Sandbox is on** (`v8_enable_sandbox`): external ArrayBuffer backing stores and Zig/Rust custom
   allocators are rejected by V8. Origine's errno channel was changed to live in sandbox memory.
 * **WebAssembly is on** (`-Dwebassembly=false` to remove). Patch 0007 installs and seals the
@@ -42,7 +49,7 @@ Command Line Tools).
 * Temporal comes from crates.io `temporal_capi`; the Rust build uses `lib_no_temporal`
   (`zig build` still bundles the Zig-side rlibs in `libv8_zig.a`; `v8_no_temporal` is exported as a
   named lazy path).
-* Tests that mutate frozen builtins, use Date/ShadowRealm/inspector/CRDTP, or rely on an exact GC
+* Tests that mutate frozen builtins, use Date/ShadowRealm, or rely on an exact GC
   callback count were adapted or gated.
 
 ## Toolchain pin and LTO
@@ -51,17 +58,32 @@ Command Line Tools).
 built with `-fsplit-lto-unit`, which the cross-language link needs on the Rust side too, so the
 script passes `-Zsplit-lto-unit` with `RUSTC_BOOTSTRAP=1`.
 
-`RUSTY_LTO=1` makes rustc emit bitcode (`-Clinker-plugin-lto`) so `ld64.lld` optimizes Rust and V8
-together; `hello_world` and most of the suite run. Known problem: `ld64.lld` leaves some LTO-compiled
-Rust functions without an unwind entry (compact encoding 0, no FDE), so a panic raised inside the
-`v8` crate cannot unwind ("failed to initiate panic, error 5"); plain Rust code unwinds fine. The
-default is therefore `RUSTY_LTO=0`: Rust is native code and lld still runs ThinLTO over
+`RUSTY_LTO=1` (the default) makes rustc emit bitcode (`-Clinker-plugin-lto`) so `ld64.lld` optimizes
+Rust and V8 together; `RUSTY_LTO=0` compiles Rust to native code and lld only runs ThinLTO over
 `libv8_zig.a`.
+
+`lto-clang.sh` links in two passes because of an `ld64.lld` bug. lld gives every prevailing bitcode
+symbol the *bitcode* file as its owner (`SymbolTable::addDefined`), and `ObjFile::registerEhFrames`
+drops the FDE of any function whose symbol is not owned by the object being parsed. A function that
+LLVM cannot describe with compact unwind (DWARF mode `0x03000000`: epilogues with
+`remember_state`, common in optimized Rust) and that stays externally visible after ThinLTO
+(`.llvm.NNN` promoted locals are fine) therefore ends up with encoding 0 and no FDE, and a panic
+inside the `v8` crate aborts with "failed to initiate panic, error 5". Pass 1 runs the LTO with
+`-save-temps` into a scratch directory; pass 2 links the resulting native objects instead of the
+bitcode (bitcode objects are dropped; `strip-bitcode-ar.py` hands lld archive copies with only
+their native members). `LTO_SINGLE_PASS=1` skips pass 2 to reproduce the bug.
 
 ## Known gaps
 
-* v8_inspector and CRDTP shims, `Isolate::SetHost*` modules that hardening removes.
+* `Isolate::SetHost*` modules that hardening removes.
 * Optimized fast-API calls taking a `void*` trap under the sandbox (`test_fast_calls_pointer` is
   gated).
 * Contexts restored from a custom snapshot do not expose `WebAssembly` (the JS-API callbacks that
   `WasmJs::Install` creates are not snapshot external references).
+
+## Cargo profiles
+
+* `dev`: `opt-level = 1`, line-tables-only debug info (none for dependencies), incremental,
+  256 codegen units, `panic = "unwind"`.
+* `release`: `codegen-units = 1`, `panic = "abort"`, debug info stripped. Panics abort, so run
+  `should_panic` / `catch_unwind` tests in the dev/test profile.

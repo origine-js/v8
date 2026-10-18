@@ -28,13 +28,11 @@ fi
 llvm_major() { "$1" --version | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -n1; }
 rustc_llvm=$(cd "$dir" && rustc -vV | sed -n 's/^LLVM version: \([0-9][0-9]*\).*/\1/p')
 clang_llvm=$(llvm_major "$clang_bin/clang")
-# RUSTY_LTO=1: rustc emits bitcode and V8's lld optimizes Rust and libv8_zig.a together.
-# Known problem: ld64.lld drops the DWARF unwind entry (compact encoding 0, no FDE) of some
-# LTO-compiled Rust functions, so a panic raised inside the v8 crate cannot unwind and aborts
-# ("failed to initiate panic, error 5"). Plain code and hello_world are unaffected.
-# RUSTY_LTO=0 (default): Rust is compiled to native objects; lld still runs ThinLTO over the
-# bitcode inside libv8_zig.a (no cross-language inlining) and unwinding works.
-if [ "${RUSTY_LTO:-0}" = 1 ] && [ "$rustc_llvm" -gt "$clang_llvm" ]; then
+# RUSTY_LTO=1 (default): rustc emits bitcode and V8's lld optimizes Rust and libv8_zig.a together.
+# lto-clang.sh links in two passes to work around ld64.lld dropping the DWARF unwind info of
+# LTO-compiled functions (see there). RUSTY_LTO=0: Rust is compiled to native objects; lld still
+# runs ThinLTO over the bitcode inside libv8_zig.a (no cross-language inlining).
+if [ "${RUSTY_LTO:-1}" = 1 ] && [ "$rustc_llvm" -gt "$clang_llvm" ]; then
     echo "cargo-rusty: rustc uses LLVM $rustc_llvm but V8's clang is LLVM $clang_llvm;" >&2
     echo "cargo-rusty: its bitcode cannot be read by V8's lld. Pin an older Rust" >&2
     echo "cargo-rusty: toolchain or set RUSTY_LTO=0." >&2
@@ -48,7 +46,7 @@ case "$host" in
 esac
 # A per-target linker keeps build scripts and proc macros on the host toolchain:
 # --target stops RUSTFLAGS from applying to them.
-if [ "${RUSTY_LTO:-0}" = 1 ]; then
+if [ "${RUSTY_LTO:-1}" = 1 ]; then
     # V8 is built with -fsplit-lto-unit (+ whole-program vtables), so Rust must set the same
     # module flag or lld rejects the mix. -Zsplit-lto-unit is unstable; RUSTC_BOOTSTRAP lets
     # the pinned stable toolchain accept it (what Chromium's own Rust toolchain does).

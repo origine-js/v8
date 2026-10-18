@@ -1298,51 +1298,22 @@ size_t simdutf__binary_to_base64(const char* input, size_t length, char* output,
       input, length, output, static_cast<simdutf::base64_options>(options));
 }
 
+}  // extern "C"
+
+// ---- Rust-implemented inspector/CRDTP callbacks (cargo feature `inspector` of lib/rusty_v8) ----
+// The `*__BASE__*` and `crdtp__*` functions declared weak below are defined only by Rust, so
+// Zig links, which never reference these classes, resolve them to null.
+extern "C" {
 // ---- v8_inspector (cargo feature `inspector`) ----
 
-void v8_inspector__V8Inspector__Channel__BASE__sendResponse(
+__attribute__((weak)) void v8_inspector__V8Inspector__Channel__BASE__sendResponse(
     v8_inspector::V8Inspector::Channel* self, int callId,
     v8_inspector::StringBuffer* message);
-void v8_inspector__V8Inspector__Channel__BASE__sendNotification(
+__attribute__((weak)) void v8_inspector__V8Inspector__Channel__BASE__sendNotification(
     v8_inspector::V8Inspector::Channel* self,
     v8_inspector::StringBuffer* message);
-void v8_inspector__V8Inspector__Channel__BASE__flushProtocolNotifications(
+__attribute__((weak)) void v8_inspector__V8Inspector__Channel__BASE__flushProtocolNotifications(
     v8_inspector::V8Inspector::Channel* self);
-
-void v8_inspector__V8Inspector__DELETE(v8_inspector::V8Inspector* self) {
-  delete self;
-}
-
-v8_inspector::V8Inspector* v8_inspector__V8Inspector__create(
-    v8::Isolate* isolate, v8_inspector::V8InspectorClient* client) {
-  std::unique_ptr<v8_inspector::V8Inspector> u =
-      v8_inspector::V8Inspector::create(isolate, client);
-  return u.release();
-}
-
-v8_inspector::V8InspectorSession* v8_inspector__V8Inspector__connect(
-    v8_inspector::V8Inspector* self, int context_group_id,
-    v8_inspector::V8Inspector::Channel* channel, v8_inspector::StringView state,
-    v8_inspector::V8Inspector::ClientTrustLevel client_trust_level) {
-  std::unique_ptr<v8_inspector::V8InspectorSession> u =
-      self->connect(context_group_id, channel, state, client_trust_level);
-  return u.release();
-}
-
-void v8_inspector__V8Inspector__contextCreated(
-    v8_inspector::V8Inspector* self, const v8::Context& context,
-    int contextGroupId, v8_inspector::StringView humanReadableName,
-    v8_inspector::StringView auxData) {
-  v8_inspector::V8ContextInfo info(ptr_to_local(&context), contextGroupId,
-                                   humanReadableName);
-  info.auxData = auxData;
-  self->contextCreated(info);
-}
-
-void v8_inspector__V8Inspector__contextDestroyed(
-    v8_inspector::V8Inspector* self, const v8::Context& context) {
-  self->contextDestroyed(ptr_to_local(&context));
-}
 
 void v8_inspector__V8Inspector__idleStarted(v8_inspector::V8Inspector* self) {
   self->idleStarted();
@@ -1376,45 +1347,6 @@ void v8_inspector__V8Inspector__asyncTaskFinished(
 void v8_inspector__V8Inspector__allAsyncTasksCanceled(
     v8_inspector::V8Inspector* self) {
   self->allAsyncTasksCanceled();
-}
-
-bool v8_inspector__V8InspectorSession__canDispatchMethod(
-    v8_inspector::StringView method) {
-  return v8_inspector::V8InspectorSession::canDispatchMethod(method);
-}
-
-unsigned v8_inspector__V8Inspector__exceptionThrown(
-    v8_inspector::V8Inspector* self, const v8::Context& context,
-    v8_inspector::StringView message, const v8::Value& exception,
-    v8_inspector::StringView detailed_message, v8_inspector::StringView url,
-    unsigned line_number, unsigned column_number,
-    v8_inspector::V8StackTrace* stack_trace, int script_id) {
-  return self->exceptionThrown(
-      ptr_to_local(&context), message, ptr_to_local(&exception),
-      detailed_message, url, line_number, column_number,
-      static_cast<std::unique_ptr<v8_inspector::V8StackTrace>>(stack_trace),
-      script_id);
-}
-
-v8_inspector::V8StackTrace* v8_inspector__V8Inspector__createStackTrace(
-    v8_inspector::V8Inspector* self, const v8::StackTrace& stack_trace) {
-  std::unique_ptr<v8_inspector::V8StackTrace> u =
-      self->createStackTrace(ptr_to_local(&stack_trace));
-  return u.release();
-}
-
-void v8_inspector__V8StackTrace__DELETE(v8_inspector::V8StackTrace* self) {
-  delete self;
-}
-
-void v8_inspector__V8InspectorSession__DELETE(
-    v8_inspector::V8InspectorSession* self) {
-  delete self;
-}
-
-void v8_inspector__V8InspectorSession__dispatchProtocolMessage(
-    v8_inspector::V8InspectorSession* self, v8_inspector::StringView message) {
-  self->dispatchProtocolMessage(message);
 }
 
 void v8_inspector__V8InspectorSession__releaseObjectGroup(
@@ -1460,12 +1392,6 @@ void v8_inspector__RemoteObject__DELETE(
   delete self;
 }
 
-void v8_inspector__V8InspectorSession__schedulePauseOnNextStatement(
-    v8_inspector::V8InspectorSession* self, v8_inspector::StringView reason,
-    v8_inspector::StringView detail) {
-  self->schedulePauseOnNextStatement(reason, detail);
-}
-
 void v8_inspector__V8InspectorSession__cancelPauseOnNextStatement(
     v8_inspector::V8InspectorSession* self) {
   self->cancelPauseOnNextStatement();
@@ -1473,9 +1399,9 @@ void v8_inspector__V8InspectorSession__cancelPauseOnNextStatement(
 }  // extern "C"
 
 extern "C" {
-const v8::Value* v8_inspector__V8InspectorSession__Inspectable__BASE__get(
+__attribute__((weak)) const v8::Value* v8_inspector__V8InspectorSession__Inspectable__BASE__get(
     void* rust_impl, const v8::Context* context);
-void v8_inspector__V8InspectorSession__Inspectable__BASE__DROP(void* rust_impl);
+__attribute__((weak)) void v8_inspector__V8InspectorSession__Inspectable__BASE__DROP(void* rust_impl);
 }
 
 class v8_inspector__V8InspectorSession__Inspectable__BASE final
@@ -1554,48 +1480,30 @@ void v8_inspector__V8Inspector__Channel__BASE__CONSTRUCT(
   construct_in_place<v8_inspector__V8Inspector__Channel__BASE>(buf);
 }
 
-void v8_inspector__V8Inspector__Channel__sendResponse(
-    v8_inspector::V8Inspector::Channel* self, int callId,
-    v8_inspector::StringBuffer* message) {
-  self->sendResponse(
-      callId,
-      static_cast<std::unique_ptr<v8_inspector::StringBuffer>>(message));
-}
-void v8_inspector__V8Inspector__Channel__sendNotification(
-    v8_inspector::V8Inspector::Channel* self,
-    v8_inspector::StringBuffer* message) {
-  self->sendNotification(
-      static_cast<std::unique_ptr<v8_inspector::StringBuffer>>(message));
-}
-void v8_inspector__V8Inspector__Channel__flushProtocolNotifications(
-    v8_inspector::V8Inspector::Channel* self) {
-  self->flushProtocolNotifications();
-}
-
-int64_t v8_inspector__V8InspectorClient__BASE__generateUniqueId(
+__attribute__((weak)) int64_t v8_inspector__V8InspectorClient__BASE__generateUniqueId(
     v8_inspector::V8InspectorClient* self);
-void v8_inspector__V8InspectorClient__BASE__runMessageLoopOnPause(
+__attribute__((weak)) void v8_inspector__V8InspectorClient__BASE__runMessageLoopOnPause(
     v8_inspector::V8InspectorClient* self, int contextGroupId);
-void v8_inspector__V8InspectorClient__BASE__quitMessageLoopOnPause(
+__attribute__((weak)) void v8_inspector__V8InspectorClient__BASE__quitMessageLoopOnPause(
     v8_inspector::V8InspectorClient* self);
-void v8_inspector__V8InspectorClient__BASE__runIfWaitingForDebugger(
+__attribute__((weak)) void v8_inspector__V8InspectorClient__BASE__runIfWaitingForDebugger(
     v8_inspector::V8InspectorClient* self, int contextGroupId);
-void v8_inspector__V8InspectorClient__BASE__consoleAPIMessage(
+__attribute__((weak)) void v8_inspector__V8InspectorClient__BASE__consoleAPIMessage(
     v8_inspector::V8InspectorClient* self, int contextGroupId,
     v8::Isolate::MessageErrorLevel level,
     const v8_inspector::StringView& message,
     const v8_inspector::StringView& url, unsigned lineNumber,
     unsigned columnNumber, v8_inspector::V8StackTrace* stackTrace);
-v8_inspector::StringBuffer* v8_inspector__V8InspectorClient__BASE__valueSubtype(
+__attribute__((weak)) v8_inspector::StringBuffer* v8_inspector__V8InspectorClient__BASE__valueSubtype(
     v8_inspector::V8InspectorClient* self, v8::Context* context,
     v8::Value* value);
-v8_inspector::StringBuffer*
+__attribute__((weak)) v8_inspector::StringBuffer*
 v8_inspector__V8InspectorClient__BASE__descriptionForValueSubtype(
     v8_inspector::V8InspectorClient* self, v8::Context* context,
     v8::Value* value);
-v8::Context* v8_inspector__V8InspectorClient__BASE__ensureDefaultContextInGroup(
+__attribute__((weak)) v8::Context* v8_inspector__V8InspectorClient__BASE__ensureDefaultContextInGroup(
     v8_inspector::V8InspectorClient* self, int context_group_id);
-v8_inspector::StringBuffer*
+__attribute__((weak)) v8_inspector::StringBuffer*
 v8_inspector__V8InspectorClient__BASE__resourceNameToUrl(
     v8_inspector::V8InspectorClient* self,
     const v8_inspector::StringView& resource_name_view);
@@ -1669,48 +1577,6 @@ void v8_inspector__V8InspectorClient__BASE__CONSTRUCT(
   construct_in_place<v8_inspector__V8InspectorClient__BASE>(buf);
 }
 
-int64_t v8_inspector__V8InspectorClient__generateUniqueId(
-    v8_inspector::V8InspectorClient* self) {
-  return self->generateUniqueId();
-}
-
-void v8_inspector__V8InspectorClient__runMessageLoopOnPause(
-    v8_inspector::V8InspectorClient* self, int contextGroupId) {
-  self->runMessageLoopOnPause(contextGroupId);
-}
-void v8_inspector__V8InspectorClient__quitMessageLoopOnPause(
-    v8_inspector::V8InspectorClient* self) {
-  self->quitMessageLoopOnPause();
-}
-void v8_inspector__V8InspectorClient__runIfWaitingForDebugger(
-    v8_inspector::V8InspectorClient* self, int contextGroupId) {
-  self->runIfWaitingForDebugger(contextGroupId);
-}
-
-void v8_inspector__V8InspectorClient__consoleAPIMessage(
-    v8_inspector::V8InspectorClient* self, int contextGroupId,
-    v8::Isolate::MessageErrorLevel level,
-    const v8_inspector::StringView& message,
-    const v8_inspector::StringView& url, unsigned lineNumber,
-    unsigned columnNumber, v8_inspector::V8StackTrace* stackTrace) {
-  self->consoleAPIMessage(contextGroupId, level, message, url, lineNumber,
-                          columnNumber, stackTrace);
-}
-
-void v8_inspector__StringBuffer__DELETE(v8_inspector::StringBuffer* self) {
-  delete self;
-}
-
-three_pointers_t v8_inspector__StringBuffer__string(
-    const v8_inspector::StringBuffer& self) {
-  return make_pod<three_pointers_t>(self.string());
-}
-
-v8_inspector::StringBuffer* v8_inspector__StringBuffer__create(
-    v8_inspector::StringView source) {
-  return v8_inspector::StringBuffer::create(source).release();
-}
-
 }  // extern "C"
 
 // ---- CRDTP (cargo feature `inspector`), from denoland/rusty_v8 src/crdtp_binding.cc ----
@@ -1719,18 +1585,18 @@ using namespace support;
 using namespace v8_crdtp;
 
 extern "C" {
-void crdtp__FrontendChannel__BASE__sendProtocolResponse(FrontendChannel* self,
+__attribute__((weak)) void crdtp__FrontendChannel__BASE__sendProtocolResponse(FrontendChannel* self,
                                                         int call_id,
                                                         Serializable* message);
-void crdtp__FrontendChannel__BASE__sendProtocolNotification(
+__attribute__((weak)) void crdtp__FrontendChannel__BASE__sendProtocolNotification(
     FrontendChannel* self, Serializable* message);
-void crdtp__FrontendChannel__BASE__flushProtocolNotifications(
+__attribute__((weak)) void crdtp__FrontendChannel__BASE__flushProtocolNotifications(
     FrontendChannel* self);
-void crdtp__FallthroughCallback__Run(
+__attribute__((weak)) void crdtp__FallthroughCallback__Run(
     void* callback, int call_id, const uint8_t* method_data, size_t method_len,
     const uint8_t* message_data, size_t message_len,
     const uint8_t* associated_data, size_t associated_data_len);
-void crdtp__FallthroughCallback__Drop(void* callback);
+__attribute__((weak)) void crdtp__FallthroughCallback__Drop(void* callback);
 }  // extern "C"
 
 struct crdtp__FrontendChannel__BASE : public FrontendChannel {
@@ -2034,12 +1900,12 @@ Serializable* crdtp__CreateErrorNotification(
 extern "C" {
 // Rust callback: given a domain dispatcher pointer and a command name,
 // executes the command and returns whether it was handled.
-bool crdtp__DomainDispatcher__BASE__Dispatch(void* rust_dispatcher,
+__attribute__((weak)) bool crdtp__DomainDispatcher__BASE__Dispatch(void* rust_dispatcher,
                                              const uint8_t* command_data,
                                              size_t command_len,
                                              const Dispatchable& dispatchable);
 // Rust callback: destroy the Rust DomainDispatcher when C++ side is destroyed.
-void crdtp__DomainDispatcher__BASE__Drop(void* rust_dispatcher);
+__attribute__((weak)) void crdtp__DomainDispatcher__BASE__Drop(void* rust_dispatcher);
 }
 
 struct crdtp__DomainDispatcher__BASE : public DomainDispatcher {

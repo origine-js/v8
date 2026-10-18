@@ -36,6 +36,7 @@ pub const HandleScope = @import("v8/HandleScope.zig").HandleScope;
 pub const CTypeInfo = @import("v8/fast_api.zig").CTypeInfo;
 pub const CFunctionInfo = @import("v8/fast_api.zig").CFunctionInfo;
 pub const CFunction = @import("v8/fast_api.zig").CFunction;
+pub const FastApiCallbackOptions = @import("v8/fast_api.zig").FastApiCallbackOptions;
 pub const ReturnValue = @import("v8/ReturnValue.zig").ReturnValue;
 pub const PropertyCallbackInfo = @import("v8/PropertyCallbackInfo.zig").PropertyCallbackInfo;
 pub const PropertyDescriptor = @import("v8/PropertyDescriptor.zig").PropertyDescriptor;

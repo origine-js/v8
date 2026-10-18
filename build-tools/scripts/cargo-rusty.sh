@@ -1,10 +1,10 @@
 #!/bin/sh
-# Runs cargo for lib/rusty_v8 against the libv8_zig.a built by this repository.
+# Runs cargo for rusty_v8 against the libv8_zig.a built by this repository.
 #
 # usage: cargo-rusty.sh <rusty_v8_dir> <archive> <mimalloc> <v8_root> <gn_out> <binding_dir> <clang_bin> <cargo args...>
 #
 # Reads the paths, borrows them for the duration of the cargo run, writes only
-# under <rusty_v8_dir>/target. Exports the V8_ZIG_* variables lib/rusty_v8/build.rs
+# under <rusty_v8_dir>/target. Exports the V8_ZIG_* variables rusty_v8/build.rs
 # expects, and links with V8's own clang/lld so Rust bitcode (linker-plugin LTO)
 # and the ThinLTO bitcode inside libv8_zig.a are optimized together.
 set -eu

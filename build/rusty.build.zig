@@ -1,4 +1,4 @@
-//! `zig build rusty` / `zig build test-rusty`: build and test lib/rusty_v8 (the Rust `v8`
+//! `zig build rusty` / `zig build test-rusty`: build and test rusty_v8 (the Rust `v8`
 //! crate) against the same `libv8_zig.a` the Zig modules use, so both languages share one V8.
 
 const std = @import("std");
@@ -10,15 +10,15 @@ const v8_build = @import("v8.build.zig");
 pub fn addSteps(b: *std.Build, v8: v8_build.V8, mimalloc: *std.Build.Step.Compile) void {
     const build_dir = v8.build_dir orelse return;
     const clang_bin = v8.clang_bin orelse return;
-    const crate_dir = b.option([]const u8, "rusty_v8_dir", "Vendored rusty_v8 crate (default ../rusty_v8)") orelse
-        b.root.joinString(b.allocator, "../rusty_v8") catch @panic("OOM");
+    const crate_dir = b.option([]const u8, "rusty_v8_dir", "Rust v8 crate (default rusty_v8)") orelse
+        b.root.joinString(b.allocator, "rusty_v8") catch @panic("OOM");
     const extra_args = b.option([]const u8, "rusty_cargo_args", "Extra space-separated cargo arguments for the rusty steps") orelse "";
     // build_dir is <v8 root>/out/<name>.
     const v8_root = std.fs.path.dirname(std.fs.path.dirname(build_dir).?).?;
 
     const names = [_]struct { step: []const u8, desc: []const u8, args: []const []const u8 }{
-        .{ .step = "rusty", .desc = "Build lib/rusty_v8 against libv8_zig.a", .args = &.{ "build", "--release" } },
-        .{ .step = "test-rusty", .desc = "Run lib/rusty_v8 tests against libv8_zig.a", .args = &.{ "test", "--release" } },
+        .{ .step = "rusty", .desc = "Build rusty_v8 against libv8_zig.a", .args = &.{ "build", "--release" } },
+        .{ .step = "test-rusty", .desc = "Run rusty_v8 tests against libv8_zig.a", .args = &.{ "test", "--release" } },
     };
     for (names) |n| {
         const run = b.addSystemCommand(&.{"sh"});

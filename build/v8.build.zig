@@ -15,7 +15,7 @@ pub const V8 = struct {
     /// `libv8_zig.a`, a complete static library containing V8 and the shim.
     lib: LazyPath,
     /// Like `lib` but without the bundled temporal_capi rlibs, for final links that get
-    /// `temporal_capi` elsewhere (lib/rusty_v8 pulls it from crates.io). Equals `lib` when
+    /// `temporal_capi` elsewhere (rusty_v8 pulls it from crates.io). Equals `lib` when
     /// Temporal is disabled or the library is prebuilt.
     lib_no_temporal: LazyPath,
     /// GN output directory (holds compile_commands.json). Null for prebuilt libraries.

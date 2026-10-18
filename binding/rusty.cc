@@ -1,4 +1,4 @@
-// Shims for lib/rusty_v8 (the Rust `v8` crate), ported from denoland/rusty_v8 src/binding.cc.
+// Shims for rusty_v8 (the Rust `v8` crate), ported from denoland/rusty_v8 src/binding.cc.
 //
 // This is a separate object file on purpose: libv8_zig.a is an archive, so the Zig modules
 // never pull this member in, while the Rust crate references it. Several classes here call
@@ -48,14 +48,14 @@ using namespace support;
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 // ---------------------------------------------------------------------------
-// rusty_v8 shims (lib/rusty_v8). Ported from denoland/rusty_v8 src/binding.cc so the
+// rusty_v8 shims (rusty_v8). Ported from denoland/rusty_v8 src/binding.cc so the
 // Rust `v8` crate links the same libv8_zig.a as the Zig modules.
 //
 // Ownership: unless a shim says otherwise it only borrows its arguments for the
 // duration of the call, takes no ownership of handles or callbacks, and requires
 // the calling thread to be inside the isolate (entered, with a live handle scope)
 // exactly like the Zig-facing shims above. Rust-defined callbacks (`*__BASE__*`,
-// `rusty_v8_RustObj_*`) are implemented by lib/rusty_v8 and linked into the final binary.
+// `rusty_v8_RustObj_*`) are implemented by rusty_v8 and linked into the final binary.
 // ---------------------------------------------------------------------------
 extern "C" {
 
@@ -1300,7 +1300,7 @@ size_t simdutf__binary_to_base64(const char* input, size_t length, char* output,
 
 }  // extern "C"
 
-// ---- Rust-implemented inspector/CRDTP callbacks (cargo feature `inspector` of lib/rusty_v8) ----
+// ---- Rust-implemented inspector/CRDTP callbacks (cargo feature `inspector` of rusty_v8) ----
 // The `*__BASE__*` and `crdtp__*` functions declared weak below are defined only by Rust, so
 // Zig links, which never reference these classes, resolve them to null.
 extern "C" {

@@ -1,6 +1,6 @@
 # Rust `v8` crate on libv8_zig.a
 
-`lib/rusty_v8` is a vendored fork of [denoland/rusty_v8](https://github.com/denoland/rusty_v8)
+`rusty_v8` is a vendored fork of [denoland/rusty_v8](https://github.com/denoland/rusty_v8)
 (v152.2.0, V8 15.2.124.1) that links the same `libv8_zig.a` as the Zig modules, so both
 languages share one V8 build, one process-wide platform and the same hardened intrinsics.
 It never downloads or builds V8.
@@ -12,7 +12,7 @@ zig build rusty -Drusty_cargo_args="--example hello_world"
 ```
 
 `build/rusty.build.zig` runs `build-tools/scripts/cargo-rusty.sh`, which exports what
-`lib/rusty_v8/build.rs` consumes (`V8_ZIG_ARCHIVE`, `V8_ZIG_MIMALLOC`, `V8_ZIG_V8_ROOT`,
+`rusty_v8/build.rs` consumes (`V8_ZIG_ARCHIVE`, `V8_ZIG_MIMALLOC`, `V8_ZIG_V8_ROOT`,
 `V8_ZIG_BINDING`, `V8_ZIG_GN_OUT`), checks that Rust's LLVM is not newer than V8's clang, and
 links with V8's own `ld64.lld` through `lto-clang.sh`. `build.rs` runs bindgen over
 `binding/binding.hpp` with the defines GN used for `binding.cc`, so struct layouts always match

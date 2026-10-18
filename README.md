@@ -6,7 +6,7 @@ V8 is the JavaScript runtime that powers Google Chrome.
 
 ## Rust
 
-`lib/rusty_v8` runs the Rust `v8` crate on this same archive; see [Rust crate on libv8_zig.a](docs/rusty.md).
+`rusty_v8/` runs the Rust `v8` crate on this same archive; see [Rust crate on libv8_zig.a](docs/rusty.md).
 
 ## Native managed scopes
 

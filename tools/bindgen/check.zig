@@ -3,7 +3,7 @@
 //!   lib      the `v8__*` symbols the built libv8_zig.a really exports (nm)
 //!   gen      the externs in src/generated/externs.gen.zig
 //!   wrapped  the externs src/v8/*.zig actually calls (`e.v8__*`)
-//!   shims    the shims in binding/rusty.cc: exported for lib/rusty_v8 only, so they
+//!   shims    the shims in binding/rusty.cc: exported for rusty_v8 only, so they
 //!            are expected in `lib` without a Zig extern
 //!   rusty    optional: the shims upstream rusty_v8 defines, as a porting checklist
 //!

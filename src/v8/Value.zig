@@ -1,4 +1,4 @@
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 const support = v8.support;
 const Context = v8.Context;

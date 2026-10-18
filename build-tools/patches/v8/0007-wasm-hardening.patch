@@ -1,0 +1,80 @@
+diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
+index 70a0f41ee68..7cb372ea315 100644
+--- a/src/init/bootstrapper.cc
++++ b/src/init/bootstrapper.cc
+@@ -816,6 +816,21 @@ bool CompleteZigTemporalIntrinsics(Isolate* isolate, DirectHandle<NativeContext>
+   return true;
+ }
+ 
++// Borrows the completed context on its isolate thread with a live HandleScope.
++// Seals the WebAssembly namespace graph (constructors, prototypes, JS-API
++// helpers) installed by WasmJs::Install; retains no resources. Failure leaves an
++// unexposed partial context for GC. Without Wasm support it accepts and returns.
++bool CompleteZigWasmIntrinsics(Isolate* isolate, DirectHandle<NativeContext> context) {
++#if V8_ENABLE_WEBASSEMBLY
++  // The preallocated namespace object lives in the native context whether or not
++  // it is exposed on the global (custom snapshots never expose it).
++  if (!SealZigIntrinsicFamily(isolate, context->wasm_webassembly_object())) {
++    return false;
++  }
++#endif
++  return true;
++}
++
+ // Borrows the completed context on its isolate thread/HandleScope. Publishes
+ // immutable builtin bindings, including bindings cloned from the mutable seed.
+ // Retains no host resources. Failure leaves an unexposed partial context.
+@@ -833,7 +848,8 @@ bool CompleteZigGlobalBindings(Isolate* isolate,
+       "Float32Array", "Float64Array", "Map", "Set", "WeakMap", "WeakSet",
+       "ArrayBuffer", "SharedArrayBuffer", "Atomics", "DataView", "JSON", "Promise", "Proxy", "Reflect", "Intl",
+       "WeakRef", "FinalizationRegistry", "Iterator", "AsyncIterator",
+-      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal"};
++      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal",
++      "WebAssembly"};
+   DirectHandle<JSGlobalObject> global(context->global_object(), isolate);
+   for (const char* name : bindings) {
+     DirectHandle<String> key = isolate->factory()->InternalizeUtf8String(name);
+@@ -903,7 +919,8 @@ bool VerifyAndCaptureZigIntrinsics(Isolate* isolate,
+       "Float32Array", "Float64Array", "Map", "Set", "WeakMap", "WeakSet",
+       "ArrayBuffer", "SharedArrayBuffer", "Atomics", "DataView", "JSON", "Promise", "Proxy", "Reflect", "Intl",
+       "WeakRef", "FinalizationRegistry", "Iterator", "AsyncIterator",
+-      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal"};
++      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal",
++      "WebAssembly"};
+   std::vector<Handle<String>> installed;
+   for (const char* name : bindings) {
+     Handle<String> key = isolate->factory()->InternalizeUtf8String(name);
+@@ -7147,7 +7164,7 @@ bool Bootstrapper::InstallExtensions(DirectHandle<NativeContext> native_context,
+ }
+ 
+ // Borrows isolate/native_context through installation on the isolate thread.
+-// Seals completed builtin subsystems without installing Wasm. Retains no host
++// Installs and seals completed builtin subsystems, including Wasm. Retains no host
+ // storage; errors leave only an unexposed partially sealed context for GC.
+ bool Genesis::InstallSpecialObjects(
+     Isolate* isolate, DirectHandle<NativeContext> native_context) {
+@@ -7159,12 +7176,24 @@ bool Genesis::InstallSpecialObjects(
+   }
+ #endif  // V8_ENABLE_MEMORY_CORRUPTION_API
+ 
++#if V8_ENABLE_WEBASSEMBLY
++  // The WebAssembly namespace is a builtin: expose it before the families are
++  // sealed. Custom snapshots serialize only the preinstalled object
++  // (WasmJs::PrepareForSnapshot): the JS-API callbacks installed by Install()
++  // are not snapshot external references.
++  if (native_context->zig_intrinsic_objects()->length().value() == 0 &&
++      !isolate->serializer_enabled()) {
++    WasmJs::Install(isolate);
++  }
++#endif
++
+   if (v8_flags.zig_harden_intrinsics &&
+       native_context->zig_intrinsic_objects()->length().value() == 0) {
+     if (!CompleteZigCoreIntrinsics(isolate, native_context) ||
+         !CompleteZigIterationIntrinsics(isolate, native_context) ||
+         !CompleteZigIntlIntrinsics(isolate, native_context) ||
+         !CompleteZigTemporalIntrinsics(isolate, native_context) ||
++        !CompleteZigWasmIntrinsics(isolate, native_context) ||
+         !CompleteZigGlobalBindings(isolate, native_context)) return false;
+   }
+ 

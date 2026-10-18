@@ -19,14 +19,20 @@ at each checkpoint:
 | 6 | Optional import-map adapter | Scoped/prefix mappings, blocked targets, virtual backends |
 | 7 | Shell, native capabilities, combined adversarial tests | Private native state, forged receivers, callbacks and exceptions |
 
-Tests are grouped by these step numbers in `src/managed/test.zig`.
+Tests are grouped by behavior under `src/tests/managed/`. Import-map and shared
+private-counter demonstrations live there rather than in the shell.
 
 ## Initialization and ownership
 
-Initialize the V8 platform and engine through `v8.V8.initialize()` before constructing a runtime. `Runtime.create` returns a heap-allocated `*Runtime` with a stable address; release it with `destroy`:
+Initialize the process engine once through `Engine.init(.{})` before constructing a runtime.
+Destroy all runtimes and handles before `engine.deinit()`; V8 cannot be reinitialized
+after disposal. Raw embedders may perform the platform/V8 steps themselves. `Runtime.create` returns a heap-allocated `*Runtime` with a stable address; release it with `destroy`:
 
 ```zig
-const m = @import("managed.zig");
+const m = @import("@managed");
+const Engine = @import("@engine").Engine;
+var engine = Engine.init(.{});
+defer engine.deinit();
 const rt = try m.Runtime.create(allocator, .{});
 defer rt.destroy();
 const scope = try rt.createScope(.{});
@@ -69,7 +75,7 @@ other Zig runtime storage; it does not allocate the V8 GC heap.
 Pass `Options` to `Runtime.create` to choose backing-store allocation independently:
 
 ```zig
-const mimalloc = @import("mimalloc.zig");
+const mimalloc = @import("@mimalloc");
 const rt = try m.Runtime.create(metadata_alloc, .{
     .array_buffer_allocator = .{ .zig = mimalloc.allocator },
 });
@@ -104,7 +110,7 @@ background threads and must not call V8. `fromZig` returns
 Zig/mimalloc allocations do not reside in the sandbox. Use V8's default allocator
 or a separately implemented sandbox-compatible borrowed allocator in that build.
 
-`mimalloc.zig`'s `allocator` has process-lifetime state and supports cross-thread frees;
+The `@mimalloc` module's `allocator` has process-lifetime state and supports cross-thread frees;
 there is no Zig allocator deinit call. Zig builds the pinned dependency's `src/static.c`
 directly and installs `libmimalloc.a` alongside `libv8_zig.a`. C consumers using the
 `mi_*` APIs must link the mimalloc archive too. No libc malloc overrides or macOS
@@ -395,8 +401,24 @@ Opaque non-URL identities can use a custom resolver without the map adapter.
 The intrinsic inventory targets V8 15.2.124.1. Update and test it whenever V8 changes.
 Scope creation rejects other engine versions until the inventory is updated.
 Built-in bindings and prototype graphs are immutable; scope-local globals remain
-writable. String code generation, WebAssembly, shared memory, and ShadowRealm are
-disabled. V8 freezes the original Date methods and ordinary Date prototype, and
+writable. String code generation is disabled; ShadowRealm is never installed.
+WebAssembly is built in and exposed as a frozen `WebAssembly` namespace
+(`patches/v8/0007-wasm-hardening.patch` seals its constructors and prototypes with the
+other intrinsics); scopes cannot yet opt out of it. Contexts restored from a custom
+snapshot keep the preinstalled, unexposed namespace object only.
+SharedArrayBuffer and Atomics are available within scopes. Blocking `Atomics.wait()`
+defaults to disabled per managed isolate; enable it with
+`Runtime.create(alloc, .{ .allow_explicit_blocking_api = true })`, or change it on the owning
+thread with `runtime.isolate.setAllowExplicitBlockingApi(allow)`. Nonblocking atomic operations
+and `Atomics.waitAsync()` remain available. Shared buffers and typed arrays are
+still rejected by the immutable capability/export hardener.
+`Error.stackTraceLimit` is absent. `Scope.Options.stack_trace_limit` accepts
+`.{ .limited = 10 }`, `.unlimited`, or `.none`;
+`scope.getStackTraceLimit()` and `scope.setStackTraceLimit(limit)` read/change it
+on the runtime thread. Only subsequent captures use a new limit. The raw
+Context methods require an entered isolate and a live HandleScope. Custom
+snapshots preserve the native setting; no JavaScript property is consulted.
+V8 reduces `Date` to a frozen `Date.now()` (constructor throws; use Temporal), and
 omits RegExp legacy static accessors during installation. Hidden prototypes are
 read directly from native-context maps, without constructing Segmenters. These
 engine guarantees also apply to raw contexts; see [engine finalization](intrinsics.md#engine-finalization).

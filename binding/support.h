@@ -235,6 +235,20 @@ struct memory_span_t {
   size_t size;
 };
 
+struct const_memory_span_t {
+  const uint8_t* data;
+  size_t size;
+};
+
+// Plain-C view of a v8::FunctionCallbackInfo, read by the Rust bindings
+// without calling back into C++ (see v8__FunctionCallbackInfo__GetParts).
+struct function_callback_info_parts_t {
+  void* isolate;
+  void* return_value;
+  const void* data;
+  int length;
+};
+
 #define EACH_TYPED_ARRAY(V) \
   V(Uint8Array)             \
   V(Uint8ClampedArray)      \
@@ -248,5 +262,23 @@ struct memory_span_t {
   V(Float64Array)           \
   V(BigUint64Array)         \
   V(BigInt64Array)
+
+// The cppgc object type backing every Rust-defined garbage-collected object.
+// Trace, the destructor and the name are implemented by the embedder (Rust)
+// through callbacks stored in the object; see binding.cc.
+class RustObj : public v8::Object::Wrappable {
+ public:
+  ~RustObj();
+  void Trace(cppgc::Visitor* visitor) const;
+  const char* GetHumanReadableName() const final;
+};
+
+// Type-erased std::shared_ptr<v8::WasmStreaming> handed across the C ABI.
+struct WasmStreamingSharedPtr {
+  std::shared_ptr<v8::WasmStreaming> inner;
+};
+
+static_assert(sizeof(WasmStreamingSharedPtr) <= 2 * sizeof(void*),
+              "std::shared_ptr<v8::WasmStreaming> size mismatch");
 
 #endif  // SUPPORT_H_

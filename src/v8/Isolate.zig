@@ -1,6 +1,6 @@
 const std = @import("std");
-const binding = @import("../binding.zig");
-const e = @import("../externs.gen.zig");
+const binding = @import("../generated/binding.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 const ResourceConstraints = v8.ResourceConstraints;
 const HostInitializeImportMetaObjectCallback = v8.HostInitializeImportMetaObjectCallback;
@@ -26,11 +26,15 @@ pub const Isolate = extern struct {
         array_buffer_allocator: ArrayBuffer.Allocator,
         array_buffer_allocator_shared: [2]?*anyopaque = .{ null, null },
         external_references: ?*const isize = null,
-        allow_atomics_wait: bool = true,
+        /// Copied into the isolate; controls blocking Atomics.wait only.
+        /// Atomics, Atomics.waitAsync and SharedArrayBuffer remain available.
+        allow_explicit_blocking_api: bool = false,
         _fatal_error_handler: ?*const anyopaque = null,
         _oom_error_handler: ?*const anyopaque = null,
         cpp_heap: ?*const anyopaque = null,
 
+        /// Returns value-owned parameters; retains no resources. Initializes V8's
+        /// defaults with blocking Atomics.wait disabled for Zig-created isolates.
         pub fn init() CreateParams {
             comptime {
                 if (@sizeOf(CreateParams) != binding.sizes.Isolate_CreateParams) {
@@ -39,6 +43,7 @@ pub const Isolate = extern struct {
             }
             var params: CreateParams = undefined;
             e.v8__Isolate__CreateParams__CONSTRUCT(&params);
+            params.allow_explicit_blocking_api = false;
             return params;
         }
     };
@@ -183,10 +188,6 @@ pub const Isolate = extern struct {
         e.v8__Isolate__SetPromiseRejectCallback(isolate.handle, callback);
     }
 
-    pub fn setWasmAsyncResolvePromiseCallback(isolate: v8.Isolate, callback: v8.Callbacks.WasmAsyncResolvePromiseCallback) void {
-        e.v8__Isolate__SetWasmAsyncResolvePromiseCallback(isolate.handle, callback);
-    }
-
     pub fn setHostCreateShadowRealmContextCallback(isolate: v8.Isolate, callback: v8.Callbacks.HostCreateShadowRealmContextCallback) void {
         e.v8__Isolate__SetHostCreateShadowRealmContextCallback(isolate.handle, callback);
     }
@@ -243,16 +244,11 @@ pub const Isolate = extern struct {
         e.v8__Isolate__SetOOMErrorHandler(isolate.handle, callback);
     }
 
-    pub fn setAllowAtomicsWait(isolate: v8.Isolate, allow: bool) void {
+    /// Copies allow into this isolate on its owning thread; retains no resources.
+    /// Changes blocking Atomics.wait permission in existing and future contexts.
+    /// Does not hide Atomics or affect Atomics.waitAsync.
+    pub fn setAllowExplicitBlockingApi(isolate: v8.Isolate, allow: bool) void {
         e.v8__Isolate__SetAllowAtomicsWait(isolate.handle, allow);
-    }
-
-    pub fn setWasmStreamingCallback(isolate: v8.Isolate, callback: v8.Callbacks.WasmStreamingCallback) void {
-        e.v8__Isolate__SetWasmStreamingCallback(isolate.handle, callback);
-    }
-
-    pub fn setAllowWasmCodeGenerationCallback(isolate: v8.Isolate, callback: v8.Callbacks.AllowWasmCodeGenerationCallback) void {
-        e.v8__Isolate__SetAllowWasmCodeGenerationCallback(isolate.handle, callback);
     }
 
     pub fn hasPendingBackgroundTasks(isolate: v8.Isolate) bool {

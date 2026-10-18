@@ -1,4 +1,4 @@
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 
 pub const ResourceConstraints = extern struct {
     code_range_size_: usize,

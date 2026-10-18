@@ -1,0 +1,59 @@
+# Copyright 2018-2019 the Deno authors. All rights reserved. MIT license.
+# Based on https://github.com/denoland/rusty_v8/blob/main/BUILD.gn
+
+static_library("v8_zig") {
+  complete_static_lib = true
+
+  sources = [
+    "./binding/binding.cc",
+    "./binding/rusty.cc",
+    "./binding/icu-compressed.cc",
+    "./binding/icu-data.gen.cc",
+  ]
+  if (is_mac) {
+    sources += [ "./binding/darwin-frameworks.cc" ]
+  }
+  deps = [
+    "//build/config:shared_library_deps",
+    "//:v8",
+    "//:v8_libbase",
+    "//:v8_libplatform",
+  ]
+  configs -= [
+    "//build/config/compiler:default_init_stack_vars",
+    "//build/config/compiler:thin_archive",
+  ]
+  configs += [ ":v8_zig_config" ]
+}
+
+config("v8_zig_config") {
+  configs = [
+    "//:external_config",
+    "//:toolchain",
+    "//:features",
+  ]
+  cflags = []
+
+  # We need these directories in the search path to be able to include some
+  # internal V8 headers.
+  include_dirs = [
+    "v8",
+    "$target_gen_dir/v8",
+  ]
+
+  if (is_debug) {
+    defines = [ "DEBUG" ]
+  }
+
+  if (is_clang) {
+    cflags += [
+      "-fcolor-diagnostics",
+      "-fansi-escape-codes",
+
+      # Access control is a front-end check only (no ABI effect). Disabling it
+      # lets the shim, and the layout probe built from these same flags, reach
+      # private V8 members such as FunctionCallbackInfo::kArgsLength.
+      "-fno-access-control",
+    ]
+  }
+}

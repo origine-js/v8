@@ -1,5 +1,5 @@
-const v8Binding = @import("../binding.zig");
-const e = @import("../externs.gen.zig");
+const v8Binding = @import("../generated/binding.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 
 pub const PromiseRejectMessage = extern struct {

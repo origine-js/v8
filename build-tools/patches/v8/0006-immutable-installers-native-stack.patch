@@ -1,0 +1,1582 @@
+diff --git a/include/v8-context.h b/include/v8-context.h
+--- a/include/v8-context.h
++++ b/include/v8-context.h
+@@ -211,6 +211,13 @@
+    * is already entered, this old context is saved so it can be
+    * restored when the new context is exited.
+    */
++  // Native per-context frame limit: -1 means unlimited, 0 means none.
++  // Values are copied; no resources are retained. Requires the owning isolate
++  // entered and a live HandleScope. Changes affect subsequent captures only.
++  void SetStackTraceLimit(int limit);
++  // Returns the native limit by value under the same execution requirements.
++  int GetStackTraceLimit();
++
+   void Enter();
+ 
+   /**
+diff --git a/src/api/api.cc b/src/api/api.cc
+--- a/src/api/api.cc
++++ b/src/api/api.cc
+@@ -905,6 +905,24 @@
+   return IsCppHeapExternalObject(*Utils::OpenDirectHandle(this));
+ }
+ 
++// Borrows this context through return. Copies a native limit; retains no host
++// resources. Requires its isolate entered and a live HandleScope. No JS runs.
++void Context::SetStackTraceLimit(int limit) {
++  CHECK_GE(limit, -1);
++  auto context = Utils::OpenDirectHandle(this);
++  i::Isolate* isolate = i::Isolate::Current();
++  i::HandleScope scope(isolate);
++  context->native_context()->set_zig_stack_trace_limit(
++      *isolate->factory()->NewNumberFromInt(limit));
++}
++
++// Returns a value; retains no resources. Owning isolate/HandleScope must be live.
++int Context::GetStackTraceLimit() {
++  auto context = Utils::OpenDirectHandle(this);
++  return static_cast<int>(i::Object::NumberValue(
++      context->native_context()->zig_stack_trace_limit()));
++}
++
+ void Context::Enter() {
+   i::DisallowGarbageCollection no_gc;
+   i::Tagged<i::NativeContext> env = *Utils::OpenDirectHandle(this);
+diff --git a/src/execution/isolate.cc b/src/execution/isolate.cc
+--- a/src/execution/isolate.cc
++++ b/src/execution/isolate.cc
+@@ -1739,9 +1739,8 @@
+   Handle<UnionOf<Undefined, FixedArray>> call_site_infos_or_formatted_stack =
+       factory()->undefined_value();
+ 
+-  // Capture the "simple stack trace" for the error.stack property,
+-  // which can be disabled by setting Error.stackTraceLimit to a non
+-  // number value or simply deleting the property. If the inspector
++  // Capture error.stack using native per-context configuration. No JavaScript
++  // properties or getters are consulted. If the inspector
+   // is active, and requests more stack frames than the JavaScript
+   // program itself, we collect up to the maximum.
+   int stack_trace_limit = 0;
+@@ -1769,7 +1768,7 @@
+   // stack trace" above and whether that's usable (meaning the API
+   // didn't request to include cross-origin frames), we remember the
+   // cap for the stack trace (either a positive limit indicating that
+-  // the Error.stackTraceLimit value was below what was requested via
++  // the native stack-trace limit was below what was requested via
+   // the API, or a negative limit to indicate the opposite), or we
+   // collect a "detailed stack trace" eagerly and stash that away.
+   if (capture_stack_trace_for_uncaught_exceptions_) {
+@@ -2194,22 +2193,13 @@
+   return direct_handle(script->GetEvalOrigin(), this);
+ }
+ 
++// Borrows isolate/result on the isolate thread with a live context. Copies the
++// native limit into result; retains no resources and invokes no JavaScript.
+ bool Isolate::GetStackTraceLimit(Isolate* isolate, int* result) {
+   if (v8_flags.correctness_fuzzer_suppressions) return false;
+-  DirectHandle<JSObject> error = isolate->error_function();
+-
+-  DirectHandle<String> key = isolate->factory()->stackTraceLimit_string();
+-  DirectHandle<Object> stack_trace_limit =
+-      JSReceiver::GetDataProperty(isolate, error, key);
+-  if (!IsNumber(*stack_trace_limit)) return false;
+-
+-  // Ensure that limit is not negative.
+-  *result = std::max(
+-      FastD2IChecked(Object::NumberValue(Cast<Number>(*stack_trace_limit))), 0);
+-
+-  if (*result != v8_flags.stack_trace_limit) {
+-    isolate->CountUsage(v8::Isolate::kErrorStackTraceLimit);
+-  }
++  int limit = static_cast<int>(Object::NumberValue(
++      isolate->native_context()->zig_stack_trace_limit()));
++  *result = limit == -1 ? std::numeric_limits<int>::max() : limit;
+ 
+   return true;
+ }
+diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
+--- a/src/init/bootstrapper.cc
++++ b/src/init/bootstrapper.cc
+@@ -356,23 +356,11 @@
+   v->Synchronize(VisitorSynchronization::kExtensions);
+ }
+ 
+-// Borrows isolate/context on the isolate thread with a live HandleScope. Roots
+-// all temporary handles across GC; commits the context-owned, serialized graph
+-// only on success. Failure leaves an unexposed partially finalized context for
+-// GC, never a context usable by the caller. No JS getters or constructors run.
+-bool FinalizeZigIntrinsics(Isolate* isolate,
+-                           DirectHandle<NativeContext> context) {
+-  SaveContext saved_context(isolate);
+-  isolate->set_context(*context);
+-  DirectHandle<JSGlobalObject> global(context->global_object(), isolate);
+-  // SharedArrayBuffer and Atomics stay available; blocking waits are governed
+-  // independently by the isolate's allow_atomics_wait setting.
+-  for (const char* name : {"WebAssembly", "ShadowRealm"}) {
+-    DirectHandle<String> key = isolate->factory()->InternalizeUtf8String(name);
+-    if (!JSReceiver::DeleteProperty(isolate, global, key, LanguageMode::kStrict)
+-             .FromMaybe(false)) return false;
+-  }
+-
++// Borrows a completed subsystem root on the isolate thread/HandleScope. Freezes
++// its builtin graph in place; retains no handles after return. Failure leaves an
++// unexposed partially completed context. Never use with application/host objects.
++bool SealZigIntrinsicFamily(Isolate* isolate, Tagged<Object> root) {
++  if (!v8_flags.zig_harden_intrinsics) return true;
+   std::vector<Handle<JSObject>> graph;
+   // Borrows a tagged value until return; retains ordinary intrinsic objects in
+   // GC-rooted handles for this call. Does not retain globals or internal tables.
+@@ -386,49 +374,7 @@
+     graph.push_back(handle(object, isolate));
+   };
+ 
+-  // Context slots provide hidden prototypes (including Segments and
+-  // SegmentIterator) directly, without allocating guest-visible instances.
+-#define ZIG_INTRINSIC_ROOT(index, type, name)                               \
+-  {                                                                         \
+-    Tagged<Object> value = context->GetNoCell(Context::index);              \
+-    if (std::string_view(#type) == "Map" && IsMap(value)) {                 \
+-      add(Cast<Map>(value)->prototype());                                   \
+-    } else if ((std::string_view(#type) == "JSObject" ||                    \
+-                std::string_view(#type) == "JSFunction") &&                 \
+-               Context::index != Context::EXTRAS_BINDING_OBJECT_INDEX &&    \
+-               Context::index != Context::GLOBAL_PROXY_FUNCTION_INDEX) {    \
+-      add(value);                                                           \
+-    }                                                                       \
+-  }
+-  NATIVE_CONTEXT_FIELDS(ZIG_INTRINSIC_ROOT)
+-#undef ZIG_INTRINSIC_ROOT
+-
+-  // Explicit ECMAScript binding inventory: application and host globals stay
+-  // extensible and are never traversed merely because they are on the global.
+-  constexpr const char* bindings[] = {
+-      "globalThis", "Infinity", "NaN", "undefined", "eval", "isFinite", "isNaN",
+-      "parseFloat", "parseInt", "decodeURI", "decodeURIComponent", "encodeURI",
+-      "encodeURIComponent", "escape", "unescape", "Object", "Function",
+-      "Boolean", "Symbol", "Error", "AggregateError", "EvalError", "RangeError",
+-      "ReferenceError", "SyntaxError", "TypeError", "URIError", "Number",
+-      "BigInt", "Math", "Date", "String", "RegExp", "Array", "Int8Array",
+-      "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array",
+-      "Uint32Array", "BigInt64Array", "BigUint64Array", "Float16Array",
+-      "Float32Array", "Float64Array", "Map", "Set", "WeakMap", "WeakSet",
+-      "ArrayBuffer", "SharedArrayBuffer", "Atomics", "DataView", "JSON", "Promise", "Proxy", "Reflect", "Intl",
+-      "WeakRef", "FinalizationRegistry", "Iterator", "AsyncIterator",
+-      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal"};
+-  std::vector<Handle<String>> installed;
+-  for (const char* name : bindings) {
+-    Handle<String> key = isolate->factory()->InternalizeUtf8String(name);
+-    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
+-    if (it.state() == LookupIterator::NOT_FOUND) continue;
+-    // All builtin global bindings must be data properties by finalization.
+-    if (it.state() != LookupIterator::DATA) return false;
+-    installed.push_back(key);
+-    add(*it.GetDataValue());
+-  }
+-
++  add(root);
+   // Read data and accessor-pair fields directly: descriptor materialization
+   // would invoke native AccessorInfo getters, including lazy properties.
+   for (size_t index = 0; index < graph.size(); ++index) {
+@@ -462,14 +408,551 @@
+     if (!JSReceiver::SetIntegrityLevel(isolate, object, FROZEN, kThrowOnError)
+              .FromMaybe(false)) return false;
+   }
+-  for (auto key : installed) {
++  return true;
++}
++
++// Borrows the fully installed native context on its isolate thread with a live
++// HandleScope. Seals only this subsystem's explicit builtin roots; retains no
++// resources. False leaves an unexposed partial context for GC.
++bool CompleteZigCoreIntrinsics(Isolate* isolate, DirectHandle<NativeContext> context) {
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ASYNC_MODULE_EVALUATE_INTERNAL))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REFLECT_APPLY_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REFLECT_CONSTRUCT_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PERFORM_PROMISE_THEN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROMISE_THEN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROMISE_RESOLVE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::FUNCTION_PROTOTYPE_APPLY_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::UINT8_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INT8_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::UINT16_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INT16_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::UINT32_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INT32_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::BIGUINT64_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::BIGINT64_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::UINT8_CLAMPED_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::FLOAT32_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::FLOAT64_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::FLOAT16_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ABSTRACT_MODULE_SOURCE_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ARRAY_BUFFER_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ARRAY_BUFFER_NOINIT_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ARRAY_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ARRAY_FROM_ASYNC_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::BIGINT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::BOOLEAN_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::CALL_AS_CONSTRUCTOR_DELEGATE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::CALL_AS_FUNCTION_DELEGATE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::CALLSITE_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::CONTEXT_EXTENSION_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::DATA_VIEW_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::DATE_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::EMPTY_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::FUNCTION_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_DISPOSABLE_STACK_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_ASYNC_DISPOSABLE_STACK_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_MAP_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_SET_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_WEAK_MAP_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_WEAK_SET_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_WEAK_REF_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_FINALIZATION_REGISTRY_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::NUMBER_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::OBJECT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROXY_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REGEXP_EXEC_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REGEXP_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REGEXP_MATCH_ALL_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REGEXP_MATCH_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REGEXP_REPLACE_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REGEXP_SEARCH_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REGEXP_SPLIT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SHARED_ARRAY_BUFFER_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::STRING_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SYMBOL_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::TYPED_ARRAY_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ERROR_TO_STRING))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::EVAL_ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::AGGREGATE_ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::GLOBAL_EVAL_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::GLOBAL_PARSE_FLOAT_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::GLOBAL_PARSE_INT_FUN_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::MAP_DELETE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::MAP_GET_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::MAP_HAS_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::MAP_SET_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::FUNCTION_HAS_INSTANCE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::FUNCTION_TO_STRING_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::OBJECT_TO_STRING))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::OBJECT_VALUE_OF_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROMISE_ALL_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROMISE_ALL_SETTLED_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROMISE_ANY_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROMISE_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::RANGE_ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REFERENCE_ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SET_ADD_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SET_DELETE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SET_HAS_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SHADOW_REALM_IMPORT_VALUE_REJECTED_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SUPPRESSED_ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SYNTAX_ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::TYPE_ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::URI_ERROR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::WEAKMAP_SET_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::WEAKMAP_GET_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::WEAKMAP_DELETE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::WEAKSET_ADD_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::SHARED_SPACE_JS_OBJECT_HAS_INSTANCE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ABSTRACT_MODULE_SOURCE_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::FUNCTION_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ARRAY_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ERROR_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_DISPOSABLE_STACK_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_MAP_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_OBJECT_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_SET_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_STRING_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_WEAKMAP_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JSON_OBJECT))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::OBJECT_FUNCTION_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROMISE_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::REGEXP_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::TYPED_ARRAY_PROTOTYPE_INDEX))) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_UINT8_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_UINT8_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_INT8_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_INT8_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_UINT16_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_UINT16_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_INT16_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_INT16_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_UINT32_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_UINT32_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_INT32_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_INT32_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_BIGUINT64_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_BIGUINT64_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_BIGINT64_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_BIGINT64_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_UINT8_CLAMPED_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_UINT8_CLAMPED_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_FLOAT32_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_FLOAT32_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_FLOAT64_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_FLOAT64_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::RAB_GSAB_FLOAT16_ARRAY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::RAB_GSAB_FLOAT16_ARRAY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ACCESSOR_PROPERTY_DESCRIPTOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ACCESSOR_PROPERTY_DESCRIPTOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ARRAY_BUFFER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ARRAY_BUFFER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::BOUND_FUNCTION_WITH_CONSTRUCTOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::BOUND_FUNCTION_WITH_CONSTRUCTOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::BOUND_FUNCTION_WITHOUT_CONSTRUCTOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::BOUND_FUNCTION_WITHOUT_CONSTRUCTOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::DATA_PROPERTY_DESCRIPTOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::DATA_PROPERTY_DESCRIPTOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::FAST_ALIASED_ARGUMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::FAST_ALIASED_ARGUMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INITIAL_MAP_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INITIAL_MAP_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INITIAL_SET_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INITIAL_SET_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INITIAL_WEAKMAP_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INITIAL_WEAKMAP_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INITIAL_WEAKSET_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INITIAL_WEAKSET_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_ARRAY_PACKED_SMI_ELEMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_ARRAY_PACKED_SMI_ELEMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_ARRAY_HOLEY_SMI_ELEMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_ARRAY_HOLEY_SMI_ELEMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_ARRAY_PACKED_ELEMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_ARRAY_PACKED_ELEMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_ARRAY_HOLEY_ELEMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_ARRAY_HOLEY_ELEMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_ARRAY_PACKED_DOUBLE_ELEMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_ARRAY_PACKED_DOUBLE_ELEMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_ARRAY_HOLEY_DOUBLE_ELEMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_ARRAY_HOLEY_DOUBLE_ELEMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_ARRAY_TEMPLATE_LITERAL_OBJECT_MAP)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_ARRAY_TEMPLATE_LITERAL_OBJECT_MAP))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_DISPOSABLE_STACK_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_DISPOSABLE_STACK_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_MAP_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_MAP_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_MODULE_NAMESPACE_MAP)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_MODULE_NAMESPACE_MAP))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_DEFERRED_MODULE_NAMESPACE_MAP)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_DEFERRED_MODULE_NAMESPACE_MAP))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_RAW_JSON_MAP)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_RAW_JSON_MAP))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_SET_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_SET_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::PROMISE_WITHRESOLVERS_RESULT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::PROMISE_WITHRESOLVERS_RESULT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::META_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::META_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::FUNCTION_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::FUNCTION_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::MODULE_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::MODULE_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::EVAL_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::EVAL_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SCRIPT_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SCRIPT_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::AWAIT_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::AWAIT_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::BLOCK_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::BLOCK_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::CATCH_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::CATCH_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::WITH_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::WITH_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::DEBUG_EVALUATE_CONTEXT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::DEBUG_EVALUATE_CONTEXT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::JS_RAB_GSAB_DATA_VIEW_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::JS_RAB_GSAB_DATA_VIEW_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::OBJECT_FUNCTION_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::OBJECT_FUNCTION_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::PROXY_CALLABLE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::PROXY_CALLABLE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::PROXY_CONSTRUCTOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::PROXY_CONSTRUCTOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::PROXY_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::PROXY_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::PROXY_REVOCABLE_RESULT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::PROXY_REVOCABLE_RESULT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::REGEXP_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::REGEXP_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::REGEXP_RESULT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::REGEXP_RESULT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::REGEXP_RESULT_WITH_INDICES_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::REGEXP_RESULT_WITH_INDICES_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::REGEXP_RESULT_INDICES_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::REGEXP_RESULT_INDICES_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SLOPPY_ARGUMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_ARGUMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SLOW_ALIASED_ARGUMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOW_ALIASED_ARGUMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::STRICT_ARGUMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_ARGUMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SLOW_OBJECT_WITH_NULL_PROTOTYPE_MAP)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOW_OBJECT_WITH_NULL_PROTOTYPE_MAP))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SLOW_OBJECT_WITH_OBJECT_PROTOTYPE_MAP)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOW_OBJECT_WITH_OBJECT_PROTOTYPE_MAP))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SET_UINT8_ARRAY_RESULT_MAP)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SET_UINT8_ARRAY_RESULT_MAP))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SLOPPY_FUNCTION_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_FUNCTION_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SLOPPY_FUNCTION_WITH_NAME_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_FUNCTION_WITH_NAME_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SLOPPY_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SLOPPY_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::STRICT_FUNCTION_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_FUNCTION_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::STRICT_FUNCTION_WITH_NAME_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_FUNCTION_WITH_NAME_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::STRICT_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::STRICT_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::METHOD_WITH_NAME_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::METHOD_WITH_NAME_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::CLASS_FUNCTION_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::CLASS_FUNCTION_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::STRING_FUNCTION_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRING_FUNCTION_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::WRAPPED_FUNCTION_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::WRAPPED_FUNCTION_MAP_INDEX))->prototype())) return false;
++  // Namespaces and global functions without native-context fields.
++  for (const char* name : {"Math", "JSON", "Reflect", "Atomics", "isFinite",
++                          "isNaN", "decodeURI", "decodeURIComponent", "encodeURI",
++                          "encodeURIComponent", "escape", "unescape"}) {
++    DirectHandle<String> key = isolate->factory()->InternalizeUtf8String(name);
++    LookupIterator it(isolate, direct_handle(context->global_object(), isolate),
++                      key, LookupIterator::OWN_SKIP_INTERCEPTOR);
++    if (it.state() == LookupIterator::DATA &&
++        !SealZigIntrinsicFamily(isolate, *it.GetDataValue())) return false;
++  }
++  return true;
++}
++
++// Borrows the fully installed native context on its isolate thread with a live
++// HandleScope. Seals only this subsystem's explicit builtin roots; retains no
++// resources. False leaves an unexposed partial context for GC.
++bool CompleteZigIterationIntrinsics(Isolate* isolate, DirectHandle<NativeContext> context) {
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::GENERATOR_NEXT_INTERNAL))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ASYNC_FUNCTION_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ASYNC_GENERATOR_FUNCTION_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::GENERATOR_FUNCTION_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ITERATOR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ITERATOR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ARRAY_ENTRIES_ITERATOR_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ARRAY_FOR_EACH_ITERATOR_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ARRAY_KEYS_ITERATOR_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::ARRAY_VALUES_ITERATOR_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ARRAY_ITERATOR_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_GENERATOR_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ASYNC_ITERATOR_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ASYNC_GENERATOR_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ITERATOR_HELPER_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ITERATOR_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_MAP_ITERATOR_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_SET_ITERATOR_PROTOTYPE_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_STRING_ITERATOR_PROTOTYPE_INDEX))) return false;
++  if (IsMap(context->GetNoCell(Context::ASYNC_FROM_SYNC_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ASYNC_FROM_SYNC_ITERATOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ASYNC_FUNCTION_OBJECT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ASYNC_FUNCTION_OBJECT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::GENERATOR_OBJECT_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::GENERATOR_OBJECT_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ASYNC_GENERATOR_OBJECT_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ASYNC_GENERATOR_OBJECT_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INITIAL_ARRAY_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INITIAL_ARRAY_ITERATOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INITIAL_STRING_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INITIAL_STRING_ITERATOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_FILTER_HELPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_FILTER_HELPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_MAP_HELPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_MAP_HELPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_TAKE_HELPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_TAKE_HELPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_DROP_HELPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_DROP_HELPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_FLAT_MAP_HELPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_FLAT_MAP_HELPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_CONCAT_HELPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_CONCAT_HELPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_ZIP_HELPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_ZIP_HELPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_ZIP_KEYED_HELPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_ZIP_KEYED_HELPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::VALID_ITERATOR_WRAPPER_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::VALID_ITERATOR_WRAPPER_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ITERATOR_RESULT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ITERATOR_RESULT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::MAP_KEY_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::MAP_KEY_ITERATOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::MAP_KEY_VALUE_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::MAP_KEY_VALUE_ITERATOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::MAP_VALUE_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::MAP_VALUE_ITERATOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INITIAL_REGEXP_STRING_ITERATOR_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INITIAL_REGEXP_STRING_ITERATOR_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SET_VALUE_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SET_VALUE_ITERATOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::SET_KEY_VALUE_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SET_KEY_VALUE_ITERATOR_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ASYNC_FUNCTION_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ASYNC_FUNCTION_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ASYNC_FUNCTION_WITH_NAME_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ASYNC_FUNCTION_WITH_NAME_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::GENERATOR_FUNCTION_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::GENERATOR_FUNCTION_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::GENERATOR_FUNCTION_WITH_NAME_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::GENERATOR_FUNCTION_WITH_NAME_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ASYNC_GENERATOR_FUNCTION_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ASYNC_GENERATOR_FUNCTION_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::ASYNC_GENERATOR_FUNCTION_WITH_NAME_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::ASYNC_GENERATOR_FUNCTION_WITH_NAME_MAP_INDEX))->prototype())) return false;
++  return true;
++}
++
++// Borrows the fully installed native context on its isolate thread with a live
++// HandleScope. Seals only this subsystem's explicit builtin roots; retains no
++// resources. False leaves an unexposed partial context for GC.
++bool CompleteZigIntlIntrinsics(Isolate* isolate, DirectHandle<NativeContext> context) {
++#ifdef V8_INTL_SUPPORT
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_COLLATOR_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_DATE_TIME_FORMAT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_DISPLAY_NAMES_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_DURATION_FORMAT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_NUMBER_FORMAT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_LOCALE_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_LIST_FORMAT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_PLURAL_RULES_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_RELATIVE_TIME_FORMAT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INTL_SEGMENTER_FUNCTION_INDEX))) return false;
++  if (IsMap(context->GetNoCell(Context::INTL_SEGMENTS_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INTL_SEGMENTS_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INTL_SEGMENT_DATA_OBJECT_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INTL_SEGMENT_DATA_OBJECT_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INTL_SEGMENT_DATA_OBJECT_WORDLIKE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INTL_SEGMENT_DATA_OBJECT_WORDLIKE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::INTL_SEGMENT_ITERATOR_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::INTL_SEGMENT_ITERATOR_MAP_INDEX))->prototype())) return false;
++  DirectHandle<String> key = isolate->factory()->InternalizeUtf8String("Intl");
++  auto value = JSReceiver::GetDataProperty(isolate,
++      direct_handle(context->global_object(), isolate), key);
++  if (!SealZigIntrinsicFamily(isolate, *value)) return false;
++#endif
++  return true;
++}
++
++// Borrows the fully installed native context on its isolate thread with a live
++// HandleScope. Seals only this subsystem's explicit builtin roots; retains no
++// resources. False leaves an unexposed partial context for GC.
++bool CompleteZigTemporalIntrinsics(Isolate* isolate, DirectHandle<NativeContext> context) {
++#ifdef V8_TEMPORAL_SUPPORT
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_DURATION_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_INSTANT_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_PLAIN_DATE_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_PLAIN_DATE_TIME_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_PLAIN_MONTH_DAY_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_PLAIN_TIME_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_PLAIN_YEAR_MONTH_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_TIME_ZONE_FUNCTION_INDEX))) return false;
++  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JS_TEMPORAL_ZONED_DATE_TIME_FUNCTION_INDEX))) return false;
++  DirectHandle<String> key = isolate->factory()->InternalizeUtf8String("Temporal");
++  auto value = JSReceiver::GetDataProperty(isolate,
++      direct_handle(context->global_object(), isolate), key);
++  if (!SealZigIntrinsicFamily(isolate, *value)) return false;
++#endif
++  return true;
++}
++
++// Borrows the completed context on its isolate thread/HandleScope. Publishes
++// immutable builtin bindings, including bindings cloned from the mutable seed.
++// Retains no host resources. Failure leaves an unexposed partial context.
++bool CompleteZigGlobalBindings(Isolate* isolate,
++                               DirectHandle<NativeContext> context) {
++  constexpr const char* bindings[] = {
++      "globalThis", "Infinity", "NaN", "undefined", "eval", "isFinite", "isNaN",
++      "parseFloat", "parseInt", "decodeURI", "decodeURIComponent", "encodeURI",
++      "encodeURIComponent", "escape", "unescape", "Object", "Function",
++      "Boolean", "Symbol", "Error", "AggregateError", "EvalError", "RangeError",
++      "ReferenceError", "SyntaxError", "TypeError", "URIError", "Number",
++      "BigInt", "Math", "Date", "String", "RegExp", "Array", "Int8Array",
++      "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array",
++      "Uint32Array", "BigInt64Array", "BigUint64Array", "Float16Array",
++      "Float32Array", "Float64Array", "Map", "Set", "WeakMap", "WeakSet",
++      "ArrayBuffer", "SharedArrayBuffer", "Atomics", "DataView", "JSON", "Promise", "Proxy", "Reflect", "Intl",
++      "WeakRef", "FinalizationRegistry", "Iterator", "AsyncIterator",
++      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal"};
++  DirectHandle<JSGlobalObject> global(context->global_object(), isolate);
++  for (const char* name : bindings) {
++    DirectHandle<String> key = isolate->factory()->InternalizeUtf8String(name);
++    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
++    if (it.state() == LookupIterator::NOT_FOUND) continue;
++    if (it.state() != LookupIterator::DATA) return false;
+     PropertyDescriptor desc;
+     desc.set_writable(false);
+     desc.set_configurable(false);
+     if (!JSReceiver::DefineOwnProperty(isolate, global, key, &desc,
+-                                       Just(kThrowOnError)).FromMaybe(false)) {
+-      return false;
++                                      Just(kThrowOnError)).FromMaybe(false)) return false;
++  }
++  return true;
++}
++
++// Borrows isolate/context on the isolate thread with a live HandleScope. Roots
++// all temporary handles across GC; commits the context-owned, serialized graph
++// only on success. Failure leaves an unexposed partially finalized context for
++// GC, never a context usable by the caller. Verifies without changing descriptors
++// or freezing objects; no JS getters or constructors run.
++bool VerifyAndCaptureZigIntrinsics(Isolate* isolate,
++                           DirectHandle<NativeContext> context) {
++  SaveContext saved_context(isolate);
++  isolate->set_context(*context);
++  DirectHandle<JSGlobalObject> global(context->global_object(), isolate);
++  std::vector<Handle<JSObject>> graph;
++  // Borrows a tagged value until return; retains ordinary intrinsic objects in
++  // GC-rooted handles for this call. Does not retain globals or internal tables.
++  auto add = [&](Tagged<Object> value) {
++    if (!IsJSObject(value) || IsJSGlobalObject(value) ||
++        IsJSGlobalProxy(value)) return;
++    Tagged<JSObject> object = Cast<JSObject>(value);
++    for (auto prior : graph) {
++      if (*prior == object) return;
+     }
++    graph.push_back(handle(object, isolate));
++  };
++
++  // Context slots provide hidden prototypes (including Segments and
++  // SegmentIterator) directly, without allocating guest-visible instances.
++#define ZIG_INTRINSIC_ROOT(index, type, name)                               \
++  {                                                                         \
++    Tagged<Object> value = context->GetNoCell(Context::index);              \
++    if (std::string_view(#type) == "Map" && IsMap(value)) {                 \
++      add(Cast<Map>(value)->prototype());                                   \
++    } else if ((std::string_view(#type) == "JSObject" ||                    \
++                std::string_view(#type) == "JSFunction") &&                 \
++               Context::index != Context::EXTRAS_BINDING_OBJECT_INDEX &&    \
++               Context::index != Context::GLOBAL_PROXY_FUNCTION_INDEX) {    \
++      add(value);                                                           \
++    }                                                                       \
++  }
++  NATIVE_CONTEXT_FIELDS(ZIG_INTRINSIC_ROOT)
++#undef ZIG_INTRINSIC_ROOT
++
++  // Explicit ECMAScript binding inventory: application and host globals stay
++  // extensible and are never traversed merely because they are on the global.
++  constexpr const char* bindings[] = {
++      "globalThis", "Infinity", "NaN", "undefined", "eval", "isFinite", "isNaN",
++      "parseFloat", "parseInt", "decodeURI", "decodeURIComponent", "encodeURI",
++      "encodeURIComponent", "escape", "unescape", "Object", "Function",
++      "Boolean", "Symbol", "Error", "AggregateError", "EvalError", "RangeError",
++      "ReferenceError", "SyntaxError", "TypeError", "URIError", "Number",
++      "BigInt", "Math", "Date", "String", "RegExp", "Array", "Int8Array",
++      "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array",
++      "Uint32Array", "BigInt64Array", "BigUint64Array", "Float16Array",
++      "Float32Array", "Float64Array", "Map", "Set", "WeakMap", "WeakSet",
++      "ArrayBuffer", "SharedArrayBuffer", "Atomics", "DataView", "JSON", "Promise", "Proxy", "Reflect", "Intl",
++      "WeakRef", "FinalizationRegistry", "Iterator", "AsyncIterator",
++      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal"};
++  std::vector<Handle<String>> installed;
++  for (const char* name : bindings) {
++    Handle<String> key = isolate->factory()->InternalizeUtf8String(name);
++    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
++    if (it.state() == LookupIterator::NOT_FOUND) continue;
++    // All builtin global bindings must be data properties by finalization.
++    if (it.state() != LookupIterator::DATA) return false;
++    installed.push_back(key);
++    add(*it.GetDataValue());
++  }
++
++  // Read data and accessor-pair fields directly: descriptor materialization
++  // would invoke native AccessorInfo getters, including lazy properties.
++  for (size_t index = 0; index < graph.size(); ++index) {
++    Handle<JSObject> object = graph[index];
++    add(object->map()->prototype());
++    if (IsJSFunction(*object)) {
++      Tagged<JSFunction> function = Cast<JSFunction>(*object);
++      if (function->has_prototype_slot() && function->has_instance_prototype()) {
++        add(function->instance_prototype());
++      }
++    }
++    DirectHandle<FixedArray> keys;
++    if (!JSReceiver::OwnPropertyKeys(isolate, object).ToHandle(&keys)) return false;
++    for (int k = 0; k < static_cast<int>(keys->length().value()); ++k) {
++      DirectHandle<Object> key(keys->get(k), isolate);
++      LookupIterator it(isolate, object, PropertyKey(isolate, key),
++                        LookupIterator::OWN_SKIP_INTERCEPTOR);
++      if (it.state() == LookupIterator::DATA) {
++        add(*it.GetDataValue());
++      } else if (it.state() == LookupIterator::ACCESSOR) {
++        DirectHandle<Object> accessors = it.GetAccessors();
++        if (IsAccessorPair(*accessors)) {
++          auto pair = Cast<AccessorPair>(accessors);
++          add(pair->getter());
++          add(pair->setter());
++        }
++      }
++    }
++  }
++  for (auto object : graph) {
++    if (!JSReceiver::TestIntegrityLevel(isolate, object, FROZEN)
++             .FromMaybe(false)) return false;
++  }
++  for (auto key : installed) {
++    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
++    if (it.state() != LookupIterator::DATA ||
++        (it.property_attributes() & (READ_ONLY | DONT_DELETE)) !=
++            (READ_ONLY | DONT_DELETE)) return false;
+   }
+   Handle<FixedArray> inventory = isolate->factory()->NewFixedArray(
+       static_cast<int>(graph.size()), AllocationType::kOld);
+@@ -502,7 +985,7 @@
+     }
+     if (v8_flags.zig_harden_intrinsics &&
+         env->zig_intrinsic_objects()->length().value() == 0 &&
+-        !FinalizeZigIntrinsics(isolate_, env)) return {};
++        !VerifyAndCaptureZigIntrinsics(isolate_, env)) return {};
+   }
+   LogAllMaps();
+   isolate_->heap()->NotifyBootstrapComplete();
+@@ -678,6 +1161,25 @@
+       instance_size, inobject_properties, prototype, builtin, len, adapt);
+ }
+ 
++// Copies property attributes for builtin installation; retains no resources.
++// The extensible engine seed is the only construction-time exception.
++PropertyAttributes ZigIntrinsicAttributes(PropertyAttributes attrs) {
++  return v8_flags.zig_harden_intrinsics
++      ? static_cast<PropertyAttributes>(attrs | READ_ONLY | DONT_DELETE) : attrs;
++}
++
++// Borrows builtin holder/key/value with a live isolate/HandleScope through return.
++// The context retains the property; no host storage is retained. Installation OOM
++// is fatal in V8. Application/global-template copying must use ordinary AddProperty.
++template <typename Holder, typename Key, typename Value>
++void InstallZigDataProperty(Isolate* isolate, Holder holder, Key key,
++                            Value value, PropertyAttributes attrs = NONE) {
++  JSObject::AddProperty(isolate, holder, key, value, ZigIntrinsicAttributes(attrs));
++}
++
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE DirectHandle<JSFunction> InstallFunction(
+     Isolate* isolate, DirectHandle<JSObject> target, DirectHandle<String> name,
+     InstanceType type, int instance_size, int inobject_properties,
+@@ -687,7 +1189,7 @@
+   DirectHandle<JSFunction> function =
+       CreateFunction(isolate, name, type, instance_size, inobject_properties,
+                      prototype, call, len, adapt);
+-  JSObject::AddProperty(isolate, target, name, function, DONT_ENUM);
++  InstallZigDataProperty(isolate, target, name, function, DONT_ENUM);
+   return function;
+ }
+ 
+@@ -756,6 +1258,9 @@
+   }
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE Handle<JSFunction> InstallFunctionWithBuiltinId(
+     Isolate* isolate, DirectHandle<JSObject> base, const char* name,
+     Builtin call, int len, AdaptArguments adapt) {
+@@ -764,10 +1269,13 @@
+   Handle<JSFunction> fun =
+       SimpleCreateFunction(isolate, internalized_name, call, len, adapt);
+   RetainZigIntrinsic(isolate, call, fun);
+-  JSObject::AddProperty(isolate, base, internalized_name, fun, DONT_ENUM);
++  InstallZigDataProperty(isolate, base, internalized_name, fun, DONT_ENUM);
+   return fun;
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE Handle<JSFunction> InstallFunctionAtSymbol(
+     Isolate* isolate, DirectHandle<JSObject> base, DirectHandle<Symbol> symbol,
+     const char* symbol_string, Builtin call, int len, AdaptArguments adapt,
+@@ -777,10 +1285,13 @@
+   Handle<JSFunction> fun =
+       SimpleCreateFunction(isolate, internalized_symbol, call, len, adapt);
+   RetainZigIntrinsic(isolate, call, fun);
+-  JSObject::AddProperty(isolate, base, symbol, fun, attrs);
++  InstallZigDataProperty(isolate, base, symbol, fun, attrs);
+   return fun;
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE DirectHandle<JSFunction> CreateSharedObjectConstructor(
+     Isolate* isolate, DirectHandle<String> name, DirectHandle<Map> instance_map,
+     Builtin builtin, int len, AdaptArguments adapt) {
+@@ -794,7 +1305,7 @@
+           .Build();
+   constructor->set_prototype_or_initial_map(*instance_map, kReleaseStore);
+ 
+-  JSObject::AddProperty(
++  InstallZigDataProperty(
+       isolate, constructor, factory->has_instance_symbol(),
+       direct_handle(
+           isolate->native_context()->shared_space_js_object_has_instance(),
+@@ -803,6 +1314,9 @@
+   return constructor;
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE void SimpleInstallGetterSetter(Isolate* isolate,
+                                            DirectHandle<JSObject> base,
+                                            DirectHandle<Name> name,
+@@ -821,10 +1335,13 @@
+       SimpleCreateFunction(isolate, setter_name, call_setter, 1, kAdapt);
+ 
+   JSObject::DefineOwnAccessorIgnoreAttributes(base, name, getter, setter,
+-                                              DONT_ENUM)
++                                              v8_flags.zig_harden_intrinsics ? static_cast<PropertyAttributes>(DONT_ENUM | DONT_DELETE) : DONT_ENUM)
+       .Check();
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE Handle<JSFunction> SimpleInstallGetter(
+     Isolate* isolate, DirectHandle<JSObject> base, DirectHandle<Name> name,
+     DirectHandle<Name> property_name, Builtin call, AdaptArguments adapt) {
+@@ -837,7 +1354,7 @@
+   DirectHandle<Object> setter = isolate->factory()->undefined_value();
+ 
+   JSObject::DefineOwnAccessorIgnoreAttributes(base, property_name, getter,
+-                                              setter, DONT_ENUM)
++                                              setter, v8_flags.zig_harden_intrinsics ? static_cast<PropertyAttributes>(DONT_ENUM | DONT_DELETE) : DONT_ENUM)
+       .Check();
+ 
+   return getter;
+@@ -851,18 +1368,24 @@
+   return SimpleInstallGetter(isolate, base, name, name, call, adapt);
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE void InstallConstant(Isolate* isolate,
+                                  DirectHandle<JSObject> holder,
+                                  const char* name, DirectHandle<Object> value) {
+-  JSObject::AddProperty(
++  InstallZigDataProperty(
+       isolate, holder, isolate->factory()->InternalizeUtf8String(name), value,
+       static_cast<PropertyAttributes>(DONT_DELETE | DONT_ENUM | READ_ONLY));
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE void InstallTrueValuedProperty(Isolate* isolate,
+                                            DirectHandle<JSObject> holder,
+                                            const char* name) {
+-  JSObject::AddProperty(isolate, holder,
++  InstallZigDataProperty(isolate, holder,
+                         isolate->factory()->InternalizeUtf8String(name),
+                         isolate->factory()->true_value(), NONE);
+ }
+@@ -877,10 +1400,13 @@
+                       kAdapt);
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ V8_NOINLINE void InstallToStringTag(Isolate* isolate,
+                                     DirectHandle<JSObject> holder,
+                                     DirectHandle<String> value) {
+-  JSObject::AddProperty(isolate, holder,
++  InstallZigDataProperty(isolate, holder,
+                         isolate->factory()->to_string_tag_symbol(), value,
+                         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+ }
+@@ -1139,6 +1665,9 @@
+ 
+ }  // namespace
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ Handle<JSFunction> SimpleInstallFunction(Isolate* isolate,
+                                          DirectHandle<JSObject> base,
+                                          const char* name, Builtin call,
+@@ -1151,10 +1680,13 @@
+   Handle<JSFunction> fun =
+       SimpleCreateFunction(isolate, internalized_name, call, len, adapt);
+   RetainZigIntrinsic(isolate, call, fun);
+-  JSObject::AddProperty(isolate, base, internalized_name, fun, attrs);
++  InstallZigDataProperty(isolate, base, internalized_name, fun, attrs);
+   return fun;
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void Genesis::CreateIteratorMaps(DirectHandle<JSFunction> empty) {
+   // Create iterator-related meta-objects.
+   DirectHandle<JSObject> iterator_prototype = factory()->NewJSObject(
+@@ -1180,12 +1712,12 @@
+ 
+   InstallToStringTag(isolate(), generator_function_prototype,
+                      "GeneratorFunction");
+-  JSObject::AddProperty(isolate(), generator_function_prototype,
++  InstallZigDataProperty(isolate(), generator_function_prototype,
+                         factory()->prototype_string(),
+                         generator_object_prototype,
+                         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+ 
+-  JSObject::AddProperty(isolate(), generator_object_prototype,
++  InstallZigDataProperty(isolate(), generator_object_prototype,
+                         factory()->constructor_string(),
+                         generator_function_prototype,
+                         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+@@ -1241,6 +1773,9 @@
+       *generator_object_prototype_map);
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void Genesis::CreateAsyncIteratorMaps(DirectHandle<JSFunction> empty) {
+   // %AsyncIteratorPrototype%
+   // https://tc39.es/proposal-async-iteration/#sec-asynciteratorprototype
+@@ -1298,11 +1833,11 @@
+   //     %AsyncGeneratorPrototype% intrinsic object.
+   // This property has the attributes
+   //     { [[Writable]]: false, [[Enumerable]]: false, [[Configurable]]: true }.
+-  JSObject::AddProperty(isolate(), async_generator_function_prototype,
++  InstallZigDataProperty(isolate(), async_generator_function_prototype,
+                         factory()->prototype_string(),
+                         async_generator_object_prototype,
+                         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+-  JSObject::AddProperty(isolate(), async_generator_object_prototype,
++  InstallZigDataProperty(isolate(), async_generator_object_prototype,
+                         factory()->constructor_string(),
+                         async_generator_function_prototype,
+                         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+@@ -1491,6 +2026,8 @@
+ 
+   isolate()->heap()->AddToWeakNativeContextList(*native_context());
+   isolate()->set_context(*native_context());
++  native_context()->set_zig_stack_trace_limit(
++      *factory()->NewNumberFromInt(std::max(static_cast<int>(v8_flags.stack_trace_limit), 0)));
+   native_context()->set_zig_intrinsic_objects(
+       ReadOnlyRoots(isolate()).empty_fixed_array());
+ }
+@@ -1652,13 +2189,16 @@
+                                              DirectHandle<JSFunction> function,
+                                              int context_index) {
+   DirectHandle<Smi> index(Smi::FromInt(context_index), isolate);
+-  JSObject::AddProperty(isolate, function,
++  InstallZigDataProperty(isolate, function,
+                         isolate->factory()->native_context_index_symbol(),
+                         index, NONE);
+   isolate->native_context()->set(context_index, *function, UPDATE_WRITE_BARRIER,
+                                  kReleaseStore);
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void InstallError(Isolate* isolate, DirectHandle<JSObject> global,
+                   DirectHandle<String> name, int context_index,
+                   Builtin error_constructor, int error_function_length) {
+@@ -1686,9 +2226,9 @@
+     DirectHandle<JSObject> prototype(
+         Cast<JSObject>(error_fun->instance_prototype()), isolate);
+ 
+-    JSObject::AddProperty(isolate, prototype, factory->name_string(), name,
++    InstallZigDataProperty(isolate, prototype, factory->name_string(), name,
+                           DONT_ENUM);
+-    JSObject::AddProperty(isolate, prototype, factory->message_string(),
++    InstallZigDataProperty(isolate, prototype, factory->message_string(),
+                           factory->empty_string(), DONT_ENUM);
+ 
+     if (context_index == Context::ERROR_FUNCTION_INDEX) {
+@@ -1746,6 +2286,9 @@
+ 
+ namespace {
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ Handle<JSObject> InitializeTemporal(Isolate* isolate) {
+   DirectHandle<NativeContext> native_context = isolate->native_context();
+ 
+@@ -1771,7 +2314,7 @@
+     // https://tc39.es/ecma262/#sec-temporal-now-object
+     DirectHandle<JSObject> now = isolate->factory()->NewJSObject(
+         isolate->object_function(), AllocationType::kOld);
+-    JSObject::AddProperty(isolate, temporal, "Now", now, DONT_ENUM);
++    InstallZigDataProperty(isolate, temporal, "Now", now, DONT_ENUM);
+     InstallToStringTag(isolate, now, "Temporal.Now");
+ 
+     // Note: There are NO Temporal.Now.plainTime
+@@ -2268,6 +2811,9 @@
+ // work in the snapshot case is done in HookUpGlobalObject.
+ // Borrows global_object/empty_function during installation on the isolate
+ // thread; retains builtin references in GC-owned native-context fields.
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
+                                DirectHandle<JSFunction> empty_function) {
+   // --- N a t i v e   C o n t e x t ---
+@@ -2337,7 +2883,7 @@
+   {  // --- O b j e c t ---
+     DirectHandle<String> object_name = factory->Object_string();
+     DirectHandle<JSFunction> object_function = isolate_->object_function();
+-    JSObject::AddProperty(isolate_, global_object, object_name, object_function,
++    InstallZigDataProperty(isolate_, global_object, object_name, object_function,
+                           DONT_ENUM);
+ 
+     SimpleInstallFunction(isolate_, object_function, "assign",
+@@ -2453,7 +2999,7 @@
+     native_context()->set_function_prototype(*prototype);
+ 
+     // Setup the methods on the %FunctionPrototype%.
+-    JSObject::AddProperty(isolate_, prototype, factory->constructor_string(),
++    InstallZigDataProperty(isolate_, prototype, factory->constructor_string(),
+                           function_fun, DONT_ENUM);
+     DirectHandle<JSFunction> function_prototype_apply =
+         SimpleInstallFunction(isolate_, prototype, "apply",
+@@ -2564,7 +3110,7 @@
+     SetConstructorInstanceType(isolate_, array_function,
+                                JS_ARRAY_CONSTRUCTOR_TYPE);
+ 
+-    JSObject::AddProperty(isolate_, proto, factory->constructor_string(),
++    InstallZigDataProperty(isolate_, proto, factory->constructor_string(),
+                           array_function, DONT_ENUM);
+ 
+     SimpleInstallFunction(isolate_, proto, "at", Builtin::kArrayPrototypeAt, 1,
+@@ -2620,7 +3166,7 @@
+ 
+       DirectHandle<JSFunction> values = InstallFunctionWithBuiltinId(
+           isolate_, proto, "values", Builtin::kArrayPrototypeValues, 0, kAdapt);
+-      JSObject::AddProperty(isolate_, proto, factory->iterator_symbol(), values,
++      InstallZigDataProperty(isolate_, proto, factory->iterator_symbol(), values,
+                             DONT_ENUM);
+       native_context()->set_array_values_iterator(*values);
+     }
+@@ -2680,7 +3226,7 @@
+     InstallTrueValuedProperty(isolate_, unscopables, "values");
+ 
+     JSObject::MigrateSlowToFast(unscopables, 0, "Bootstrapping");
+-    JSObject::AddProperty(
++    InstallZigDataProperty(
+         isolate_, proto, factory->unscopables_symbol(), unscopables,
+         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+ 
+@@ -2740,7 +3286,7 @@
+     JSFunction::SetPrototype(isolate_, number_fun, prototype);
+ 
+     // Install the "constructor" property on the {prototype}.
+-    JSObject::AddProperty(isolate_, prototype, factory->constructor_string(),
++    InstallZigDataProperty(isolate_, prototype, factory->constructor_string(),
+                           number_fun, DONT_ENUM);
+ 
+     // Install the Number.prototype methods.
+@@ -2774,14 +3320,14 @@
+     DirectHandle<JSFunction> parse_float_fun =
+         SimpleInstallFunction(isolate_, number_fun, "parseFloat",
+                               Builtin::kNumberParseFloat, 1, kAdapt);
+-    JSObject::AddProperty(isolate_, global_object, "parseFloat",
++    InstallZigDataProperty(isolate_, global_object, "parseFloat",
+                           parse_float_fun, DONT_ENUM);
+     native_context()->set_global_parse_float_fun(*parse_float_fun);
+ 
+     // Install Number.parseInt and Global.parseInt.
+     DirectHandle<JSFunction> parse_int_fun = SimpleInstallFunction(
+         isolate_, number_fun, "parseInt", Builtin::kNumberParseInt, 2, kAdapt);
+-    JSObject::AddProperty(isolate_, global_object, "parseInt", parse_int_fun,
++    InstallZigDataProperty(isolate_, global_object, "parseInt", parse_int_fun,
+                           DONT_ENUM);
+     native_context()->set_global_parse_int_fun(*parse_int_fun);
+ 
+@@ -2825,7 +3371,7 @@
+     JSFunction::SetPrototype(isolate_, boolean_fun, prototype);
+ 
+     // Install the "constructor" property on the {prototype}.
+-    JSObject::AddProperty(isolate_, prototype, factory->constructor_string(),
++    InstallZigDataProperty(isolate_, prototype, factory->constructor_string(),
+                           boolean_fun, DONT_ENUM);
+ 
+     // Install the Boolean.prototype methods.
+@@ -2877,7 +3423,7 @@
+     native_context()->set_initial_string_prototype(*prototype);
+ 
+     // Install the "constructor" property on the {prototype}.
+-    JSObject::AddProperty(isolate_, prototype, factory->constructor_string(),
++    InstallZigDataProperty(isolate_, prototype, factory->constructor_string(),
+                           string_fun, DONT_ENUM);
+ 
+     // Install the String.prototype methods.
+@@ -2980,14 +3526,14 @@
+     DirectHandle<JSFunction> trim_start_fun = SimpleInstallFunction(
+         isolate_, prototype, "trimStart", Builtin::kStringPrototypeTrimStart, 0,
+         kDontAdapt);
+-    JSObject::AddProperty(isolate_, prototype, "trimLeft", trim_start_fun,
++    InstallZigDataProperty(isolate_, prototype, "trimLeft", trim_start_fun,
+                           DONT_ENUM);
+ 
+     // Install `String.prototype.trimEnd` with `trimRight` alias.
+     DirectHandle<JSFunction> trim_end_fun =
+         SimpleInstallFunction(isolate_, prototype, "trimEnd",
+                               Builtin::kStringPrototypeTrimEnd, 0, kDontAdapt);
+-    JSObject::AddProperty(isolate_, prototype, "trimRight", trim_end_fun,
++    InstallZigDataProperty(isolate_, prototype, "trimRight", trim_end_fun,
+                           DONT_ENUM);
+ 
+     SimpleInstallFunction(isolate_, prototype, "toLocaleLowerCase",
+@@ -3412,7 +3958,7 @@
+   {  // -- g l o b a l T h i s
+     DirectHandle<JSGlobalProxy> global_proxy(native_context()->global_proxy(),
+                                              isolate_);
+-    JSObject::AddProperty(isolate_, global, factory->globalThis_string(),
++    InstallZigDataProperty(isolate_, global, factory->globalThis_string(),
+                           global_proxy, DONT_ENUM);
+   }
+ 
+@@ -3433,7 +3979,7 @@
+ 
+     DirectHandle<JSObject> json_object =
+         factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
+-    JSObject::AddProperty(isolate_, global, "JSON", json_object, DONT_ENUM);
++    InstallZigDataProperty(isolate_, global, "JSON", json_object, DONT_ENUM);
+     SimpleInstallFunction(isolate_, json_object, "parse", Builtin::kJsonParse,
+                           2, kDontAdapt);
+     SimpleInstallFunction(isolate_, json_object, "stringify",
+@@ -3449,7 +3995,7 @@
+   {  // -- M a t h
+     DirectHandle<JSObject> math =
+         factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
+-    JSObject::AddProperty(isolate_, global, "Math", math, DONT_ENUM);
++    InstallZigDataProperty(isolate_, global, "Math", math, DONT_ENUM);
+     SimpleInstallFunction(isolate_, math, "abs", Builtin::kMathAbs, 1, kAdapt);
+     SimpleInstallFunction(isolate_, math, "acos", Builtin::kMathAcos, 1,
+                           kAdapt);
+@@ -3538,7 +4084,7 @@
+   {  // -- I n t l
+     DirectHandle<JSObject> intl =
+         factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
+-    JSObject::AddProperty(isolate_, global, "Intl", intl, DONT_ENUM);
++    InstallZigDataProperty(isolate_, global, "Intl", intl, DONT_ENUM);
+ 
+     // https://tc39.es/ecma402/#sec-Intl-toStringTag
+     // The initial value of the @@toStringTag property is the string value
+@@ -4065,7 +4611,7 @@
+     DirectHandle<String> name = factory->ArrayBuffer_string();
+     DirectHandle<JSFunction> array_buffer_fun =
+         CreateArrayBuffer(name, ARRAY_BUFFER);
+-    JSObject::AddProperty(isolate_, global, name, array_buffer_fun, DONT_ENUM);
++    InstallZigDataProperty(isolate_, global, name, array_buffer_fun, DONT_ENUM);
+     InstallWithIntrinsicDefaultProto(isolate_, array_buffer_fun,
+                                      Context::ARRAY_BUFFER_FUN_INDEX);
+     InstallSpeciesGetter(isolate_, array_buffer_fun);
+@@ -4123,7 +4669,7 @@
+   {  // -- A t o m i c s
+     DirectHandle<JSObject> atomics_object =
+         factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
+-    JSObject::AddProperty(isolate_, global, "Atomics", atomics_object,
++    InstallZigDataProperty(isolate_, global, "Atomics", atomics_object,
+                           DONT_ENUM);
+     InstallToStringTag(isolate_, atomics_object, "Atomics");
+ 
+@@ -4200,7 +4746,7 @@
+     DirectHandle<JSFunction> values = InstallFunctionWithBuiltinId(
+         isolate_, prototype, "values", Builtin::kTypedArrayPrototypeValues, 0,
+         kDontAdapt);
+-    JSObject::AddProperty(isolate_, prototype, factory->iterator_symbol(),
++    InstallZigDataProperty(isolate_, prototype, factory->iterator_symbol(),
+                           values, DONT_ENUM);
+ 
+     // TODO(caitp): alphasort accessors/methods
+@@ -4265,7 +4811,7 @@
+     SimpleInstallFunction(isolate_, prototype, "toLocaleString",
+                           Builtin::kTypedArrayPrototypeToLocaleString, 0,
+                           kDontAdapt);
+-    JSObject::AddProperty(isolate_, prototype, factory->toString_string(),
++    InstallZigDataProperty(isolate_, prototype, factory->toString_string(),
+                           array_prototype_to_string_fun, DONT_ENUM);
+   }
+ 
+@@ -4400,7 +4946,7 @@
+     DirectHandle<JSFunction> entries =
+         SimpleInstallFunction(isolate_, prototype, "entries",
+                               Builtin::kMapPrototypeEntries, 0, kAdapt);
+-    JSObject::AddProperty(isolate_, prototype, factory->iterator_symbol(),
++    InstallZigDataProperty(isolate_, prototype, factory->iterator_symbol(),
+                           entries, DONT_ENUM);
+     SimpleInstallFunction(isolate_, prototype, "forEach",
+                           Builtin::kMapPrototypeForEach, 1, kDontAdapt);
+@@ -4516,9 +5062,9 @@
+ 
+     DirectHandle<JSFunction> values = SimpleInstallFunction(
+         isolate_, prototype, "values", Builtin::kSetPrototypeValues, 0, kAdapt);
+-    JSObject::AddProperty(isolate_, prototype, factory->keys_string(), values,
++    InstallZigDataProperty(isolate_, prototype, factory->keys_string(), values,
+                           DONT_ENUM);
+-    JSObject::AddProperty(isolate_, prototype, factory->iterator_symbol(),
++    InstallZigDataProperty(isolate_, prototype, factory->iterator_symbol(),
+                           values, DONT_ENUM);
+ 
+     native_context()->set_initial_set_prototype_map(prototype->map());
+@@ -4593,7 +5139,7 @@
+                              AllocationType::kOld);
+     JSObject::ForceSetPrototype(isolate(), wrap_for_valid_iterator_prototype,
+                                 iterator_prototype);
+-    JSObject::AddProperty(isolate(), iterator_prototype,
++    InstallZigDataProperty(isolate(), iterator_prototype,
+                           factory->constructor_string(), iterator_function,
+                           DONT_ENUM);
+     SimpleInstallFunction(isolate(), wrap_for_valid_iterator_prototype, "next",
+@@ -4790,7 +5336,7 @@
+     isolate_->proxy_map()->SetConstructor(*proxy_function);
+ 
+     native_context()->set_proxy_function(*proxy_function);
+-    JSObject::AddProperty(isolate_, global, name, proxy_function, DONT_ENUM);
++    InstallZigDataProperty(isolate_, global, name, proxy_function, DONT_ENUM);
+ 
+     DCHECK(!proxy_function->has_prototype_property());
+ 
+@@ -4803,7 +5349,7 @@
+         factory->InternalizeUtf8String("Reflect");
+     DirectHandle<JSObject> reflect =
+         factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
+-    JSObject::AddProperty(isolate_, global, reflect_string, reflect, DONT_ENUM);
++    InstallZigDataProperty(isolate_, global, reflect_string, reflect, DONT_ENUM);
+     InstallToStringTag(isolate_, reflect, reflect_string);
+ 
+     SimpleInstallFunction(isolate_, reflect, "defineProperty",
+@@ -5190,6 +5736,9 @@
+               .is_null();
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void Genesis::InitializeIteratorFunctions() {
+   Isolate* isolate = isolate_;
+   Factory* factory = isolate->factory();
+@@ -5214,7 +5763,7 @@
+ 
+     JSObject::ForceSetPrototype(isolate, generator_function_function,
+                                 isolate->function_function());
+-    JSObject::AddProperty(
++    InstallZigDataProperty(
+         isolate, generator_function_prototype, factory->constructor_string(),
+         generator_function_function,
+         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+@@ -5245,7 +5794,7 @@
+     JSObject::ForceSetPrototype(isolate, async_generator_function_function,
+                                 isolate->function_function());
+ 
+-    JSObject::AddProperty(
++    InstallZigDataProperty(
+         isolate, async_generator_function_prototype,
+         factory->constructor_string(), async_generator_function_function,
+         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+@@ -5348,7 +5897,7 @@
+     JSObject::ForceSetPrototype(isolate, async_function_constructor,
+                                 isolate->function_function());
+ 
+-    JSObject::AddProperty(
++    InstallZigDataProperty(
+         isolate, async_function_prototype, factory->constructor_string(),
+         async_function_constructor,
+         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+@@ -5430,6 +5979,9 @@
+   }
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void Genesis::InitializeConsole(DirectHandle<JSObject> extras_binding) {
+   HandleScope scope(isolate());
+   Factory* factory = isolate_->factory();
+@@ -5454,9 +6006,9 @@
+       factory->NewJSObject(cons, AllocationType::kOld);
+   DCHECK(IsJSObject(*console));
+ 
+-  JSObject::AddProperty(isolate_, extras_binding, name, console, DONT_ENUM);
++  InstallZigDataProperty(isolate_, extras_binding, name, console, DONT_ENUM);
+   // TODO(v8:11989): remove this in the next release
+-  JSObject::AddProperty(isolate_, global, name, console, DONT_ENUM);
++  InstallZigDataProperty(isolate_, global, name, console, DONT_ENUM);
+ 
+   SimpleInstallFunction(isolate_, console, "debug", Builtin::kConsoleDebug, 0,
+                         kDontAdapt, NONE);
+@@ -5663,76 +6215,9 @@
+                         Builtin::kIteratorPrototypeIncludes, 1, kDontAdapt);
+ }
+ 
+-void Genesis::InitializeGlobal_harmony_shadow_realm() {
+-  if (!v8_flags.harmony_shadow_realm) return;
+-  Factory* factory = isolate()->factory();
+-  // -- S h a d o w R e a l m
+-  // https://tc39.es/ecma262/#sec-shadowrealm-objects
+-  DirectHandle<JSGlobalObject> global(native_context()->global_object(),
+-                                      isolate());
+-  DirectHandle<JSFunction> shadow_realm_fun =
+-      InstallFunction(isolate_, global, "ShadowRealm", JS_SHADOW_REALM_TYPE,
+-                      sizeof(JSShadowRealm), 0, factory->the_hole_value(),
+-                      Builtin::kShadowRealmConstructor, 0, kDontAdapt);
+-
+-  // Setup %ShadowRealmPrototype%.
+-  DirectHandle<JSObject> prototype(
+-      Cast<JSObject>(shadow_realm_fun->instance_prototype()), isolate());
+-
+-  InstallToStringTag(isolate_, prototype, factory->ShadowRealm_string());
+-
+-  SimpleInstallFunction(isolate_, prototype, "evaluate",
+-                        Builtin::kShadowRealmPrototypeEvaluate, 1, kAdapt);
+-  SimpleInstallFunction(isolate_, prototype, "importValue",
+-                        Builtin::kShadowRealmPrototypeImportValue, 2, kAdapt);
+-
+-  {  // --- W r a p p e d F u n c t i o n
+-    DirectHandle<Map> map = factory->NewContextfulMapForCurrentContext(
+-        JS_WRAPPED_FUNCTION_TYPE, JSWrappedFunction::kHeaderSize,
+-        TERMINAL_FAST_ELEMENTS_KIND, 0);
+-    map->SetConstructor(native_context()->object_function());
+-    map->set_is_callable(true);
+-    DirectHandle<JSObject> empty_function(
+-        native_context()->function_prototype(), isolate());
+-    Map::SetPrototype(isolate(), map, empty_function);
+-
+-    PropertyAttributes roc_attribs =
+-        static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY);
+-    Map::EnsureDescriptorSlack(isolate_, map, 2);
+-    {  // length
+-      static_assert(
+-          JSFunctionOrBoundFunctionOrWrappedFunction::kLengthDescriptorIndex ==
+-          0);
+-      Descriptor d = Descriptor::AccessorConstant(
+-          factory->length_string(), factory->wrapped_function_length_accessor(),
+-          roc_attribs);
+-      map->AppendDescriptor(isolate(), &d);
+-    }
+-
+-    {  // name
+-      static_assert(
+-          JSFunctionOrBoundFunctionOrWrappedFunction::kNameDescriptorIndex ==
+-          1);
+-      Descriptor d = Descriptor::AccessorConstant(
+-          factory->name_string(), factory->wrapped_function_name_accessor(),
+-          roc_attribs);
+-      map->AppendDescriptor(isolate(), &d);
+-    }
+-
+-    native_context()->set_wrapped_function_map(*map);
+-  }
+-
+-  // Internal steps of ShadowRealmImportValue
+-  {
+-    DirectHandle<JSFunction> shadow_realm_import_value_rejected =
+-        SimpleCreateFunction(isolate(), factory->empty_string(),
+-                             Builtin::kShadowRealmImportValueRejected, 1,
+-                             kAdapt);
+-    shadow_realm_import_value_rejected->shared()->set_native(false);
+-    native_context()->set_shadow_realm_import_value_rejected(
+-        *shadow_realm_import_value_rejected);
+-  }
+-}
++// Installs nothing and retains no resources, independent of the upstream flag.
++void Genesis::InitializeGlobal_harmony_shadow_realm() {}
++
+ 
+ void Genesis::InitializeGlobal_harmony_struct() {
+   if (!v8_flags.harmony_struct) return;
+@@ -5761,7 +6246,7 @@
+     JSObject::MakePrototypesFast(shared_struct_type_fun, kStartAtReceiver,
+                                  isolate());
+     shared_struct_type_fun->shared()->set_native(true);
+-    JSObject::AddProperty(isolate(), global, "SharedStructType",
++    InstallZigDataProperty(isolate(), global, "SharedStructType",
+                           shared_struct_type_fun, DONT_ENUM);
+ 
+     SimpleInstallFunction(isolate(), shared_struct_type_fun, "isSharedStruct",
+@@ -5777,7 +6262,7 @@
+         Builtin::kSharedArrayConstructor, 0, kAdapt);
+ 
+     // Install SharedArray constructor.
+-    JSObject::AddProperty(isolate(), global, "SharedArray", shared_array_fun,
++    InstallZigDataProperty(isolate(), global, "SharedArray", shared_array_fun,
+                           DONT_ENUM);
+ 
+     SimpleInstallFunction(isolate(), shared_array_fun, "isSharedArray",
+@@ -5790,7 +6275,7 @@
+     DirectHandle<JSFunction> mutex_fun = CreateSharedObjectConstructor(
+         isolate(), mutex_str, isolate()->factory()->js_atomics_mutex_map(),
+         Builtin::kAtomicsMutexConstructor, 0, kAdapt);
+-    JSObject::AddProperty(isolate(), atomics_object, mutex_str, mutex_fun,
++    InstallZigDataProperty(isolate(), atomics_object, mutex_str, mutex_fun,
+                           DONT_ENUM);
+ 
+     SimpleInstallFunction(isolate(), mutex_fun, "lock",
+@@ -5810,7 +6295,7 @@
+         isolate(), condition_str,
+         isolate()->factory()->js_atomics_condition_map(),
+         Builtin::kAtomicsConditionConstructor, 0, kAdapt);
+-    JSObject::AddProperty(isolate(), atomics_object, condition_str,
++    InstallZigDataProperty(isolate(), atomics_object, condition_str,
+                           condition_fun, DONT_ENUM);
+ 
+     SimpleInstallFunction(isolate(), condition_fun, "wait",
+@@ -5822,6 +6307,9 @@
+   }
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void Genesis::InitializeGlobal_sharedarraybuffer() {
+   if (v8_flags.enable_sharedarraybuffer_per_context) {
+     return;
+@@ -5830,10 +6318,13 @@
+   DirectHandle<JSGlobalObject> global(native_context()->global_object(),
+                                       isolate());
+ 
+-  JSObject::AddProperty(isolate_, global, "SharedArrayBuffer",
++  InstallZigDataProperty(isolate_, global, "SharedArrayBuffer",
+                         isolate()->shared_array_buffer_fun(), DONT_ENUM);
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void Genesis::InitializeGlobal_js_explicit_resource_management() {
+   if (!v8_flags.js_explicit_resource_management) return;
+ 
+@@ -5870,7 +6361,7 @@
+   DirectHandle<JSFunction> dispose = SimpleInstallFunction(
+       isolate(), sync_disposable_stack_prototype, "dispose",
+       Builtin::kDisposableStackPrototypeDispose, 0, kAdapt);
+-  JSObject::AddProperty(isolate(), sync_disposable_stack_prototype,
++  InstallZigDataProperty(isolate(), sync_disposable_stack_prototype,
+                         factory->dispose_symbol(), dispose, DONT_ENUM);
+   SimpleInstallFunction(isolate(), sync_disposable_stack_prototype, "adopt",
+                         Builtin::kDisposableStackPrototypeAdopt, 2, kAdapt);
+@@ -5902,7 +6393,7 @@
+   DirectHandle<JSFunction> dispose_async = SimpleInstallFunction(
+       isolate(), async_disposable_stack_prototype, "disposeAsync",
+       Builtin::kAsyncDisposableStackPrototypeDisposeAsync, 0, kAdapt);
+-  JSObject::AddProperty(isolate(), async_disposable_stack_prototype,
++  InstallZigDataProperty(isolate(), async_disposable_stack_prototype,
+                         factory->async_dispose_symbol(), dispose_async,
+                         DONT_ENUM);
+   SimpleInstallFunction(isolate(), async_disposable_stack_prototype, "adopt",
+@@ -6062,6 +6553,9 @@
+ 
+ // Installs context-owned Temporal objects directly on the isolate thread;
+ // temporary handles expire with the enclosing HandleScope. Runs no JS getters.
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ void Genesis::InitializeGlobal_harmony_temporal() {
+ #ifdef V8_TEMPORAL_SUPPORT
+   if (!v8_flags.harmony_temporal) return;
+@@ -6069,7 +6563,7 @@
+   // zig-v8: initialize directly before finalization; never freeze a
+   // replace-on-access property whose later replacement would fail.
+   DirectHandle<JSObject> temporal = InitializeTemporal(isolate());
+-  JSObject::AddProperty(isolate(),
++  InstallZigDataProperty(isolate(),
+       direct_handle(native_context()->global_object(), isolate()),
+       "Temporal", temporal, DONT_ENUM);
+ #endif  // V8_TEMPORAL_SUPPORT
+@@ -6096,6 +6590,9 @@
+                                Builtin::kGlobalQueueMicrotask, 1, kAdapt);
+ }
+ 
++// Borrows the isolate/context on its owning thread with a live HandleScope.
++// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
++// failure leaves the context unexposed; V8 allocation failure is fatal.
+ DirectHandle<JSFunction> Genesis::CreateArrayBuffer(
+     DirectHandle<String> name, ArrayBufferKind array_buffer_kind) {
+   // Create the %ArrayBufferPrototype%
+@@ -6111,7 +6608,7 @@
+                      Builtin::kArrayBufferConstructor, 1, kAdapt);
+ 
+   // Install the "constructor" property on the {prototype}.
+-  JSObject::AddProperty(isolate(), prototype, factory()->constructor_string(),
++  InstallZigDataProperty(isolate(), prototype, factory()->constructor_string(),
+                         array_buffer_fun, DONT_ENUM);
+ 
+   switch (array_buffer_kind) {
+@@ -6650,32 +7147,26 @@
+ }
+ 
+ // Borrows isolate/native_context through installation on the isolate thread.
+-// New properties remain context-owned; skips runtime-only Wasm callbacks during
+-// serialization. Errors retain only unexposed partial context state for GC.
++// Seals completed builtin subsystems without installing Wasm. Retains no host
++// storage; errors leave only an unexposed partially sealed context for GC.
+ bool Genesis::InstallSpecialObjects(
+     Isolate* isolate, DirectHandle<NativeContext> native_context) {
+   HandleScope scope(isolate);
+ 
+-  // Error.stackTraceLimit.
+-  {
+-    DirectHandle<JSObject> Error = isolate->error_function();
+-    DirectHandle<String> name = isolate->factory()->stackTraceLimit_string();
+-    DirectHandle<Smi> stack_trace_limit(
+-        Smi::FromInt(v8_flags.stack_trace_limit), isolate);
+-    JSObject::AddProperty(isolate, Error, name, stack_trace_limit, NONE);
+-  }
+-
+-#if V8_ENABLE_WEBASSEMBLY
+-  // V8 does not serialize the runtime-only Wasm API callbacks. The context
+-  // policy removes its global anyway; leave the seed-prepared objects intact.
+-  if (!isolate->serializer_enabled()) WasmJs::Install(isolate);
+-#endif  // V8_ENABLE_WEBASSEMBLY
+-
+ #ifdef V8_ENABLE_MEMORY_CORRUPTION_API
+   if (v8_flags.expose_memory_corruption_api) {
+     SandboxTesting::InstallMemoryCorruptionApi(isolate);
+   }
+ #endif  // V8_ENABLE_MEMORY_CORRUPTION_API
++
++  if (v8_flags.zig_harden_intrinsics &&
++      native_context->zig_intrinsic_objects()->length().value() == 0) {
++    if (!CompleteZigCoreIntrinsics(isolate, native_context) ||
++        !CompleteZigIterationIntrinsics(isolate, native_context) ||
++        !CompleteZigIntlIntrinsics(isolate, native_context) ||
++        !CompleteZigTemporalIntrinsics(isolate, native_context) ||
++        !CompleteZigGlobalBindings(isolate, native_context)) return false;
++  }
+ 
+   return true;
+ }
+@@ -7184,6 +7675,8 @@
+   // selected features and must never reinstall into a frozen graph.
+   if (native_context()->zig_intrinsic_objects()->length().value() == 0 &&
+       (!isolate->serializer_enabled() || v8_flags.zig_harden_intrinsics)) {
++    native_context()->set_zig_stack_trace_limit(
++        *factory()->NewNumberFromInt(std::max(static_cast<int>(v8_flags.stack_trace_limit), 0)));
+     InitializeExperimentalGlobal();
+ 
+     // Store String.prototype's map again in case it has been changed by
+diff --git a/src/objects/contexts.h b/src/objects/contexts.h
+--- a/src/objects/contexts.h
++++ b/src/objects/contexts.h
+@@ -268,6 +268,7 @@
+   V(JS_WEAK_REF_FUNCTION_INDEX, JSFunction, js_weak_ref_fun)                   \
+   V(JS_FINALIZATION_REGISTRY_FUNCTION_INDEX, JSFunction,                       \
+     js_finalization_registry_fun)                                              \
++  V(ZIG_STACK_TRACE_LIMIT_INDEX, Number, zig_stack_trace_limit)               \
+   V(ZIG_INTRINSIC_OBJECTS_INDEX, FixedArray, zig_intrinsic_objects)            \
+   V(JSON_OBJECT, JSObject, json_object)                                        \
+   V(PROMISE_WITHRESOLVERS_RESULT_MAP_INDEX, Map,                               \

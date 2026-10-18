@@ -1,6 +1,6 @@
 .{
     .name = .v8,
-    .paths = .{""},
+    .paths = .{ "build.zig", "build.zig.zon", "build", "build-tools", "binding", "src", "tests", "tools", "docs", "LICENSE", "README.md" },
     .version = "0.0.0",
     .minimum_zig_version = "0.17.0",
     .fingerprint = 0x10be7411b31f05f6,

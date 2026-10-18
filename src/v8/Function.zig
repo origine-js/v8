@@ -1,4 +1,4 @@
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 const FunctionCallback = v8.FunctionCallback;
 const ConstructorBehavior = v8.ConstructorBehavior;

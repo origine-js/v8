@@ -1,4 +1,4 @@
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 const Isolate = v8.Isolate;
 const MaybeHandle = v8.MaybeHandle;
@@ -50,6 +50,44 @@ pub const String = extern struct {
         return .{
             .name = Name.from_opaque(e.v8__String__NewExternalTwoByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))).?,
         };
+    }
+
+    /// Borrows immutable input until return; V8 copies/canonicalizes its contents.
+    /// Requires the entered isolate thread and a live HandleScope; returns a local
+    /// string valid until that scope closes. Oversized input or allocation failure
+    /// is fatal, matching the normal constructors; no host ownership transfers.
+    pub fn initUtf8Internalized(isolate: Isolate, str: []const u8) Self {
+        return from_opaque(e.v8__String__NewFromUtf8(isolate.handle, str.ptr, .Internalized, @intCast(str.len))).?;
+    }
+
+    /// Borrows immutable input until return; V8 copies/canonicalizes its contents.
+    /// Requires the entered isolate thread and a live HandleScope; returns a local
+    /// string valid until that scope closes. Oversized input or allocation failure
+    /// is fatal, matching the normal constructors; no host ownership transfers.
+    pub fn initOneByteInternalized(isolate: Isolate, str: []const u8) Self {
+        return from_opaque(e.v8__String__NewFromOneByte(isolate.handle, str.ptr, .Internalized, @intCast(str.len))).?;
+    }
+
+    /// Borrows immutable input until return; V8 copies/canonicalizes its contents.
+    /// Requires the entered isolate thread and a live HandleScope; returns a local
+    /// string valid until that scope closes. Oversized input or allocation failure
+    /// is fatal, matching the normal constructors; no host ownership transfers.
+    pub fn initTwoByteInternalized(isolate: Isolate, str: []const u16) Self {
+        return from_opaque(e.v8__String__NewFromTwoByte(isolate.handle, str.ptr, .Internalized, @intCast(str.len))).?;
+    }
+
+    /// Borrows self/isolate through return on the entered isolate thread with a
+    /// live HandleScope. Returns a canonical local string valid until that scope
+    /// closes; may alias an existing string. V8 manages external resources under
+    /// their original creation/deleter contracts; callers release no storage here.
+    pub fn internalize(self: Self, isolate: Isolate) Self {
+        return from_opaque(e.v8__String__InternalizeString(self, isolate.handle)).?;
+    }
+
+    /// Borrows self/isolate through this call on the isolate thread with a live
+    /// HandleScope; returns a copied boolean and retains no resources.
+    pub fn isInStringTable(self: Self, isolate: Isolate) bool {
+        return e.v8__String__IsInStringTable(self, isolate.handle);
     }
 
     pub fn len(self: Self) c_int {
@@ -121,7 +159,7 @@ pub const String = extern struct {
     /// Borrows string storage and prevents garbage collection. Construct at its final
     /// address, do not copy, and deinit before leaving the current HandleScope.
     pub const ValueView = extern struct {
-        storage: [@import("../binding.zig").sizes.String_ValueView]u8 align(@alignOf(usize)),
+        storage: [@import("../generated/binding.zig").sizes.String_ValueView]u8 align(@alignOf(usize)),
         pub fn init(self: *@This(), isolate: v8.Isolate, string: v8.String) void {
             e.v8__String__ValueView__CONSTRUCT(self, isolate.handle, string);
         }

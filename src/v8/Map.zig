@@ -1,4 +1,4 @@
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 
 pub const Map = extern struct {

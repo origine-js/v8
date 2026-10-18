@@ -1,5 +1,5 @@
 const std = @import("std");
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 
 /// `v8::StartupData`: a snapshot blob.

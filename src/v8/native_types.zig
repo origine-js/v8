@@ -1,8 +1,8 @@
 //! Value layouts and callback tables used by the C++ shim.
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 
 const v8 = @import("../v8.zig");
-const binding = @import("../binding.zig");
+const binding = @import("../generated/binding.zig");
 
 pub const HeapSpaceStatistics = extern struct {
     space_name: ?[*:0]const u8,

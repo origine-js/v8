@@ -1,9 +1,11 @@
 //! `bindgen check`: keeps the views of the C ABI honest.
 //!
 //!   lib      the `v8__*` symbols the built libv8_zig.a really exports (nm)
-//!   gen      the externs in src/externs.gen.zig
+//!   gen      the externs in src/generated/externs.gen.zig
 //!   wrapped  the externs src/v8/*.zig actually calls (`e.v8__*`)
-//!   rusty    optional: the shims rusty_v8 defines, as a porting checklist
+//!   shims    the shims in binding/rusty.cc: exported for lib/rusty_v8 only, so they
+//!            are expected in `lib` without a Zig extern
+//!   rusty    optional: the shims upstream rusty_v8 defines, as a porting checklist
 //!
 //! A mismatch between `lib` and `gen` is a hard failure (stale generated file or
 //! a shim without a signature). The rest is a report: what is not wrapped yet
@@ -21,11 +23,13 @@ pub fn run(
     lib_path: []const u8,
     externs_path: []const u8,
     wrapper_path: []const u8,
+    shims_path: []const u8,
     rusty_path: ?[]const u8,
 ) !bool {
     const cwd = Io.Dir.cwd();
 
     const lib = try libSymbols(arena, io, lib_path);
+    const shims = try definitions(arena, try cwd.readFileAlloc(io, shims_path, arena, .limited(1 << 26)));
     const externs_src = try cwd.readFileAlloc(io, externs_path, arena, .limited(1 << 26));
     const gen = try collect(arena, externs_src, "pub extern fn ");
     var wrapped: Set = .empty;
@@ -44,11 +48,11 @@ pub fn run(
     var ok = true;
 
     // 1. library <-> generated externs (hard failure).
-    const only_lib = try difference(arena, lib, gen);
+    const only_lib = try difference(arena, try difference2(arena, lib, shims), gen);
     const only_gen = try difference(arena, gen, lib);
     if (only_lib.len != 0 or only_gen.len != 0) {
         ok = false;
-        std.debug.print("FAIL: libv8_zig.a and src/externs.gen.zig disagree; run `zig build gen`.\n", .{});
+        std.debug.print("FAIL: libv8_zig.a and src/generated/externs.gen.zig disagree; run `zig build gen`.\n", .{});
         for (only_lib) |n| std.debug.print("  exported but not declared: {s}\n", .{n});
         for (only_gen) |n| std.debug.print("  declared but not exported: {s}\n", .{n});
     } else {
@@ -83,10 +87,16 @@ pub fn run(
     return ok;
 }
 
-/// `nm -g` -> defined `v8__*` symbols (macOS prefixes C symbols with `_`).
+/// Borrows io/lib_path through subprocess completion; returns an arena-owned set
+/// valid until arena teardown. Reads native symbols only on macOS, ignoring
+/// embedded Rust LLVM bitcode. Errors retain only arena allocations; no library
+/// data is modified. macOS prefixes C symbols with `_`.
 fn libSymbols(arena: std.mem.Allocator, io: Io, lib_path: []const u8) !Set {
     const result = try std.process.run(arena, io, .{
-        .argv = &.{ "nm", "-g", lib_path },
+        .argv = if (@import("builtin").os.tag.isDarwin())
+            &.{ "nm", "--no-llvm-bc", "-g", lib_path }
+        else
+            &.{ "nm", "-g", lib_path },
         .stdout_limit = .limited(1 << 28),
     });
     if (!result.term.success()) {
@@ -146,6 +156,13 @@ fn definitions(arena: std.mem.Allocator, src: []const u8) !Set {
 
 fn isIdent(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
+}
+
+/// Returns `a` without the members of `b` (arena-owned).
+fn difference2(arena: std.mem.Allocator, a: Set, b: Set) !Set {
+    var out: Set = .empty;
+    for (a.keys()) |k| if (!b.contains(k)) try out.put(arena, k, {});
+    return out;
 }
 
 fn difference(arena: std.mem.Allocator, a: Set, b: Set) ![]const []const u8 {

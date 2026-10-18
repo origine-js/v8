@@ -1,0 +1,1701 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+index 83396f2cb7a..a6c25b6f30c 100644
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -3939,7 +3939,6 @@ filegroup(
+         "src/builtins/builtins-constructor-gen.h",
+         "src/builtins/builtins-conversion-gen.cc",
+         "src/builtins/builtins-data-view-gen.h",
+-        "src/builtins/builtins-date-gen.cc",
+         "src/builtins/builtins-generator-gen.cc",
+         "src/builtins/builtins-global-gen.cc",
+         "src/builtins/builtins-handler-gen.cc",
+diff --git a/BUILD.gn b/BUILD.gn
+index 39f578a9c8e..df9e523be14 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -3340,7 +3340,6 @@ v8_cluster_source_set("v8_initializers") {
+     "src/builtins/builtins-constructor.h",
+     "src/builtins/builtins-conversion-gen.cc",
+     "src/builtins/builtins-data-view-gen.h",
+-    "src/builtins/builtins-date-gen.cc",
+     "src/builtins/builtins-generator-gen.cc",
+     "src/builtins/builtins-global-gen.cc",
+     "src/builtins/builtins-handler-gen.cc",
+diff --git a/src/builtins/builtins-date-gen.cc b/src/builtins/builtins-date-gen.cc
+deleted file mode 100644
+index 37125aac607..00000000000
+--- a/src/builtins/builtins-date-gen.cc
++++ /dev/null
+@@ -1,284 +0,0 @@
+-// Copyright 2017 the V8 project authors. All rights reserved.
+-// Use of this source code is governed by a BSD-style license that can be
+-// found in the LICENSE file.
+-
+-#include "src/builtins/builtins-inl.h"
+-#include "src/builtins/builtins-utils-gen.h"
+-#include "src/codegen/code-stub-assembler-inl.h"
+-#include "src/objects/dictionary.h"
+-
+-namespace v8 {
+-namespace internal {
+-
+-#include "src/codegen/define-code-stub-assembler-macros.inc"
+-
+-// -----------------------------------------------------------------------------
+-// ES6 section 20.3 Date Objects
+-
+-class DateBuiltinsAssembler : public CodeStubAssembler {
+- public:
+-  explicit DateBuiltinsAssembler(compiler::CodeAssemblerState* state)
+-      : CodeStubAssembler(state) {}
+-
+- protected:
+-  void Generate_IsDateCheck(TNode<Context> context, TNode<Object> receiver);
+-  void Generate_DatePrototype_GetField(TNode<Context> context,
+-                                       TNode<Object> receiver, int field_index);
+-};
+-
+-void DateBuiltinsAssembler::Generate_IsDateCheck(TNode<Context> context,
+-                                                 TNode<Object> receiver) {
+-  Label ok(this), receiver_not_date(this, Label::kDeferred);
+-
+-  GotoIf(TaggedIsSmi(receiver), &receiver_not_date);
+-  TNode<Uint16T> receiver_instance_type = LoadInstanceType(CAST(receiver));
+-  Branch(InstanceTypeEqual(receiver_instance_type, JS_DATE_TYPE), &ok,
+-         &receiver_not_date);
+-
+-  // Raise a TypeError if the receiver is not a date.
+-  BIND(&receiver_not_date);
+-  { ThrowTypeError(context, MessageTemplate::kNotDateObject); }
+-
+-  BIND(&ok);
+-}
+-
+-void DateBuiltinsAssembler::Generate_DatePrototype_GetField(
+-    TNode<Context> context, TNode<Object> receiver, int field_index) {
+-  Generate_IsDateCheck(context, receiver);
+-
+-  TNode<JSDate> date_receiver = CAST(receiver);
+-  // Load the specified date field, falling back to the runtime as necessary.
+-  if (field_index < JSDate::kFirstUncachedField) {
+-    Label stamp_mismatch(this, Label::kDeferred);
+-    TNode<Object> date_cache_stamp =
+-        Load<Object>(IsolateField(IsolateFieldId::kDateCacheStamp));
+-
+-    TNode<Object> cache_stamp =
+-        LoadObjectField(date_receiver, offsetof(JSDate, cache_stamp_));
+-    GotoIf(TaggedNotEqual(date_cache_stamp, cache_stamp), &stamp_mismatch);
+-    Return(LoadObjectField(
+-        date_receiver, offsetof(JSDate, year_) + field_index * kTaggedSize));
+-
+-    BIND(&stamp_mismatch);
+-  }
+-
+-  TNode<ExternalReference> isolate_ptr =
+-      ExternalConstant(ExternalReference::isolate_address(isolate()));
+-  TNode<Smi> field_index_smi = SmiConstant(field_index);
+-  TNode<ExternalReference> function =
+-      ExternalConstant(ExternalReference::get_date_field_function());
+-  TNode<Object> result = CAST(
+-      CallCFunction(function, MachineType::AnyTagged(),
+-                    std::make_pair(MachineType::Pointer(), isolate_ptr),
+-                    std::make_pair(MachineType::AnyTagged(), date_receiver),
+-                    std::make_pair(MachineType::AnyTagged(), field_index_smi)));
+-  Return(result);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getdate
+-TF_BUILTIN(DatePrototypeGetDate, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kDay);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getday
+-TF_BUILTIN(DatePrototypeGetDay, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kWeekday);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getfullyear
+-TF_BUILTIN(DatePrototypeGetFullYear, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kYear);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.gethours
+-TF_BUILTIN(DatePrototypeGetHours, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kHour);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getmilliseconds
+-TF_BUILTIN(DatePrototypeGetMilliseconds, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kMillisecond);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getminutes
+-TF_BUILTIN(DatePrototypeGetMinutes, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kMinute);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getmonth
+-TF_BUILTIN(DatePrototypeGetMonth, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kMonth);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getseconds
+-TF_BUILTIN(DatePrototypeGetSeconds, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kSecond);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.gettime
+-TF_BUILTIN(DatePrototypeGetTime, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_IsDateCheck(context, receiver);
+-  TNode<JSDate> date_receiver = CAST(receiver);
+-  Return(ChangeFloat64ToTagged(
+-      LoadObjectField<Float64T>(date_receiver, offsetof(JSDate, value_))));
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.gettimezoneoffset
+-TF_BUILTIN(DatePrototypeGetTimezoneOffset, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kTimezoneOffset);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getutcdate
+-TF_BUILTIN(DatePrototypeGetUTCDate, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kDayUTC);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getutcday
+-TF_BUILTIN(DatePrototypeGetUTCDay, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kWeekdayUTC);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getutcfullyear
+-TF_BUILTIN(DatePrototypeGetUTCFullYear, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kYearUTC);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getutchours
+-TF_BUILTIN(DatePrototypeGetUTCHours, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kHourUTC);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getutcmilliseconds
+-TF_BUILTIN(DatePrototypeGetUTCMilliseconds, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kMillisecondUTC);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getutcminutes
+-TF_BUILTIN(DatePrototypeGetUTCMinutes, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kMinuteUTC);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getutcmonth
+-TF_BUILTIN(DatePrototypeGetUTCMonth, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kMonthUTC);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getutcseconds
+-TF_BUILTIN(DatePrototypeGetUTCSeconds, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_DatePrototype_GetField(context, receiver, JSDate::kSecondUTC);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.valueof
+-TF_BUILTIN(DatePrototypeValueOf, DateBuiltinsAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  Generate_IsDateCheck(context, receiver);
+-  TNode<JSDate> date_receiver = CAST(receiver);
+-  Return(ChangeFloat64ToTagged(
+-      LoadObjectField<Float64T>(date_receiver, offsetof(JSDate, value_))));
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype-@@toprimitive
+-TF_BUILTIN(DatePrototypeToPrimitive, CodeStubAssembler) {
+-  auto context = Parameter<Context>(Descriptor::kContext);
+-  auto receiver = Parameter<Object>(Descriptor::kReceiver);
+-  auto hint = Parameter<Object>(Descriptor::kHint);
+-
+-  // Check if the {receiver} is actually a JSReceiver.
+-  Label receiver_is_invalid(this, Label::kDeferred);
+-  GotoIf(TaggedIsSmi(receiver), &receiver_is_invalid);
+-  GotoIfNot(JSAnyIsNotPrimitive(CAST(receiver)), &receiver_is_invalid);
+-
+-  // Dispatch to the appropriate OrdinaryToPrimitive builtin.
+-  Label hint_is_number(this), hint_is_string(this),
+-      hint_is_invalid(this, Label::kDeferred);
+-
+-  // Fast cases for internalized strings.
+-  TNode<String> number_string = NumberStringConstant();
+-  GotoIf(TaggedEqual(hint, number_string), &hint_is_number);
+-  TNode<String> default_string = DefaultStringConstant();
+-  GotoIf(TaggedEqual(hint, default_string), &hint_is_string);
+-  TNode<String> string_string = StringStringConstant();
+-  GotoIf(TaggedEqual(hint, string_string), &hint_is_string);
+-
+-  // Slow-case with actual string comparisons.
+-  GotoIf(TaggedIsSmi(hint), &hint_is_invalid);
+-  GotoIfNot(IsString(CAST(hint)), &hint_is_invalid);
+-
+-  TNode<IntPtrT> hint_length = LoadStringLengthAsWord(CAST(hint));
+-  GotoIfStringEqual(CAST(hint), hint_length, number_string, &hint_is_number);
+-  GotoIfStringEqual(CAST(hint), hint_length, default_string, &hint_is_string);
+-  GotoIfStringEqual(CAST(hint), hint_length, string_string, &hint_is_string);
+-  Goto(&hint_is_invalid);
+-
+-  // Use the OrdinaryToPrimitive builtin to convert to a Number.
+-  BIND(&hint_is_number);
+-  {
+-    Builtin builtin =
+-        Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint::kNumber);
+-    TNode<Object> result = CallBuiltin(builtin, context, receiver);
+-    Return(result);
+-  }
+-
+-  // Use the OrdinaryToPrimitive builtin to convert to a String.
+-  BIND(&hint_is_string);
+-  {
+-    Builtin builtin =
+-        Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint::kString);
+-    TNode<Object> result = CallBuiltin(builtin, context, receiver);
+-    Return(result);
+-  }
+-
+-  // Raise a TypeError if the {hint} is invalid.
+-  BIND(&hint_is_invalid);
+-  { ThrowTypeError(context, MessageTemplate::kInvalidHint, hint); }
+-
+-  // Raise a TypeError if the {receiver} is not a JSReceiver instance.
+-  BIND(&receiver_is_invalid);
+-  {
+-    ThrowTypeError(context, MessageTemplate::kIncompatibleMethodReceiver,
+-                   StringConstant("Date.prototype [ @@toPrimitive ]"),
+-                   receiver);
+-  }
+-}
+-
+-#include "src/codegen/undef-code-stub-assembler-macros.inc"
+-
+-}  // namespace internal
+-}  // namespace v8
+diff --git a/src/builtins/builtins-date.cc b/src/builtins/builtins-date.cc
+index c3a507a72da..a76d82d9ec9 100644
+--- a/src/builtins/builtins-date.cc
++++ b/src/builtins/builtins-date.cc
+@@ -26,34 +26,6 @@ namespace internal {
+ // -----------------------------------------------------------------------------
+ // ES6 section 20.3 Date Objects
+ 
+-namespace {
+-
+-Tagged<Object> SetLocalDateValue(Isolate* isolate, DirectHandle<JSDate> date,
+-                                 double time_val) {
+-  if (time_val >= -DateCache::kMaxTimeBeforeUTCInMs &&
+-      time_val <= DateCache::kMaxTimeBeforeUTCInMs) {
+-    time_val = isolate->date_cache()->ToUTC(static_cast<int64_t>(time_val));
+-    if (DateCache::TryTimeClip(&time_val)) {
+-      date->SetValue(isolate, time_val);
+-      return *isolate->factory()->NewNumber(time_val);
+-    }
+-  }
+-  date->SetNanValue();
+-  return ReadOnlyRoots(isolate).nan_value();
+-}
+-
+-Tagged<Object> SetDateValue(Isolate* isolate, DirectHandle<JSDate> date,
+-                            double time_val) {
+-  if (DateCache::TryTimeClip(&time_val)) {
+-    date->SetValue(isolate, time_val);
+-    return *isolate->factory()->NewNumber(time_val);
+-  }
+-  date->SetNanValue();
+-  return ReadOnlyRoots(isolate).nan_value();
+-}
+-
+-}  // namespace
+-
+ // https://tc39.es/ecma262/#sec-date-constructor
+ // zig-v8: Date objects cannot be created or called; only Date.now remains.
+ BUILTIN(DateConstructor) {
+@@ -69,798 +41,5 @@ BUILTIN(DateNow) {
+       JSDate::CurrentTimeValue(isolate));
+ }
+ 
+-// ES6 section 20.3.3.2 Date.parse ( string )
+-BUILTIN(DateParse) {
+-  HandleScope scope(isolate);
+-  DirectHandle<String> string;
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-      isolate, string,
+-      Object::ToString(isolate, args.atOrUndefined(isolate, 1)));
+-  return *isolate->factory()->NewNumber(ParseDateTimeString(isolate, string));
+-}
+-
+-// ES6 section 20.3.3.4 Date.UTC (year,month,date,hours,minutes,seconds,ms)
+-BUILTIN(DateUTC) {
+-  HandleScope scope(isolate);
+-  int const argc = args.length() - 1;
+-  double year = std::numeric_limits<double>::quiet_NaN();
+-  double month = 0.0, date = 1.0, hours = 0.0, minutes = 0.0, seconds = 0.0,
+-         ms = 0.0;
+-  if (argc >= 1) {
+-    DirectHandle<Object> year_object;
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, year_object,
+-                                       Object::ToNumber(isolate, args.at(1)));
+-    year = Object::NumberValue(*year_object);
+-    if (argc >= 2) {
+-      DirectHandle<Object> month_object;
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, month_object,
+-                                         Object::ToNumber(isolate, args.at(2)));
+-      month = Object::NumberValue(*month_object);
+-      if (argc >= 3) {
+-        DirectHandle<Object> date_object;
+-        ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-            isolate, date_object, Object::ToNumber(isolate, args.at(3)));
+-        date = Object::NumberValue(*date_object);
+-        if (argc >= 4) {
+-          DirectHandle<Object> hours_object;
+-          ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-              isolate, hours_object, Object::ToNumber(isolate, args.at(4)));
+-          hours = Object::NumberValue(*hours_object);
+-          if (argc >= 5) {
+-            DirectHandle<Object> minutes_object;
+-            ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-                isolate, minutes_object, Object::ToNumber(isolate, args.at(5)));
+-            minutes = Object::NumberValue(*minutes_object);
+-            if (argc >= 6) {
+-              DirectHandle<Object> seconds_object;
+-              ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-                  isolate, seconds_object,
+-                  Object::ToNumber(isolate, args.at(6)));
+-              seconds = Object::NumberValue(*seconds_object);
+-              if (argc >= 7) {
+-                DirectHandle<Object> ms_object;
+-                ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-                    isolate, ms_object, Object::ToNumber(isolate, args.at(7)));
+-                ms = Object::NumberValue(*ms_object);
+-              }
+-            }
+-          }
+-        }
+-      }
+-    }
+-  }
+-  if (!std::isnan(year)) {
+-    double const y = DoubleToInteger(year);
+-    if (0.0 <= y && y <= 99) year = 1900 + y;
+-  }
+-  double const day = MakeDay(year, month, date);
+-  double const time = MakeTime(hours, minutes, seconds, ms);
+-  double value = MakeDate(day, time);
+-  if (DateCache::TryTimeClip(&value)) {
+-    return *isolate->factory()->NewNumber(value);
+-  }
+-  return ReadOnlyRoots(isolate).nan_value();
+-}
+-
+-// ES6 section 20.3.4.20 Date.prototype.setDate ( date )
+-BUILTIN(DatePrototypeSetDate) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setDate");
+-  DirectHandle<Object> value = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, value,
+-                                     Object::ToNumber(isolate, value));
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int64_t local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-  int const days = isolate->date_cache()->DaysFromTime(local_time_ms);
+-  int time_within_day = isolate->date_cache()->TimeInDay(local_time_ms, days);
+-  int year, month, day;
+-  isolate->date_cache()->YearMonthDayFromDays(days, &year, &month, &day);
+-  time_val = MakeDate(MakeDay(year, month, Object::NumberValue(*value)),
+-                      time_within_day);
+-  return SetLocalDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.21 Date.prototype.setFullYear (year, month, date)
+-BUILTIN(DatePrototypeSetFullYear) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setFullYear");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> year = args.atOrUndefined(isolate, 1);
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, year,
+-                                     Object::ToNumber(isolate, year));
+-  double year_double = Object::NumberValue(*year), month_double = 0.0,
+-         day_double = 1.0;
+-  int time_within_day = 0;
+-  if (!std::isnan(date->value())) {
+-    int64_t const time_ms = static_cast<int64_t>(date->value());
+-    int64_t local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-    int const days = isolate->date_cache()->DaysFromTime(local_time_ms);
+-    time_within_day = isolate->date_cache()->TimeInDay(local_time_ms, days);
+-    int year_int, month_int, day_int;
+-    isolate->date_cache()->YearMonthDayFromDays(days, &year_int, &month_int,
+-                                                &day_int);
+-    month_double = month_int;
+-    day_double = day_int;
+-  }
+-  if (argc >= 2) {
+-    DirectHandle<Object> month = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, month,
+-                                       Object::ToNumber(isolate, month));
+-    month_double = Object::NumberValue(*month);
+-    if (argc >= 3) {
+-      DirectHandle<Object> day = args.at(3);
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, day,
+-                                         Object::ToNumber(isolate, day));
+-      day_double = Object::NumberValue(*day);
+-    }
+-  }
+-  double time_val =
+-      MakeDate(MakeDay(year_double, month_double, day_double), time_within_day);
+-  return SetLocalDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.22 Date.prototype.setHours(hour, min, sec, ms)
+-BUILTIN(DatePrototypeSetHours) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setHours");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> hour = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, hour,
+-                                     Object::ToNumber(isolate, hour));
+-  double const h = Object::NumberValue(*hour);
+-  std::optional<double> m;
+-  std::optional<double> s;
+-  std::optional<double> milli;
+-
+-  if (argc >= 2) {
+-    DirectHandle<Object> min = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, min,
+-                                       Object::ToNumber(isolate, min));
+-    m = Object::NumberValue(*min);
+-    if (argc >= 3) {
+-      DirectHandle<Object> sec = args.at(3);
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, sec,
+-                                         Object::ToNumber(isolate, sec));
+-      s = Object::NumberValue(*sec);
+-      if (argc >= 4) {
+-        DirectHandle<Object> ms = args.at(4);
+-        ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, ms,
+-                                           Object::ToNumber(isolate, ms));
+-        milli = Object::NumberValue(*ms);
+-      }
+-    }
+-  }
+-
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int64_t const local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-  int const day = isolate->date_cache()->DaysFromTime(local_time_ms);
+-  int const time_within_day =
+-      isolate->date_cache()->TimeInDay(local_time_ms, day);
+-  time_val = MakeDate(
+-      day, MakeTime(h, m.value_or((time_within_day / (60 * 1000)) % 60),
+-                    s.value_or((time_within_day / 1000) % 60),
+-                    milli.value_or(time_within_day % 1000)));
+-  return SetLocalDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.23 Date.prototype.setMilliseconds(ms)
+-BUILTIN(DatePrototypeSetMilliseconds) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setMilliseconds");
+-  DirectHandle<Object> ms = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, ms,
+-                                     Object::ToNumber(isolate, ms));
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int64_t const local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-  int const day = isolate->date_cache()->DaysFromTime(local_time_ms);
+-  int const time_within_day =
+-      isolate->date_cache()->TimeInDay(local_time_ms, day);
+-  int const h = time_within_day / (60 * 60 * 1000);
+-  int const m = (time_within_day / (60 * 1000)) % 60;
+-  int const s = (time_within_day / 1000) % 60;
+-  time_val = MakeDate(day, MakeTime(h, m, s, Object::NumberValue(*ms)));
+-
+-  return SetLocalDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.24 Date.prototype.setMinutes ( min, sec, ms )
+-BUILTIN(DatePrototypeSetMinutes) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setMinutes");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> min = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, min,
+-                                     Object::ToNumber(isolate, min));
+-  std::optional<double> s;
+-  std::optional<double> milli;
+-
+-  if (argc >= 2) {
+-    DirectHandle<Object> sec = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, sec,
+-                                       Object::ToNumber(isolate, sec));
+-    s = Object::NumberValue(*sec);
+-    if (argc >= 3) {
+-      DirectHandle<Object> ms = args.at(3);
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, ms,
+-                                         Object::ToNumber(isolate, ms));
+-      milli = Object::NumberValue(*ms);
+-    }
+-  }
+-
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int64_t const local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-  int const day = isolate->date_cache()->DaysFromTime(local_time_ms);
+-  int const time_within_day =
+-      isolate->date_cache()->TimeInDay(local_time_ms, day);
+-  int const h = time_within_day / (60 * 60 * 1000);
+-  double const m = Object::NumberValue(*min);
+-  time_val =
+-      MakeDate(day, MakeTime(h, m, s.value_or((time_within_day / 1000) % 60),
+-                             milli.value_or(time_within_day % 1000)));
+-  return SetLocalDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.25 Date.prototype.setMonth ( month, date )
+-BUILTIN(DatePrototypeSetMonth) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, this_date, "Date.prototype.setMonth");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> month = args.atOrUndefined(isolate, 1);
+-  double time_val = this_date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, month,
+-                                     Object::ToNumber(isolate, month));
+-  std::optional<double> dt;
+-
+-  if (argc >= 2) {
+-    DirectHandle<Object> date = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, date,
+-                                       Object::ToNumber(isolate, date));
+-    dt = Object::NumberValue(*date);
+-  }
+-
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int64_t const local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-  int const days = isolate->date_cache()->DaysFromTime(local_time_ms);
+-  int const time_within_day =
+-      isolate->date_cache()->TimeInDay(local_time_ms, days);
+-  int year, unused, day;
+-  isolate->date_cache()->YearMonthDayFromDays(days, &year, &unused, &day);
+-  double const m = Object::NumberValue(*month);
+-  time_val = MakeDate(MakeDay(year, m, dt.value_or(day)), time_within_day);
+-
+-  return SetLocalDateValue(isolate, this_date, time_val);
+-}
+-
+-// ES6 section 20.3.4.26 Date.prototype.setSeconds ( sec, ms )
+-BUILTIN(DatePrototypeSetSeconds) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setSeconds");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> sec = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, sec,
+-                                     Object::ToNumber(isolate, sec));
+-  std::optional<double> milli;
+-
+-  if (argc >= 2) {
+-    DirectHandle<Object> ms = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, ms,
+-                                       Object::ToNumber(isolate, ms));
+-    milli = Object::NumberValue(*ms);
+-  }
+-
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int64_t const local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-  int const day = isolate->date_cache()->DaysFromTime(local_time_ms);
+-  int const time_within_day =
+-      isolate->date_cache()->TimeInDay(local_time_ms, day);
+-  int const h = time_within_day / (60 * 60 * 1000);
+-  double const m = (time_within_day / (60 * 1000)) % 60;
+-  double const s = Object::NumberValue(*sec);
+-  time_val =
+-      MakeDate(day, MakeTime(h, m, s, milli.value_or(time_within_day % 1000)));
+-  return SetLocalDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.27 Date.prototype.setTime ( time )
+-BUILTIN(DatePrototypeSetTime) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setTime");
+-  DirectHandle<Object> value = args.atOrUndefined(isolate, 1);
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, value,
+-                                     Object::ToNumber(isolate, value));
+-  double value_double = Object::NumberValue(*value);
+-
+-  // Don't use SetDateValue here, since we might already have a tagged value for
+-  // the time, and we don't want to reallocate it.
+-  double clipped_value = value_double;
+-  if (DateCache::TryTimeClip(&clipped_value)) {
+-    date->SetValue(isolate, clipped_value);
+-    // If the clipping didn't change the value (i.e. the value was already an
+-    // integer), we can reuse the incoming value for the return value.
+-    // Otherwise, we have to allocate a new value. Make sure to use
+-    // SameNumberValue so that -0 is _not_ treated as equal to the 0.
+-    if (Object::SameNumberValue(clipped_value, value_double)) {
+-      return *value;
+-    }
+-    return *isolate->factory()->NewNumber(clipped_value);
+-  }
+-  date->SetNanValue();
+-  return ReadOnlyRoots(isolate).nan_value();
+-}
+-
+-// ES6 section 20.3.4.28 Date.prototype.setUTCDate ( date )
+-BUILTIN(DatePrototypeSetUTCDate) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setUTCDate");
+-  DirectHandle<Object> value = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, value,
+-                                     Object::ToNumber(isolate, value));
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int const days = isolate->date_cache()->DaysFromTime(time_ms);
+-  int const time_within_day = isolate->date_cache()->TimeInDay(time_ms, days);
+-  int year, month, day;
+-  isolate->date_cache()->YearMonthDayFromDays(days, &year, &month, &day);
+-  time_val = MakeDate(MakeDay(year, month, Object::NumberValue(*value)),
+-                      time_within_day);
+-  return SetDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.29 Date.prototype.setUTCFullYear (year, month, date)
+-BUILTIN(DatePrototypeSetUTCFullYear) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setUTCFullYear");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> year = args.atOrUndefined(isolate, 1);
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, year,
+-                                     Object::ToNumber(isolate, year));
+-  double year_double = Object::NumberValue(*year), month_double = 0.0,
+-         day_double = 1.0;
+-  int time_within_day = 0;
+-  if (!std::isnan(date->value())) {
+-    int64_t const time_ms = static_cast<int64_t>(date->value());
+-    int const days = isolate->date_cache()->DaysFromTime(time_ms);
+-    time_within_day = isolate->date_cache()->TimeInDay(time_ms, days);
+-    int year_int, month_int, day_int;
+-    isolate->date_cache()->YearMonthDayFromDays(days, &year_int, &month_int,
+-                                                &day_int);
+-    month_double = month_int;
+-    day_double = day_int;
+-  }
+-  if (argc >= 2) {
+-    DirectHandle<Object> month = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, month,
+-                                       Object::ToNumber(isolate, month));
+-    month_double = Object::NumberValue(*month);
+-    if (argc >= 3) {
+-      DirectHandle<Object> day = args.at(3);
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, day,
+-                                         Object::ToNumber(isolate, day));
+-      day_double = Object::NumberValue(*day);
+-    }
+-  }
+-  double const time_val =
+-      MakeDate(MakeDay(year_double, month_double, day_double), time_within_day);
+-  return SetDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.30 Date.prototype.setUTCHours(hour, min, sec, ms)
+-BUILTIN(DatePrototypeSetUTCHours) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setUTCHours");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> hour = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, hour,
+-                                     Object::ToNumber(isolate, hour));
+-  double const h = Object::NumberValue(*hour);
+-  std::optional<double> m;
+-  std::optional<double> s;
+-  std::optional<double> milli;
+-
+-  if (argc >= 2) {
+-    DirectHandle<Object> min = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, min,
+-                                       Object::ToNumber(isolate, min));
+-    m = Object::NumberValue(*min);
+-    if (argc >= 3) {
+-      DirectHandle<Object> sec = args.at(3);
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, sec,
+-                                         Object::ToNumber(isolate, sec));
+-      s = Object::NumberValue(*sec);
+-      if (argc >= 4) {
+-        DirectHandle<Object> ms = args.at(4);
+-        ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, ms,
+-                                           Object::ToNumber(isolate, ms));
+-        milli = Object::NumberValue(*ms);
+-      }
+-    }
+-  }
+-
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int const day = isolate->date_cache()->DaysFromTime(time_ms);
+-  int const time_within_day = isolate->date_cache()->TimeInDay(time_ms, day);
+-  time_val = MakeDate(
+-      day, MakeTime(h, m.value_or((time_within_day / (60 * 1000)) % 60),
+-                    s.value_or((time_within_day / 1000) % 60),
+-                    milli.value_or(time_within_day % 1000)));
+-  return SetDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.31 Date.prototype.setUTCMilliseconds(ms)
+-BUILTIN(DatePrototypeSetUTCMilliseconds) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setUTCMilliseconds");
+-  DirectHandle<Object> ms = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, ms,
+-                                     Object::ToNumber(isolate, ms));
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int const day = isolate->date_cache()->DaysFromTime(time_ms);
+-  int const time_within_day = isolate->date_cache()->TimeInDay(time_ms, day);
+-  int const h = time_within_day / (60 * 60 * 1000);
+-  int const m = (time_within_day / (60 * 1000)) % 60;
+-  int const s = (time_within_day / 1000) % 60;
+-  time_val = MakeDate(day, MakeTime(h, m, s, Object::NumberValue(*ms)));
+-
+-  return SetDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.32 Date.prototype.setUTCMinutes ( min, sec, ms )
+-BUILTIN(DatePrototypeSetUTCMinutes) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setUTCMinutes");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> min = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, min,
+-                                     Object::ToNumber(isolate, min));
+-  std::optional<double> s;
+-  std::optional<double> milli;
+-
+-  if (argc >= 2) {
+-    DirectHandle<Object> sec = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, sec,
+-                                       Object::ToNumber(isolate, sec));
+-    s = Object::NumberValue(*sec);
+-    if (argc >= 3) {
+-      DirectHandle<Object> ms = args.at(3);
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, ms,
+-                                         Object::ToNumber(isolate, ms));
+-      milli = Object::NumberValue(*ms);
+-    }
+-  }
+-
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int const day = isolate->date_cache()->DaysFromTime(time_ms);
+-  int const time_within_day = isolate->date_cache()->TimeInDay(time_ms, day);
+-  int const h = time_within_day / (60 * 60 * 1000);
+-  double const m = Object::NumberValue(*min);
+-  time_val =
+-      MakeDate(day, MakeTime(h, m, s.value_or((time_within_day / 1000) % 60),
+-                             milli.value_or(time_within_day % 1000)));
+-  return SetDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.31 Date.prototype.setUTCMonth ( month, date )
+-BUILTIN(DatePrototypeSetUTCMonth) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, this_date, "Date.prototype.setUTCMonth");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> month = args.atOrUndefined(isolate, 1);
+-  double time_val = this_date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, month,
+-                                     Object::ToNumber(isolate, month));
+-  std::optional<double> dt;
+-  if (argc >= 2) {
+-    DirectHandle<Object> date = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, date,
+-                                       Object::ToNumber(isolate, date));
+-    dt = Object::NumberValue(*date);
+-  }
+-
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int const days = isolate->date_cache()->DaysFromTime(time_ms);
+-  int const time_within_day = isolate->date_cache()->TimeInDay(time_ms, days);
+-  int year, unused, day;
+-  isolate->date_cache()->YearMonthDayFromDays(days, &year, &unused, &day);
+-  double const m = Object::NumberValue(*month);
+-  time_val = MakeDate(MakeDay(year, m, dt.value_or(day)), time_within_day);
+-
+-  return SetDateValue(isolate, this_date, time_val);
+-}
+-
+-// ES6 section 20.3.4.34 Date.prototype.setUTCSeconds ( sec, ms )
+-BUILTIN(DatePrototypeSetUTCSeconds) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setUTCSeconds");
+-  int const argc = args.length() - 1;
+-  DirectHandle<Object> sec = args.atOrUndefined(isolate, 1);
+-  double time_val = date->value();
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, sec,
+-                                     Object::ToNumber(isolate, sec));
+-  std::optional<double> milli;
+-  if (argc >= 2) {
+-    DirectHandle<Object> ms = args.at(2);
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, ms,
+-                                       Object::ToNumber(isolate, ms));
+-    milli = Object::NumberValue(*ms);
+-  }
+-  if (std::isnan(time_val)) {
+-    return ReadOnlyRoots(isolate).nan_value();
+-  }
+-
+-  int64_t const time_ms = static_cast<int64_t>(time_val);
+-  int const day = isolate->date_cache()->DaysFromTime(time_ms);
+-  int const time_within_day = isolate->date_cache()->TimeInDay(time_ms, day);
+-  int const h = time_within_day / (60 * 60 * 1000);
+-  double const m = (time_within_day / (60 * 1000)) % 60;
+-  double const s = Object::NumberValue(*sec);
+-  time_val =
+-      MakeDate(day, MakeTime(h, m, s, milli.value_or(time_within_day % 1000)));
+-  return SetDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.35 Date.prototype.toDateString ( )
+-BUILTIN(DatePrototypeToDateString) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.toDateString");
+-  DateBuffer buffer = ToDateString(date->value(), isolate->date_cache(),
+-                                   ToDateStringMode::kLocalDate);
+-  RETURN_RESULT_OR_FAILURE(
+-      isolate, isolate->factory()->NewStringFromUtf8(base::VectorOf(buffer)));
+-}
+-
+-// ES6 section 20.3.4.36 Date.prototype.toISOString ( )
+-BUILTIN(DatePrototypeToISOString) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.toISOString");
+-  double const time_val = date->value();
+-  if (std::isnan(time_val)) {
+-    THROW_NEW_ERROR_RETURN_FAILURE(
+-        isolate, NewRangeError(MessageTemplate::kInvalidTimeValue));
+-  }
+-  DateBuffer buffer = ToDateString(time_val, isolate->date_cache(),
+-                                   ToDateStringMode::kISODateAndTime);
+-  RETURN_RESULT_OR_FAILURE(
+-      isolate, isolate->factory()->NewStringFromUtf8(base::VectorOf(buffer)));
+-}
+-
+-// ES6 section 20.3.4.41 Date.prototype.toString ( )
+-BUILTIN(DatePrototypeToString) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.toString");
+-  DateBuffer buffer = ToDateString(date->value(), isolate->date_cache(),
+-                                   ToDateStringMode::kLocalDateAndTime);
+-  RETURN_RESULT_OR_FAILURE(
+-      isolate, isolate->factory()->NewStringFromUtf8(base::VectorOf(buffer)));
+-}
+-
+-// ES6 section 20.3.4.42 Date.prototype.toTimeString ( )
+-BUILTIN(DatePrototypeToTimeString) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.toTimeString");
+-  DateBuffer buffer = ToDateString(date->value(), isolate->date_cache(),
+-                                   ToDateStringMode::kLocalTime);
+-  RETURN_RESULT_OR_FAILURE(
+-      isolate, isolate->factory()->NewStringFromUtf8(base::VectorOf(buffer)));
+-}
+-
+-#ifdef V8_INTL_SUPPORT
+-// https://tc39.es/ecma402/#sup-date.prototype.tolocaledatestring
+-BUILTIN(DatePrototypeToLocaleDateString) {
+-  HandleScope scope(isolate);
+-
+-  isolate->CountUsage(v8::Isolate::UseCounterFeature::kDateToLocaleDateString);
+-
+-  const char* method_name = "Date.prototype.toLocaleDateString";
+-  CHECK_RECEIVER(JSDate, date, method_name);
+-
+-  RETURN_RESULT_OR_FAILURE(
+-      isolate, JSDateTimeFormat::ToLocaleDateTime(
+-                   isolate,
+-                   date,                                     // date
+-                   args.atOrUndefined(isolate, 1),           // locales
+-                   args.atOrUndefined(isolate, 2),           // options
+-                   JSDateTimeFormat::RequiredOption::kDate,  // required
+-                   JSDateTimeFormat::DefaultsOption::kDate,  // defaults
+-                   method_name));                            // method_name
+-}
+-
+-// https://tc39.es/ecma402/#sup-date.prototype.tolocalestring
+-BUILTIN(DatePrototypeToLocaleString) {
+-  HandleScope scope(isolate);
+-
+-  isolate->CountUsage(v8::Isolate::UseCounterFeature::kDateToLocaleString);
+-
+-  const char* method_name = "Date.prototype.toLocaleString";
+-  CHECK_RECEIVER(JSDate, date, method_name);
+-
+-  RETURN_RESULT_OR_FAILURE(
+-      isolate, JSDateTimeFormat::ToLocaleDateTime(
+-                   isolate,
+-                   date,                                    // date
+-                   args.atOrUndefined(isolate, 1),          // locales
+-                   args.atOrUndefined(isolate, 2),          // options
+-                   JSDateTimeFormat::RequiredOption::kAny,  // required
+-                   JSDateTimeFormat::DefaultsOption::kAll,  // defaults
+-                   method_name));                           // method_name
+-}
+-
+-// https://tc39.es/ecma402/#sup-date.prototype.tolocaletimestring
+-BUILTIN(DatePrototypeToLocaleTimeString) {
+-  HandleScope scope(isolate);
+-
+-  isolate->CountUsage(v8::Isolate::UseCounterFeature::kDateToLocaleTimeString);
+-
+-  const char* method_name = "Date.prototype.toLocaleTimeString";
+-  CHECK_RECEIVER(JSDate, date, method_name);
+-
+-  RETURN_RESULT_OR_FAILURE(
+-      isolate, JSDateTimeFormat::ToLocaleDateTime(
+-                   isolate,
+-                   date,                                     // date
+-                   args.atOrUndefined(isolate, 1),           // locales
+-                   args.atOrUndefined(isolate, 2),           // options
+-                   JSDateTimeFormat::RequiredOption::kTime,  // required
+-                   JSDateTimeFormat::DefaultsOption::kTime,  // defaults
+-                   method_name));                            // method_name
+-}
+-#endif  // V8_INTL_SUPPORT
+-
+-// ES6 section 20.3.4.43 Date.prototype.toUTCString ( )
+-BUILTIN(DatePrototypeToUTCString) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.toUTCString");
+-  DateBuffer buffer = ToDateString(date->value(), isolate->date_cache(),
+-                                   ToDateStringMode::kUTCDateAndTime);
+-  RETURN_RESULT_OR_FAILURE(
+-      isolate, isolate->factory()->NewStringFromUtf8(base::VectorOf(buffer)));
+-}
+-
+-// ES6 section B.2.4.1 Date.prototype.getYear ( )
+-BUILTIN(DatePrototypeGetYear) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.getYear");
+-  double time_val = date->value();
+-  if (std::isnan(time_val)) return ReadOnlyRoots(isolate).nan_value();
+-  int64_t time_ms = static_cast<int64_t>(time_val);
+-  int64_t local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-  int days = isolate->date_cache()->DaysFromTime(local_time_ms);
+-  int year, month, day;
+-  isolate->date_cache()->YearMonthDayFromDays(days, &year, &month, &day);
+-  return Smi::FromInt(year - 1900);
+-}
+-
+-// ES6 section B.2.4.2 Date.prototype.setYear ( year )
+-BUILTIN(DatePrototypeSetYear) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.setYear");
+-  DirectHandle<Object> year = args.atOrUndefined(isolate, 1);
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, year,
+-                                     Object::ToNumber(isolate, year));
+-  double month_double = 0.0, day_double = 1.0,
+-         year_double = Object::NumberValue(*year);
+-  if (!std::isnan(year_double)) {
+-    double year_int = DoubleToInteger(year_double);
+-    if (0.0 <= year_int && year_int <= 99.0) {
+-      year_double = 1900.0 + year_int;
+-    }
+-  }
+-  int time_within_day = 0;
+-  if (!std::isnan(date->value())) {
+-    int64_t const time_ms = static_cast<int64_t>(date->value());
+-    int64_t local_time_ms = isolate->date_cache()->ToLocal(time_ms);
+-    int const days = isolate->date_cache()->DaysFromTime(local_time_ms);
+-    time_within_day = isolate->date_cache()->TimeInDay(local_time_ms, days);
+-    int year_int, month_int, day_int;
+-    isolate->date_cache()->YearMonthDayFromDays(days, &year_int, &month_int,
+-                                                &day_int);
+-    month_double = month_int;
+-    day_double = day_int;
+-  }
+-  double time_val =
+-      MakeDate(MakeDay(year_double, month_double, day_double), time_within_day);
+-  return SetLocalDateValue(isolate, date, time_val);
+-}
+-
+-// ES6 section 20.3.4.37 Date.prototype.toJSON ( key )
+-BUILTIN(DatePrototypeToJson) {
+-  HandleScope scope(isolate);
+-  DirectHandle<Object> receiver = args.atOrUndefined(isolate, 0);
+-  DirectHandle<JSReceiver> receiver_obj;
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, receiver_obj,
+-                                     Object::ToObject(isolate, receiver));
+-  DirectHandle<Object> primitive;
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-      isolate, primitive,
+-      Object::ToPrimitive(isolate, receiver_obj, ToPrimitiveHint::kNumber));
+-  if (IsNumber(*primitive) && !std::isfinite(Object::NumberValue(*primitive))) {
+-    return ReadOnlyRoots(isolate).null_value();
+-  } else {
+-    DirectHandle<String> name =
+-        isolate->factory()->NewStringFromAsciiChecked("toISOString");
+-    DirectHandle<Object> function;
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-        isolate, function, Object::GetProperty(isolate, receiver_obj, name));
+-    if (!IsCallable(*function)) {
+-      THROW_NEW_ERROR_RETURN_FAILURE(
+-          isolate, NewTypeError(MessageTemplate::kCalledNonCallable, name));
+-    }
+-    RETURN_RESULT_OR_FAILURE(
+-        isolate, Execution::Call(isolate, function, receiver_obj, {}));
+-  }
+-}
+-
+-#ifdef V8_TEMPORAL_SUPPORT
+-// https://tc39.es/proposal-temporal/#sec-date.prototype.totemporalinstant
+-BUILTIN(DatePrototypeToTemporalInstant) {
+-  HandleScope scope(isolate);
+-  CHECK_RECEIVER(JSDate, date, "Date.prototype.toTemporalInstant");
+-  // 1. Let t be ? thisTimeValue(this value).
+-  DirectHandle<BigInt> t;
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-      isolate, t,
+-      BigInt::FromNumber(isolate,
+-                         isolate->factory()->NewNumber(date->value())));
+-  // 2. Let ns be ? NumberToBigInt(t) × 10^6.
+-  DirectHandle<BigInt> ns;
+-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-      isolate, ns,
+-      BigInt::Multiply(isolate, t, BigInt::FromInt64(isolate, 1000000)));
+-  // 3. Return ! CreateTemporalInstant(ns).
+-  return *temporal::CreateTemporalInstantWithValidityCheck(isolate, ns)
+-              .ToHandleChecked();
+-}
+-#endif  // V8_TEMPORAL_SUPPORT
+-
+ }  // namespace internal
+ }  // namespace v8
+diff --git a/src/builtins/builtins-definitions.h b/src/builtins/builtins-definitions.h
+index 8ec77ac91f1..ceb026172d0 100644
+--- a/src/builtins/builtins-definitions.h
++++ b/src/builtins/builtins-definitions.h
+@@ -693,52 +693,7 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
+                                                                                \
+   /* Date */                                                                   \
+   CPP(DateConstructor, kDontAdaptArgumentsSentinel)                            \
+-  TFJ(DatePrototypeGetDate, kJSArgcReceiverSlots, kReceiver)                   \
+-  TFJ(DatePrototypeGetDay, kJSArgcReceiverSlots, kReceiver)                    \
+-  TFJ(DatePrototypeGetFullYear, kJSArgcReceiverSlots, kReceiver)               \
+-  TFJ(DatePrototypeGetHours, kJSArgcReceiverSlots, kReceiver)                  \
+-  TFJ(DatePrototypeGetMilliseconds, kJSArgcReceiverSlots, kReceiver)           \
+-  TFJ(DatePrototypeGetMinutes, kJSArgcReceiverSlots, kReceiver)                \
+-  TFJ(DatePrototypeGetMonth, kJSArgcReceiverSlots, kReceiver)                  \
+-  TFJ(DatePrototypeGetSeconds, kJSArgcReceiverSlots, kReceiver)                \
+-  TFJ(DatePrototypeGetTime, kJSArgcReceiverSlots, kReceiver)                   \
+-  TFJ(DatePrototypeGetTimezoneOffset, kJSArgcReceiverSlots, kReceiver)         \
+-  TFJ(DatePrototypeGetUTCDate, kJSArgcReceiverSlots, kReceiver)                \
+-  TFJ(DatePrototypeGetUTCDay, kJSArgcReceiverSlots, kReceiver)                 \
+-  TFJ(DatePrototypeGetUTCFullYear, kJSArgcReceiverSlots, kReceiver)            \
+-  TFJ(DatePrototypeGetUTCHours, kJSArgcReceiverSlots, kReceiver)               \
+-  TFJ(DatePrototypeGetUTCMilliseconds, kJSArgcReceiverSlots, kReceiver)        \
+-  TFJ(DatePrototypeGetUTCMinutes, kJSArgcReceiverSlots, kReceiver)             \
+-  TFJ(DatePrototypeGetUTCMonth, kJSArgcReceiverSlots, kReceiver)               \
+-  TFJ(DatePrototypeGetUTCSeconds, kJSArgcReceiverSlots, kReceiver)             \
+-  TFJ(DatePrototypeValueOf, kJSArgcReceiverSlots, kReceiver)                   \
+-  TFJ(DatePrototypeToPrimitive, kJSArgcReceiverSlots + 1, kReceiver, kHint)    \
+-  CPP(DatePrototypeGetYear, JSParameterCount(0))                               \
+-  CPP(DatePrototypeSetYear, kDontAdaptArgumentsSentinel)                       \
+   CPP(DateNow, kDontAdaptArgumentsSentinel)                                    \
+-  CPP(DateParse, kDontAdaptArgumentsSentinel)                                  \
+-  CPP(DatePrototypeSetDate, kDontAdaptArgumentsSentinel)                       \
+-  CPP(DatePrototypeSetFullYear, kDontAdaptArgumentsSentinel)                   \
+-  CPP(DatePrototypeSetHours, kDontAdaptArgumentsSentinel)                      \
+-  CPP(DatePrototypeSetMilliseconds, kDontAdaptArgumentsSentinel)               \
+-  CPP(DatePrototypeSetMinutes, kDontAdaptArgumentsSentinel)                    \
+-  CPP(DatePrototypeSetMonth, kDontAdaptArgumentsSentinel)                      \
+-  CPP(DatePrototypeSetSeconds, kDontAdaptArgumentsSentinel)                    \
+-  CPP(DatePrototypeSetTime, kDontAdaptArgumentsSentinel)                       \
+-  CPP(DatePrototypeSetUTCDate, kDontAdaptArgumentsSentinel)                    \
+-  CPP(DatePrototypeSetUTCFullYear, kDontAdaptArgumentsSentinel)                \
+-  CPP(DatePrototypeSetUTCHours, kDontAdaptArgumentsSentinel)                   \
+-  CPP(DatePrototypeSetUTCMilliseconds, kDontAdaptArgumentsSentinel)            \
+-  CPP(DatePrototypeSetUTCMinutes, kDontAdaptArgumentsSentinel)                 \
+-  CPP(DatePrototypeSetUTCMonth, kDontAdaptArgumentsSentinel)                   \
+-  CPP(DatePrototypeSetUTCSeconds, kDontAdaptArgumentsSentinel)                 \
+-  CPP(DatePrototypeToDateString, kDontAdaptArgumentsSentinel)                  \
+-  CPP(DatePrototypeToISOString, kDontAdaptArgumentsSentinel)                   \
+-  CPP(DatePrototypeToUTCString, kDontAdaptArgumentsSentinel)                   \
+-  CPP(DatePrototypeToString, kDontAdaptArgumentsSentinel)                      \
+-  CPP(DatePrototypeToTimeString, kDontAdaptArgumentsSentinel)                  \
+-  CPP(DatePrototypeToJson, kDontAdaptArgumentsSentinel)                        \
+-  CPP(DateUTC, kDontAdaptArgumentsSentinel)                                    \
+                                                                                \
+   /* DisposabeStack*/                                                          \
+   CPP(DisposableStackConstructor, kDontAdaptArgumentsSentinel)                 \
+@@ -1864,7 +1819,5 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
+   CPP(TemporalPlainMonthDayPrototypeValueOf, kDontAdaptArgumentsSentinel)      \
+-  CPP(TemporalPlainMonthDayPrototypeToPlainDate, kDontAdaptArgumentsSentinel)  \
+-                                                                               \
+-  CPP(DatePrototypeToTemporalInstant, kDontAdaptArgumentsSentinel)
++  CPP(TemporalPlainMonthDayPrototypeToPlainDate, kDontAdaptArgumentsSentinel)
+ #else  // V8_TEMPORAL_SUPPORT
+ #define BUILTIN_LIST_TEMPORAL(CPP, TFJ)
+ #endif  // V8_TEMPORAL_SUPPORT
+@@ -1876,9 +1830,6 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
+   CPP(CollatorPrototypeCompare, kDontAdaptArgumentsSentinel)                   \
+   CPP(CollatorSupportedLocalesOf, kDontAdaptArgumentsSentinel)                 \
+   CPP(CollatorPrototypeResolvedOptions, kDontAdaptArgumentsSentinel)           \
+-  CPP(DatePrototypeToLocaleDateString, kDontAdaptArgumentsSentinel)            \
+-  CPP(DatePrototypeToLocaleString, kDontAdaptArgumentsSentinel)                \
+-  CPP(DatePrototypeToLocaleTimeString, kDontAdaptArgumentsSentinel)            \
+   CPP(DateTimeFormatConstructor, kDontAdaptArgumentsSentinel)                  \
+   CPP(DateTimeFormatInternalFormat, JSParameterCount(1))                       \
+   CPP(DateTimeFormatPrototypeFormat, kDontAdaptArgumentsSentinel)              \
+diff --git a/src/compiler/js-call-reducer.cc b/src/compiler/js-call-reducer.cc
+index e8707261d3e..ce2486d2bf8 100644
+--- a/src/compiler/js-call-reducer.cc
++++ b/src/compiler/js-call-reducer.cc
+@@ -5552,20 +5552,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
+       return ReduceDataViewAccess(node, DataViewAccess::kSet,
+                                   ExternalArrayType::kExternalBigUint64Array);
+ 
+-    case Builtin::kDatePrototypeGetFullYear:
+-      return ReduceDatePrototypeGetField(node, JSDate::kYear);
+-    case Builtin::kDatePrototypeGetMonth:
+-      return ReduceDatePrototypeGetField(node, JSDate::kMonth);
+-    case Builtin::kDatePrototypeGetDate:
+-      return ReduceDatePrototypeGetField(node, JSDate::kDay);
+-    case Builtin::kDatePrototypeGetDay:
+-      return ReduceDatePrototypeGetField(node, JSDate::kWeekday);
+-    case Builtin::kDatePrototypeGetHours:
+-      return ReduceDatePrototypeGetField(node, JSDate::kHour);
+-    case Builtin::kDatePrototypeGetMinutes:
+-      return ReduceDatePrototypeGetField(node, JSDate::kMinute);
+-    case Builtin::kDatePrototypeGetSeconds:
+-      return ReduceDatePrototypeGetField(node, JSDate::kSecond);
+ 
+     case Builtin::kTypedArrayPrototypeByteLength:
+       return ReduceArrayBufferViewByteLengthAccessor(node, JS_TYPED_ARRAY_TYPE,
+@@ -5755,8 +5741,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
+       return ReduceCollectionIteratorPrototypeNext(
+           node, OrderedHashSet::kEntrySize, factory()->empty_ordered_hash_set(),
+           FIRST_JS_SET_ITERATOR_TYPE, LAST_JS_SET_ITERATOR_TYPE);
+-    case Builtin::kDatePrototypeGetTime:
+-      return ReduceDatePrototypeGetTime(node);
+     case Builtin::kDateNow:
+       return ReduceDateNow(node);
+     case Builtin::kNumberConstructor:
+@@ -9541,63 +9525,6 @@ Reduction JSCallReducer::ReduceGlobalIsNaN(Node* node) {
+   return Replace(value);
+ }
+ 
+-// ES6 section 20.3.4.10 Date.prototype.getTime ( )
+-Reduction JSCallReducer::ReduceDatePrototypeGetTime(Node* node) {
+-  Node* receiver = NodeProperties::GetValueInput(node, 1);
+-  Effect effect{NodeProperties::GetEffectInput(node)};
+-  Control control{NodeProperties::GetControlInput(node)};
+-
+-  MapInference inference(broker(), receiver, effect);
+-  if (!inference.HaveMaps() || !inference.AllOfInstanceTypesAre(JS_DATE_TYPE)) {
+-    return NoChange();
+-  }
+-
+-  Node* value = effect =
+-      graph()->NewNode(simplified()->LoadField(AccessBuilder::ForJSDateValue()),
+-                       receiver, effect, control);
+-  ReplaceWithValue(node, value, effect, control);
+-  return Replace(value);
+-}
+-
+-// https://tc39.es/ecma262/#sec-date.prototype.getdate
+-// https://tc39.es/ecma262/#sec-date.prototype.getday
+-// https://tc39.es/ecma262/#sec-date.prototype.getfullyear
+-// https://tc39.es/ecma262/#sec-date.prototype.gethours
+-// https://tc39.es/ecma262/#sec-date.prototype.getminutes
+-// https://tc39.es/ecma262/#sec-date.prototype.getmonth
+-// https://tc39.es/ecma262/#sec-date.prototype.getseconds
+-Reduction JSCallReducer::ReduceDatePrototypeGetField(Node* node,
+-                                                     JSDate::FieldIndex field) {
+-  DCHECK_LT(field, JSDate::kFirstUncachedField);
+-  if (!v8_flags.turbofan_inline_date_accessors) return NoChange();
+-
+-  Node* receiver = NodeProperties::GetValueInput(node, 1);
+-  Effect effect{NodeProperties::GetEffectInput(node)};
+-  Control control{NodeProperties::GetControlInput(node)};
+-
+-  MapInference inference(broker(), receiver, effect);
+-  if (!inference.HaveMaps() || !inference.AllOfInstanceTypesAre(JS_DATE_TYPE)) {
+-    return NoChange();
+-  }
+-
+-  if (!dependencies()->DependOnNoDateTimeConfigurationChangeProtector()) {
+-    return NoChange();
+-  }
+-
+-#define __ gasm.
+-  JSGraphAssembler gasm(broker(), jsgraph(), jsgraph()->zone(),
+-                        BranchSemantics::kJS);
+-  gasm.InitializeEffectControl(effect, control);
+-
+-  Node* value =
+-      __ LoadField<Object>(AccessBuilder::ForJSDateField(field),
+-                           TNode<HeapObject>::UncheckedCast(receiver));
+-
+-  ReplaceWithValue(node, value, gasm.effect(), gasm.control());
+-  return Replace(value);
+-#undef __
+-}
+-
+ // ES6 section 20.3.3.1 Date.now ( )
+ Reduction JSCallReducer::ReduceDateNow(Node* node) {
+   Node* effect = NodeProperties::GetEffectInput(node);
+diff --git a/src/compiler/js-call-reducer.h b/src/compiler/js-call-reducer.h
+index 0d4d10d6dc6..277fdcff6f8 100644
+--- a/src/compiler/js-call-reducer.h
++++ b/src/compiler/js-call-reducer.h
+@@ -248,8 +248,6 @@ class V8_EXPORT_PRIVATE JSCallReducer final : public AdvancedReducer {
+   Reduction ReduceDataViewAccess(Node* node, DataViewAccess access,
+                                  ExternalArrayType element_type);
+ 
+-  Reduction ReduceDatePrototypeGetTime(Node* node);
+-  Reduction ReduceDatePrototypeGetField(Node* node, JSDate::FieldIndex field);
+ 
+   Reduction ReduceDateNow(Node* node);
+   Reduction ReduceNumberParseInt(Node* node);
+diff --git a/src/compiler/turbofan-typer.cc b/src/compiler/turbofan-typer.cc
+index 16fa4b6c443..e21884e4da1 100644
+--- a/src/compiler/turbofan-typer.cc
++++ b/src/compiler/turbofan-typer.cc
+@@ -1909,25 +1909,6 @@ Type Typer::Visitor::JSCallTyper(Type fun, Typer* t) {
+     // Date functions.
+     case Builtin::kDateNow:
+       return t->cache_->kTimeValueType;
+-    case Builtin::kDatePrototypeGetDate:
+-      return t->cache_->kJSDateDayType;
+-    case Builtin::kDatePrototypeGetDay:
+-      return t->cache_->kJSDateWeekdayType;
+-    case Builtin::kDatePrototypeGetFullYear:
+-      return t->cache_->kJSDateYearType;
+-    case Builtin::kDatePrototypeGetHours:
+-      return t->cache_->kJSDateHourType;
+-    case Builtin::kDatePrototypeGetMilliseconds:
+-      return Type::Union(Type::Range(0.0, 999.0, t->zone()), Type::NaN(),
+-                         t->zone());
+-    case Builtin::kDatePrototypeGetMinutes:
+-      return t->cache_->kJSDateMinuteType;
+-    case Builtin::kDatePrototypeGetMonth:
+-      return t->cache_->kJSDateMonthType;
+-    case Builtin::kDatePrototypeGetSeconds:
+-      return t->cache_->kJSDateSecondType;
+-    case Builtin::kDatePrototypeGetTime:
+-      return t->cache_->kJSDateValueType;
+ 
+     // Symbol functions.
+     case Builtin::kSymbolConstructor:
+diff --git a/src/debug/debug-evaluate.cc b/src/debug/debug-evaluate.cc
+index d14f6806a01..5b62fb0a88a 100644
+--- a/src/debug/debug-evaluate.cc
++++ b/src/debug/debug-evaluate.cc
+@@ -665,39 +665,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
+     // Date builtins.
+     case Builtin::kDateConstructor:
+     case Builtin::kDateNow:
+-    case Builtin::kDateParse:
+-    case Builtin::kDatePrototypeGetDate:
+-    case Builtin::kDatePrototypeGetDay:
+-    case Builtin::kDatePrototypeGetFullYear:
+-    case Builtin::kDatePrototypeGetHours:
+-    case Builtin::kDatePrototypeGetMilliseconds:
+-    case Builtin::kDatePrototypeGetMinutes:
+-    case Builtin::kDatePrototypeGetMonth:
+-    case Builtin::kDatePrototypeGetSeconds:
+-    case Builtin::kDatePrototypeGetTime:
+-    case Builtin::kDatePrototypeGetTimezoneOffset:
+-    case Builtin::kDatePrototypeGetUTCDate:
+-    case Builtin::kDatePrototypeGetUTCDay:
+-    case Builtin::kDatePrototypeGetUTCFullYear:
+-    case Builtin::kDatePrototypeGetUTCHours:
+-    case Builtin::kDatePrototypeGetUTCMilliseconds:
+-    case Builtin::kDatePrototypeGetUTCMinutes:
+-    case Builtin::kDatePrototypeGetUTCMonth:
+-    case Builtin::kDatePrototypeGetUTCSeconds:
+-    case Builtin::kDatePrototypeGetYear:
+-    case Builtin::kDatePrototypeToDateString:
+-    case Builtin::kDatePrototypeToISOString:
+-    case Builtin::kDatePrototypeToUTCString:
+-    case Builtin::kDatePrototypeToString:
+-#ifdef V8_INTL_SUPPORT
+-    case Builtin::kDatePrototypeToLocaleString:
+-    case Builtin::kDatePrototypeToLocaleDateString:
+-    case Builtin::kDatePrototypeToLocaleTimeString:
+-#endif
+-    case Builtin::kDatePrototypeToTimeString:
+-    case Builtin::kDatePrototypeToJson:
+-    case Builtin::kDatePrototypeToPrimitive:
+-    case Builtin::kDatePrototypeValueOf:
+     // DisposableStack builtins.
+     case Builtin::kDisposableStackConstructor:
+     case Builtin::kDisposableStackPrototypeGetDisposed:
+@@ -1004,23 +971,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
+     case Builtin::kMapPrototypeClear:
+     case Builtin::kMapPrototypeDelete:
+     case Builtin::kMapPrototypeSet:
+-    // Date builtins.
+-    case Builtin::kDatePrototypeSetDate:
+-    case Builtin::kDatePrototypeSetFullYear:
+-    case Builtin::kDatePrototypeSetHours:
+-    case Builtin::kDatePrototypeSetMilliseconds:
+-    case Builtin::kDatePrototypeSetMinutes:
+-    case Builtin::kDatePrototypeSetMonth:
+-    case Builtin::kDatePrototypeSetSeconds:
+-    case Builtin::kDatePrototypeSetTime:
+-    case Builtin::kDatePrototypeSetUTCDate:
+-    case Builtin::kDatePrototypeSetUTCFullYear:
+-    case Builtin::kDatePrototypeSetUTCHours:
+-    case Builtin::kDatePrototypeSetUTCMilliseconds:
+-    case Builtin::kDatePrototypeSetUTCMinutes:
+-    case Builtin::kDatePrototypeSetUTCMonth:
+-    case Builtin::kDatePrototypeSetUTCSeconds:
+-    case Builtin::kDatePrototypeSetYear:
+     // DisposableStack builtins.
+     case Builtin::kDisposableStackPrototypeUse:
+     case Builtin::kDisposableStackPrototypeDispose:
+@@ -1294,7 +1244,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
+     case Builtin::kTemporalPlainMonthDayPrototypeToLocaleString:
+     case Builtin::kTemporalPlainMonthDayPrototypeValueOf:
+     case Builtin::kTemporalPlainMonthDayPrototypeToPlainDate:
+-    case Builtin::kDatePrototypeToTemporalInstant:
+       return DebugInfo::kHasNoSideEffect;
+ #endif  // V8_TEMPORAL_SUPPORT
+ 
+diff --git a/src/maglev/maglev-ir.h b/src/maglev/maglev-ir.h
+index 58f997a9b67..06b48363b0f 100644
+--- a/src/maglev/maglev-ir.h
++++ b/src/maglev/maglev-ir.h
+@@ -10443,7 +10443,6 @@ class CallBuiltin : public VarargsValueNodeT<0, CallBuiltin> {
+   }
+ 
+ #define BUILTIN_RETURN_TYPE_MAP(V)                                       \
+-  V(DatePrototypeGetMilliseconds, NodeType::kNumber)                     \
+   V(MathRandom, NodeType::kNumber)                                       \
+   V(MathFloor, NodeType::kNumber)                                        \
+   V(MathCeil, NodeType::kNumber)                                         \
+diff --git a/src/maglev/maglev-reducer-inl.h b/src/maglev/maglev-reducer-inl.h
+index 7e3cb806030..74d797767a0 100644
+--- a/src/maglev/maglev-reducer-inl.h
++++ b/src/maglev/maglev-reducer-inl.h
+@@ -5129,122 +5129,6 @@ IEEE_754_UNARY_LIST(MATH_UNARY_IEEE_BUILTIN_REDUCER)
+ IEEE_754_BINARY_LIST(MATH_BINARY_IEEE_BUILTIN_REDUCER)
+ #undef MATH_BINARY_IEEE_BUILTIN_REDUCER
+ 
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetFieldPrologue(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  if (!v8_flags.maglev_inline_date_accessors) return {};
+-  if (!CanSpeculateCall()) return {};
+-
+-  if (args.receiver_mode() == ConvertReceiverMode::kNullOrUndefined) {
+-    return {};
+-  }
+-
+-  ValueNode* receiver = GetValueOrUndefined(args.receiver());
+-  // If the map set is not found, then we don't know anything about the map of
+-  // the receiver, so bail.
+-  MapInference<MaglevReducer<BaseT>> inference(this, receiver);
+-  auto possible_receiver_maps = inference.TryGetPossibleMaps();
+-  if (!possible_receiver_maps) {
+-    return {};
+-  }
+-
+-  // If the set of possible maps is empty, then there's no possible map for this
+-  // receiver, therefore this path is unreachable at runtime. We're unlikely to
+-  // ever hit this case, BuildCheckMaps should already unconditionally deopt,
+-  // but check it in case another checking operation fails to statically
+-  // unconditionally deopt.
+-  if (possible_receiver_maps->is_empty()) {
+-    // TODO(leszeks): Add an unreachable assert here.
+-    return ReduceResult::DoneWithAbort();
+-  }
+-
+-  // Don't optimize if any of the known maps is something else than a Date map.
+-  for (compiler::MapRef map : *possible_receiver_maps) {
+-    if (map.instance_type() != JS_DATE_TYPE) {
+-      return {};
+-    }
+-  }
+-
+-  if (!broker()
+-           ->dependencies()
+-           ->DependOnNoDateTimeConfigurationChangeProtector()) {
+-    return {};
+-  }
+-
+-  RETURN_IF_ABORT(inference.InsertMapChecks(zone()));
+-
+-  return ReduceResult::Done();
+-}
+-
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetField(
+-    compiler::JSFunctionRef target, CallArguments& args,
+-    JSDate::FieldIndex field_index) {
+-  DCHECK_LT(field_index, JSDate::kFirstUncachedField);
+-  auto prologue_result = TryReduceDatePrototypeGetFieldPrologue(target, args);
+-  if (!prologue_result.IsDoneWithoutPayload()) return prologue_result;
+-
+-  ValueNode* receiver = args.receiver();
+-  DCHECK_NOT_NULL(receiver);
+-  int field_offset = offsetof(JSDate, year_) + field_index * kTaggedSize;
+-  ValueNode* field_value;
+-  GET_VALUE_OR_ABORT(field_value, BuildLoadTaggedField(receiver, field_offset));
+-  // All cached JSDate fields are Smi|NaN.
+-  RETURN_IF_ABORT(BuildCheckSmi(field_value));
+-  // TODO(jgruber): Presumably NaN time values are rare, so we simply deopt when
+-  // encountering such an object. Alternatively, to avoid the deopt we could
+-  // fall back to Number: EnsureType(field_value, NodeType::kNumber);
+-  return field_value;
+-}
+-
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetTime(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  auto prologue_result = TryReduceDatePrototypeGetFieldPrologue(target, args);
+-  if (!prologue_result.IsDoneWithoutPayload()) return prologue_result;
+-
+-  ValueNode* receiver = args.receiver();
+-  DCHECK_NOT_NULL(receiver);
+-  return AddNewNode<LoadFloat64>({receiver},
+-                                 static_cast<int>(offsetof(JSDate, value_)));
+-}
+-
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetFullYear(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  return TryReduceDatePrototypeGetField(target, args, JSDate::kYear);
+-}
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetMonth(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  return TryReduceDatePrototypeGetField(target, args, JSDate::kMonth);
+-}
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetDate(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  return TryReduceDatePrototypeGetField(target, args, JSDate::kDay);
+-}
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetDay(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  return TryReduceDatePrototypeGetField(target, args, JSDate::kWeekday);
+-}
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetHours(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  return TryReduceDatePrototypeGetField(target, args, JSDate::kHour);
+-}
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetMinutes(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  return TryReduceDatePrototypeGetField(target, args, JSDate::kMinute);
+-}
+-template <typename BaseT>
+-MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetSeconds(
+-    compiler::JSFunctionRef target, CallArguments& args) {
+-  return TryReduceDatePrototypeGetField(target, args, JSDate::kSecond);
+-}
+-
+ #ifdef V8_INTL_SUPPORT
+ template <typename BaseT>
+ MaybeReduceResult
+diff --git a/src/maglev/maglev-reducer.h b/src/maglev/maglev-reducer.h
+index 8c8faaa35d8..91c8c4c8c5d 100644
+--- a/src/maglev/maglev-reducer.h
++++ b/src/maglev/maglev-reducer.h
+@@ -1132,14 +1132,6 @@ class MaglevReducer {
+   V(DataViewPrototypeSetInt16)                 \
+   V(DataViewPrototypeSetInt32)                 \
+   V(DataViewPrototypeSetInt8)                  \
+-  V(DatePrototypeGetDate)                      \
+-  V(DatePrototypeGetDay)                       \
+-  V(DatePrototypeGetFullYear)                  \
+-  V(DatePrototypeGetHours)                     \
+-  V(DatePrototypeGetMinutes)                   \
+-  V(DatePrototypeGetMonth)                     \
+-  V(DatePrototypeGetSeconds)                   \
+-  V(DatePrototypeGetTime)                      \
+   V(FunctionPrototypeHasInstance)              \
+   V(MathAbs)                                   \
+   V(MathCeil)                                  \
+@@ -1169,13 +1161,6 @@ class MaglevReducer {
+   MAGLEV_REDUCER_BUILTIN(DECLARE_BUILTIN_REDUCER)
+ #undef DECLARE_BUILTIN_REDUCER
+ 
+-  // Returns kDoneWithoutPayload if checks passed successfully.
+-  MaybeReduceResult TryReduceDatePrototypeGetFieldPrologue(
+-      compiler::JSFunctionRef target, CallArguments& args);
+-  MaybeReduceResult TryReduceDatePrototypeGetField(
+-      compiler::JSFunctionRef target, CallArguments& args,
+-      JSDate::FieldIndex field);
+-
+   MaybeReduceResult DoTryReduceMathRound(CallArguments& args,
+                                          Float64Round::Kind kind);
+   template <typename Int32Binop, typename Float64Binop>
+diff --git a/src/objects/value-serializer.cc b/src/objects/value-serializer.cc
+index ebac6f77e39..25442b03fd2 100644
+--- a/src/objects/value-serializer.cc
++++ b/src/objects/value-serializer.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "src/objects/value-serializer.h"
+ 
++#include <cmath>
+ #include <type_traits>
+ 
+ #include "include/v8-maybe.h"
+@@ -26,6 +27,10 @@
+ #include "src/objects/js-array-buffer-inl.h"
+ #include "src/objects/js-array-inl.h"
+ #include "src/objects/js-collection-inl.h"
++#include "src/objects/bigint.h"
++#ifdef V8_TEMPORAL_SUPPORT
++#include "src/objects/js-temporal-objects-inl.h"
++#endif  // V8_TEMPORAL_SUPPORT
+ #include "src/objects/js-regexp-inl.h"
+ #include "src/objects/js-shared-array.h"
+ #include "src/objects/js-struct.h"
+@@ -1954,18 +1959,36 @@ MaybeDirectHandle<JSArray> ValueDeserializer::ReadDenseJSArray() {
+   return scope.CloseAndEscape(array);
+ }
+ 
+-MaybeDirectHandle<JSDate> ValueDeserializer::ReadJSDate() {
++// zig-v8: Date does not exist in this engine. A serialized Date is revived as a
++// Temporal.Instant for the same time value; an invalid (NaN) or out-of-range time
++// value has no Instant and fails the read.
++MaybeDirectHandle<JSObject> ValueDeserializer::ReadJSDate() {
+   double value;
+-  if (!ReadDouble().To(&value)) return MaybeDirectHandle<JSDate>();
+-  uint32_t id = next_id_++;
+-  DirectHandle<JSDate> date;
+-  if (!JSDate::New(isolate_, isolate_->date_function(),
+-                   isolate_->date_function(), value)
+-           .ToHandle(&date)) {
+-    return MaybeDirectHandle<JSDate>();
+-  }
+-  AddObjectWithID(id, date);
+-  return date;
++  if (!ReadDouble().To(&value)) return MaybeDirectHandle<JSObject>();
++  [[maybe_unused]] uint32_t id = next_id_++;
++#ifdef V8_TEMPORAL_SUPPORT
++  constexpr double kMaxInstantMs = 8.64e15;
++  if (!std::isfinite(value) || std::trunc(value) != value ||
++      std::abs(value) > kMaxInstantMs) {
++    return MaybeDirectHandle<JSObject>();
++  }
++  DirectHandle<BigInt> ns;
++  if (!BigInt::Multiply(isolate_,
++                        BigInt::FromInt64(isolate_, static_cast<int64_t>(value)),
++                        BigInt::FromInt64(isolate_, 1000000))
++           .ToHandle(&ns)) {
++    return MaybeDirectHandle<JSObject>();
++  }
++  DirectHandle<JSTemporalInstant> instant;
++  if (!temporal::CreateTemporalInstantWithValidityCheck(isolate_, ns)
++           .ToHandle(&instant)) {
++    return MaybeDirectHandle<JSObject>();
++  }
++  AddObjectWithID(id, instant);
++  return instant;
++#else
++  return MaybeDirectHandle<JSObject>();
++#endif  // V8_TEMPORAL_SUPPORT
+ }
+ 
+ MaybeDirectHandle<JSPrimitiveWrapper> ValueDeserializer::ReadJSPrimitiveWrapper(
+diff --git a/src/objects/value-serializer.h b/src/objects/value-serializer.h
+index 0329d4e5bc2..2e0dbd0dac8 100644
+--- a/src/objects/value-serializer.h
++++ b/src/objects/value-serializer.h
+@@ -296,7 +296,7 @@ class ValueDeserializer {
+   MaybeDirectHandle<JSObject> ReadJSObject() V8_WARN_UNUSED_RESULT;
+   MaybeDirectHandle<JSArray> ReadSparseJSArray() V8_WARN_UNUSED_RESULT;
+   MaybeDirectHandle<JSArray> ReadDenseJSArray() V8_WARN_UNUSED_RESULT;
+-  MaybeDirectHandle<JSDate> ReadJSDate() V8_WARN_UNUSED_RESULT;
++  MaybeDirectHandle<JSObject> ReadJSDate() V8_WARN_UNUSED_RESULT;
+   MaybeDirectHandle<JSPrimitiveWrapper> ReadJSPrimitiveWrapper(
+       SerializationTag tag) V8_WARN_UNUSED_RESULT;
+   MaybeDirectHandle<JSRegExp> ReadJSRegExp() V8_WARN_UNUSED_RESULT;

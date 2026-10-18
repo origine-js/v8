@@ -70,8 +70,9 @@ pub fn load(arena: std.mem.Allocator, io: Io, build_dir: []const u8) !Clang {
     };
 }
 
-/// Compiles a probe translation unit to assembly (never linked or run) and
-/// reads back the value of each probe.
+/// Borrows self/prelude/probes through return; writes build-cache probe files and
+/// returns arena-owned measurements valid until arena teardown. Runs no probe
+/// code. Disables LTO for native assembly; errors retain only arena/cache storage.
 pub fn measure(
     self: Clang,
     unit: []const u8,
@@ -96,7 +97,7 @@ pub fn measure(
     }
     try cwd.writeFile(self.io, .{ .sub_path = src_path, .data = src.written() });
 
-    try self.run(&.{ "-S", "-o", asm_path, src_path }, null);
+    try self.run(&.{ "-fno-lto", "-fno-whole-program-vtables", "-S", "-o", asm_path, src_path }, null);
     const asm_src = try cwd.readFileAlloc(self.io, asm_path, self.arena, .limited(1 << 26));
 
     const values = try self.arena.alloc(u64, probes.len);

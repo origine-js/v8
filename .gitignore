@@ -1,3 +1,14 @@
 /.zig-cache
 /.lp-cache
 /zig-out
+/zig-pkg/
+/.claude/
+.DS_Store
+
+# Local credentials and environment overrides.
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key

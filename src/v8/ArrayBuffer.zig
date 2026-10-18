@@ -1,4 +1,4 @@
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 const std = @import("std");
 const v8 = @import("../v8.zig");
 const Object = v8.Object;
@@ -142,7 +142,6 @@ pub const ArrayBuffer = extern struct {
 };
 
 test "Zig ArrayBuffer adapter: failure cleanup and zero-length callback symmetry" {
-    @import("../test.zig").ensureV8();
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
     try std.testing.expectError(error.OutOfMemory, ArrayBuffer.Allocator.fromZig(failing.allocator()));
     try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);

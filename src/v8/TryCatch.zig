@@ -1,5 +1,5 @@
-const binding = @import("../binding.zig");
-const e = @import("../externs.gen.zig");
+const binding = @import("../generated/binding.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 const Isolate = v8.Isolate;
 const Context = v8.Context;

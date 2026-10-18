@@ -1,0 +1,125 @@
+diff --git a/src/base/platform/memory.h b/src/base/platform/memory.h
+index 32161ba8197..af456097164 100644
+--- a/src/base/platform/memory.h
++++ b/src/base/platform/memory.h
+@@ -31,9 +31,46 @@
+ #define V8_HAS_MALLOC_USABLE_SIZE 1
+ #endif
+ 
++// zig-v8: general-purpose V8 allocations go through mimalloc's mi_* API. These are
++// weak definitions that forward to libc, so host tools linked without mimalloc
++// (mksnapshot, d8) still link; the strong definitions in libmimalloc.a override
++// them in the final link. Every allocation and its release resolve to the same
++// implementation within a process, so they always pair.
++extern "C" {
++#if V8_OS_WIN
++void* mi_malloc(size_t size);
++void* mi_calloc(size_t count, size_t size);
++void* mi_realloc(void* p, size_t newsize);
++void mi_free(void* p);
++void* mi_malloc_aligned(size_t size, size_t alignment);
++size_t mi_usable_size(const void* p);
++#else
++V8_WEAK void* mi_malloc(size_t size) { return malloc(size); }
++V8_WEAK void* mi_calloc(size_t count, size_t size) { return calloc(count, size); }
++V8_WEAK void* mi_realloc(void* p, size_t newsize) { return realloc(p, newsize); }
++V8_WEAK void mi_free(void* p) { free(p); }
++V8_WEAK void* mi_malloc_aligned(size_t size, size_t alignment) {
++  void* ptr;
++  if (posix_memalign(&ptr, alignment, size)) ptr = nullptr;
++  return ptr;
++}
++V8_WEAK size_t mi_usable_size(const void* p) {
++  if (!p) return 0;
++#if V8_OS_DARWIN
++  return malloc_size(p);
++#else
++  return malloc_usable_size(const_cast<void*>(p));
++#endif
++}
++#endif
++}
++
+ namespace v8::base {
+ 
++constexpr bool ZigUseMimalloc() { return true; }
++
+ inline void* Malloc(size_t size) {
++  if (ZigUseMimalloc()) return mi_malloc(size);
+ #if V8_OS_STARBOARD
+   return SbMemoryAllocate(size);
+ #elif V8_OS_AIX && _LINUX_SOURCE_COMPAT
+@@ -49,6 +86,7 @@ inline void* Realloc(void* memory, size_t size) {
+   // The result of realloc with zero size is implementation dependent.
+   // Disallow it.
+   CHECK_NE(0, size);
++  if (ZigUseMimalloc()) return mi_realloc(memory, size);
+ #if V8_OS_STARBOARD
+   return SbMemoryReallocate(memory, size);
+ #elif V8_OS_AIX && _LINUX_SOURCE_COMPAT
+@@ -61,6 +99,7 @@ inline void* Realloc(void* memory, size_t size) {
+ }
+ 
+ inline void Free(void* memory) {
++  if (ZigUseMimalloc()) return mi_free(memory);
+ #if V8_OS_STARBOARD
+   return SbMemoryDeallocate(memory);
+ #else   // !V8_OS_STARBOARD
+@@ -69,6 +108,7 @@ inline void Free(void* memory) {
+ }
+ 
+ inline void* Calloc(size_t count, size_t size) {
++  if (ZigUseMimalloc()) return mi_calloc(count, size);
+ #if V8_OS_STARBOARD
+   return SbMemoryCalloc(count, size);
+ #elif V8_OS_AIX && _LINUX_SOURCE_COMPAT
+@@ -84,6 +124,7 @@ inline void* Calloc(size_t count, size_t size) {
+ inline void* AlignedAlloc(size_t size, size_t alignment) {
+   DCHECK_LE(alignof(void*), alignment);
+   DCHECK(base::bits::IsPowerOfTwo(alignment));
++  if (ZigUseMimalloc()) return mi_malloc_aligned(size, alignment);
+ #if V8_OS_WIN
+   return _aligned_malloc(size, alignment);
+ #elif V8_LIBC_BIONIC
+@@ -100,6 +141,7 @@ inline void* AlignedAlloc(size_t size, size_t alignment) {
+ }
+ 
+ inline void AlignedFree(void* ptr) {
++  if (ZigUseMimalloc()) return mi_free(ptr);
+ #if V8_OS_WIN
+   _aligned_free(ptr);
+ #elif V8_OS_ZOS
+@@ -117,6 +159,7 @@ inline void AlignedFree(void* ptr) {
+ // `Malloc()` request returned by `MallocUsableSize()` is not UBSan-safe. Use
+ // `AllocateAtLeast()` for a safe version.
+ inline size_t MallocUsableSize(void* ptr) {
++  if (ZigUseMimalloc()) return ptr ? mi_usable_size(ptr) : 0;
+ #if V8_OS_WIN
+   // |_msize| cannot handle a null pointer.
+   if (!ptr) return 0;
+diff --git a/src/handles/traced-handles.cc b/src/handles/traced-handles.cc
+index 765cf5216e0..35905847a4d 100644
+--- a/src/handles/traced-handles.cc
++++ b/src/handles/traced-handles.cc
+@@ -65,7 +65,7 @@ TracedNodeBlock* TracedNodeBlock::Create(TracedHandles& traced_handles) {
+ }
+ 
+ // static
+-void TracedNodeBlock::Delete(TracedNodeBlock* block) { free(block); }
++void TracedNodeBlock::Delete(TracedNodeBlock* block) { base::Free(block); }
+ 
+ TracedNodeBlock::TracedNodeBlock(TracedHandles& traced_handles,
+                                  TracedNode::IndexType capacity)
+diff --git a/src/zone/accounting-allocator.cc b/src/zone/accounting-allocator.cc
+index 08f4215eed7..8bec243ceb6 100644
+--- a/src/zone/accounting-allocator.cc
++++ b/src/zone/accounting-allocator.cc
+@@ -147,7 +147,7 @@ void AccountingAllocator::ReturnSegment(Segment* segment) {
+   if (v8_flags.managed_zone_memory && use_managed_memory_for_isolate) {
+     ManagedZones::ReturnSegment(isolate_, segment, segment_size);
+   } else {
+-    free(segment);
++    base::Free(segment);
+   }
+ }
+ 

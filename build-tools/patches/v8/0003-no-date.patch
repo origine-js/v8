@@ -1,0 +1,254 @@
+diff --git a/src/builtins/builtins-date.cc b/src/builtins/builtins-date.cc
+index 191d34a9265..c3a507a72da 100644
+--- a/src/builtins/builtins-date.cc
++++ b/src/builtins/builtins-date.cc
+@@ -55,94 +55,11 @@ Tagged<Object> SetDateValue(Isolate* isolate, DirectHandle<JSDate> date,
+ }  // namespace
+ 
+ // https://tc39.es/ecma262/#sec-date-constructor
++// zig-v8: Date objects cannot be created or called; only Date.now remains.
+ BUILTIN(DateConstructor) {
+   HandleScope scope(isolate);
+-  if (IsUndefined(*args.new_target())) {
+-    double const time_val =
+-        static_cast<double>(JSDate::CurrentTimeValue(isolate));
+-    DateBuffer buffer = ToDateString(time_val, isolate->date_cache(),
+-                                     ToDateStringMode::kLocalDateAndTime);
+-    RETURN_RESULT_OR_FAILURE(
+-        isolate, isolate->factory()->NewStringFromUtf8(base::VectorOf(buffer)));
+-  }
+-  // [Construct]
+-  int const argc = args.length() - 1;
+-  DirectHandle<JSFunction> target = args.target();
+-  DirectHandle<JSReceiver> new_target = Cast<JSReceiver>(args.new_target());
+-  double time_val;
+-  if (argc == 0) {
+-    time_val = static_cast<double>(JSDate::CurrentTimeValue(isolate));
+-  } else if (argc == 1) {
+-    DirectHandle<Object> value = args.at(1);
+-    if (IsJSDate(*value)) {
+-      time_val = Cast<JSDate>(value)->value();
+-    } else {
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, value,
+-                                         Object::ToPrimitive(isolate, value));
+-      if (IsString(*value)) {
+-        time_val = ParseDateTimeString(isolate, Cast<String>(value));
+-      } else {
+-        ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, value,
+-                                           Object::ToNumber(isolate, value));
+-        time_val = Object::NumberValue(*value);
+-      }
+-    }
+-  } else {
+-    DirectHandle<Object> year_object;
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, year_object,
+-                                       Object::ToNumber(isolate, args.at(1)));
+-    DirectHandle<Object> month_object;
+-    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, month_object,
+-                                       Object::ToNumber(isolate, args.at(2)));
+-    double year = Object::NumberValue(*year_object);
+-    double month = Object::NumberValue(*month_object);
+-    double date = 1.0, hours = 0.0, minutes = 0.0, seconds = 0.0, ms = 0.0;
+-    if (argc >= 3) {
+-      DirectHandle<Object> date_object;
+-      ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, date_object,
+-                                         Object::ToNumber(isolate, args.at(3)));
+-      date = Object::NumberValue(*date_object);
+-      if (argc >= 4) {
+-        DirectHandle<Object> hours_object;
+-        ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-            isolate, hours_object, Object::ToNumber(isolate, args.at(4)));
+-        hours = Object::NumberValue(*hours_object);
+-        if (argc >= 5) {
+-          DirectHandle<Object> minutes_object;
+-          ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-              isolate, minutes_object, Object::ToNumber(isolate, args.at(5)));
+-          minutes = Object::NumberValue(*minutes_object);
+-          if (argc >= 6) {
+-            DirectHandle<Object> seconds_object;
+-            ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-                isolate, seconds_object, Object::ToNumber(isolate, args.at(6)));
+-            seconds = Object::NumberValue(*seconds_object);
+-            if (argc >= 7) {
+-              DirectHandle<Object> ms_object;
+-              ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+-                  isolate, ms_object, Object::ToNumber(isolate, args.at(7)));
+-              ms = Object::NumberValue(*ms_object);
+-            }
+-          }
+-        }
+-      }
+-    }
+-    if (!std::isnan(year)) {
+-      double const y = DoubleToInteger(year);
+-      if (0.0 <= y && y <= 99) year = 1900 + y;
+-    }
+-    double const day = MakeDay(year, month, date);
+-    double const time = MakeTime(hours, minutes, seconds, ms);
+-    time_val = MakeDate(day, time);
+-    if (time_val >= -DateCache::kMaxTimeBeforeUTCInMs &&
+-        time_val <= DateCache::kMaxTimeBeforeUTCInMs) {
+-      time_val = isolate->date_cache()->ToUTC(static_cast<int64_t>(time_val));
+-    } else {
+-      time_val = std::numeric_limits<double>::quiet_NaN();
+-    }
+-  }
+-  RETURN_RESULT_OR_FAILURE(isolate,
+-                           JSDate::New(isolate, target, new_target, time_val));
++  THROW_NEW_ERROR_RETURN_FAILURE(
++      isolate, NewTypeError(MessageTemplate::kIllegalInvocation));
+ }
+ 
+ // ES6 section 20.3.3.1 Date.now ( )
+diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
+index 764f17a7707..38c4bab6d97 100644
+--- a/src/init/bootstrapper.cc
++++ b/src/init/bootstrapper.cc
+@@ -3115,133 +3115,10 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
+     InstallWithIntrinsicDefaultProto(isolate_, date_fun,
+                                      Context::DATE_FUNCTION_INDEX);
+ 
+-    // Install the Date.now, Date.parse and Date.UTC functions.
++    // zig-v8: Date is reduced to Date.now. No parse/UTC, no prototype methods,
++    // and the constructor throws; Temporal replaces calendar functionality.
+     SimpleInstallFunction(isolate_, date_fun, "now", Builtin::kDateNow, 0,
+                           kDontAdapt);
+-    SimpleInstallFunction(isolate_, date_fun, "parse", Builtin::kDateParse, 1,
+-                          kDontAdapt);
+-    SimpleInstallFunction(isolate_, date_fun, "UTC", Builtin::kDateUTC, 7,
+-                          kDontAdapt);
+-
+-    // Setup %DatePrototype%.
+-    DirectHandle<JSObject> prototype(
+-        Cast<JSObject>(date_fun->instance_prototype()), isolate());
+-
+-    // Install the Date.prototype methods.
+-    SimpleInstallFunction(isolate_, prototype, "toString",
+-                          Builtin::kDatePrototypeToString, 0, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "toDateString",
+-                          Builtin::kDatePrototypeToDateString, 0, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "toTimeString",
+-                          Builtin::kDatePrototypeToTimeString, 0, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "toISOString",
+-                          Builtin::kDatePrototypeToISOString, 0, kDontAdapt);
+-    DirectHandle<JSFunction> to_utc_string = SimpleInstallFunction(
+-        isolate_, prototype, "toUTCString", Builtin::kDatePrototypeToUTCString,
+-        0, kDontAdapt);
+-    JSObject::AddProperty(isolate_, prototype, "toGMTString", to_utc_string,
+-                          DONT_ENUM);
+-    SimpleInstallFunction(isolate_, prototype, "getDate",
+-                          Builtin::kDatePrototypeGetDate, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setDate",
+-                          Builtin::kDatePrototypeSetDate, 1, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getDay",
+-                          Builtin::kDatePrototypeGetDay, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getFullYear",
+-                          Builtin::kDatePrototypeGetFullYear, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setFullYear",
+-                          Builtin::kDatePrototypeSetFullYear, 3, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getHours",
+-                          Builtin::kDatePrototypeGetHours, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setHours",
+-                          Builtin::kDatePrototypeSetHours, 4, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getMilliseconds",
+-                          Builtin::kDatePrototypeGetMilliseconds, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setMilliseconds",
+-                          Builtin::kDatePrototypeSetMilliseconds, 1,
+-                          kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getMinutes",
+-                          Builtin::kDatePrototypeGetMinutes, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setMinutes",
+-                          Builtin::kDatePrototypeSetMinutes, 3, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getMonth",
+-                          Builtin::kDatePrototypeGetMonth, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setMonth",
+-                          Builtin::kDatePrototypeSetMonth, 2, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getSeconds",
+-                          Builtin::kDatePrototypeGetSeconds, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setSeconds",
+-                          Builtin::kDatePrototypeSetSeconds, 2, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getTime",
+-                          Builtin::kDatePrototypeGetTime, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setTime",
+-                          Builtin::kDatePrototypeSetTime, 1, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getTimezoneOffset",
+-                          Builtin::kDatePrototypeGetTimezoneOffset, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getUTCDate",
+-                          Builtin::kDatePrototypeGetUTCDate, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setUTCDate",
+-                          Builtin::kDatePrototypeSetUTCDate, 1, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getUTCDay",
+-                          Builtin::kDatePrototypeGetUTCDay, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getUTCFullYear",
+-                          Builtin::kDatePrototypeGetUTCFullYear, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setUTCFullYear",
+-                          Builtin::kDatePrototypeSetUTCFullYear, 3, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getUTCHours",
+-                          Builtin::kDatePrototypeGetUTCHours, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setUTCHours",
+-                          Builtin::kDatePrototypeSetUTCHours, 4, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getUTCMilliseconds",
+-                          Builtin::kDatePrototypeGetUTCMilliseconds, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setUTCMilliseconds",
+-                          Builtin::kDatePrototypeSetUTCMilliseconds, 1,
+-                          kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getUTCMinutes",
+-                          Builtin::kDatePrototypeGetUTCMinutes, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setUTCMinutes",
+-                          Builtin::kDatePrototypeSetUTCMinutes, 3, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getUTCMonth",
+-                          Builtin::kDatePrototypeGetUTCMonth, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setUTCMonth",
+-                          Builtin::kDatePrototypeSetUTCMonth, 2, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getUTCSeconds",
+-                          Builtin::kDatePrototypeGetUTCSeconds, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setUTCSeconds",
+-                          Builtin::kDatePrototypeSetUTCSeconds, 2, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "valueOf",
+-                          Builtin::kDatePrototypeValueOf, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "getYear",
+-                          Builtin::kDatePrototypeGetYear, 0, kAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "setYear",
+-                          Builtin::kDatePrototypeSetYear, 1, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "toJSON",
+-                          Builtin::kDatePrototypeToJson, 1, kDontAdapt);
+-
+-#ifdef V8_INTL_SUPPORT
+-    SimpleInstallFunction(isolate_, prototype, "toLocaleString",
+-                          Builtin::kDatePrototypeToLocaleString, 0, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "toLocaleDateString",
+-                          Builtin::kDatePrototypeToLocaleDateString, 0,
+-                          kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "toLocaleTimeString",
+-                          Builtin::kDatePrototypeToLocaleTimeString, 0,
+-                          kDontAdapt);
+-#else
+-    // Install Intl fallback functions.
+-    SimpleInstallFunction(isolate_, prototype, "toLocaleString",
+-                          Builtin::kDatePrototypeToString, 0, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "toLocaleDateString",
+-                          Builtin::kDatePrototypeToDateString, 0, kDontAdapt);
+-    SimpleInstallFunction(isolate_, prototype, "toLocaleTimeString",
+-                          Builtin::kDatePrototypeToTimeString, 0, kDontAdapt);
+-#endif  // V8_INTL_SUPPORT
+-
+-    // Install the @@toPrimitive function.
+-    InstallFunctionAtSymbol(
+-        isolate_, prototype, factory->to_primitive_symbol(),
+-        "[Symbol.toPrimitive]", Builtin::kDatePrototypeToPrimitive, 1, kAdapt,
+-        static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+   }
+ 
+   {  // -- P r o m i s e
+@@ -6195,11 +6072,6 @@ void Genesis::InitializeGlobal_harmony_temporal() {
+   JSObject::AddProperty(isolate(),
+       direct_handle(native_context()->global_object(), isolate()),
+       "Temporal", temporal, DONT_ENUM);
+-  DirectHandle<JSObject> date_prototype(
+-      Cast<JSObject>(native_context()->date_function()->instance_prototype()),
+-      isolate());
+-  SimpleInstallFunction(isolate(), date_prototype, "toTemporalInstant",
+-                        Builtin::kDatePrototypeToTemporalInstant, 0, kDontAdapt);
+ #endif  // V8_TEMPORAL_SUPPORT
+ }
+ 

@@ -1,6 +1,10 @@
 //! Zig wrappers for V8. Each type lives in `v8/<Type>.zig`; this file re-exports them.
 
-pub const WasmStreamingSharedPtr = WasmStreaming;
+/// Build capability measured from the engine headers, never inferred from JS globals.
+pub const has_webassembly = @import("generated/binding.zig").opts.has_webassembly;
+/// Wasm-only exports are absent from this namespace when the engine omits Wasm.
+pub const wasm = if (has_webassembly) @import("v8/wasm.zig") else struct {};
+pub const StackTraceLimit = @import("v8/StackTraceLimit.zig").StackTraceLimit;
 pub const localNew = @import("v8/handle.zig").localNew;
 pub const Callbacks = @import("v8/callbacks.zig").Callbacks;
 pub const HeapSpaceStatistics = @import("v8/native_types.zig").HeapSpaceStatistics;
@@ -77,7 +81,6 @@ pub const Boolean = @import("v8/Boolean.zig").Boolean;
 pub const Integer = @import("v8/Integer.zig").Integer;
 pub const Int32 = @import("v8/Int32.zig").Int32;
 pub const Uint32 = @import("v8/Uint32.zig").Uint32;
-pub const Date = @import("v8/Date.zig").Date;
 pub const Map = @import("v8/Map.zig").Map;
 pub const Set = @import("v8/Set.zig").Set;
 pub const Symbol = @import("v8/Symbol.zig").Symbol;
@@ -103,10 +106,6 @@ pub const Float32Array = @import("v8/typed_arrays.zig").Float32Array;
 pub const Float64Array = @import("v8/typed_arrays.zig").Float64Array;
 pub const BigInt64Array = @import("v8/typed_arrays.zig").BigInt64Array;
 pub const BigUint64Array = @import("v8/typed_arrays.zig").BigUint64Array;
-pub const WasmMemoryObject = @import("v8/wasm.zig").WasmMemoryObject;
-pub const WasmModuleObject = @import("v8/wasm.zig").WasmModuleObject;
-pub const CompiledWasmModule = @import("v8/wasm.zig").CompiledWasmModule;
-pub const WasmStreaming = @import("v8/wasm.zig").WasmStreaming;
 pub const ModuleRequest = @import("v8/ModuleRequest.zig").ModuleRequest;
 pub const UnboundScript = @import("v8/UnboundScript.zig").UnboundScript;
 pub const UnboundModuleScript = @import("v8/UnboundModuleScript.zig").UnboundModuleScript;
@@ -123,12 +122,13 @@ pub const ExternalOneByteStringResource = @import("v8/ExternalOneByteStringResou
 pub const WeakCallbackInfo = @import("v8/WeakCallbackInfo.zig").WeakCallbackInfo;
 
 const std = @import("std");
-const e = @import("externs.gen.zig");
+const e = @import("generated/externs.gen.zig");
 
 // Zig only analyzes what is used, so reference every declaration explicitly:
 // this is what proves the wrappers still match the generated externs.
 /// Zig only analyzes what is used, so reference every declaration of `T` and of
 /// the types nested in it (depth-limited: wrappers alias themselves via `Self`).
+/// Accepts compile-time values; retains no runtime resources.
 fn refAllNested(comptime T: type, comptime depth: u8) void {
     if (depth == 0) return;
     switch (@typeInfo(T)) {
@@ -142,12 +142,20 @@ fn refAllNested(comptime T: type, comptime depth: u8) void {
     }
 }
 
-test {
-    _ = @import("test.zig");
-    _ = @import("managed/test.zig");
-}
-
 test "wrappers type-check against the generated externs" {
     std.testing.refAllDecls(e);
     refAllNested(@This(), 3);
+}
+
+test "Layouts: extern structs match the C++ sizes" {
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.HandleScope), @sizeOf(@This().HandleScope));
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.TryCatch), @sizeOf(@This().TryCatch));
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.ScriptOrigin), @sizeOf(@This().ScriptOrigin));
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.PropertyDescriptor), @sizeOf(@This().PropertyDescriptor));
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.Isolate_CreateParams), @sizeOf(@This().Isolate.CreateParams));
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.ResourceConstraints), @sizeOf(@This().ResourceConstraints));
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.HeapStatistics), @sizeOf(@This().HeapStatistics));
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.CFunction), @sizeOf(@This().CFunction));
+    try std.testing.expectEqual(@as(usize, @import("generated/binding.zig").sizes.CTypeInfo), @sizeOf(@This().CTypeInfo));
+    try std.testing.expectEqual(@as(usize, 4), @sizeOf(@This().PropertyAttribute));
 }

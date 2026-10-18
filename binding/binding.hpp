@@ -1,3 +1,4 @@
+#include <v8-cppgc.h>
 #include <v8-fast-api-calls.h>
 #include <v8-message.h>
 #include <v8-typed-array.h>
@@ -6,6 +7,17 @@
 #include "support.h"
 
 static size_t v8__ScriptOrigin_SIZE = sizeof(v8::ScriptOrigin);
+
+static size_t cppgc__Member_SIZE = sizeof(cppgc::Member<RustObj>);
+static size_t cppgc__WeakMember_SIZE = sizeof(cppgc::WeakMember<RustObj>);
+
+static size_t v8__TracedReference_SIZE = sizeof(v8::TracedReference<v8::Data>);
+
+static int v8__String__WriteFlags__kNullTerminate =
+    v8::String::WriteFlags::kNullTerminate;
+
+static int v8__String__WriteFlags__kReplaceInvalidUtf8 =
+    v8::String::WriteFlags::kReplaceInvalidUtf8;
 
 static size_t v8__Eternal_SIZE = sizeof(v8::Eternal<v8::Data>);
 
@@ -30,6 +42,8 @@ using v8__Isolate__UseCounterFeature = v8::Isolate::UseCounterFeature;
 using v8__String__WriteFlags = v8::String::WriteFlags;
 using v8__ModuleImportPhase = v8::ModuleImportPhase;
 using v8__HeapStatistics = v8::HeapStatistics;
+using v8__HeapCodeStatistics = v8::HeapCodeStatistics;
+using v8__Intercepted = v8::Intercepted;
 using v8__HeapSpaceStatistics = v8::HeapSpaceStatistics;
 using v8__GCType = v8::GCType;
 using v8__GCCallbackFlags = v8::GCCallbackFlags;
@@ -39,3 +53,28 @@ static uint32_t v8__MINOR_VERSION = V8_MINOR_VERSION;
 static uint32_t v8__BUILD_NUMBER = V8_BUILD_NUMBER;
 static uint32_t v8__PATCH_LEVEL = V8_PATCH_LEVEL;
 static const char* v8__VERSION_STRING = V8_VERSION_STRING;
+
+// NOTE: This class is never used and only serves as a reference for
+// the OneByteConst struct created on Rust-side.
+class ExternalConstOneByteStringResource
+    : public v8::String::ExternalOneByteStringResource {
+ public:
+  ExternalConstOneByteStringResource(int length) : _length(length) {
+    static_assert(offsetof(ExternalConstOneByteStringResource, _length) ==
+                      sizeof(size_t) * 2,
+                  "ExternalConstOneByteStringResource's length was not at "
+                  "offset of sizeof(size_t) * 2");
+    static_assert(
+        sizeof(ExternalConstOneByteStringResource) == sizeof(size_t) * 3,
+        "ExternalConstOneByteStringResource size was not sizeof(size_t) * 3");
+    static_assert(
+        alignof(ExternalConstOneByteStringResource) == sizeof(size_t),
+        "ExternalConstOneByteStringResource align was not sizeof(size_t)");
+  }
+  const char* data() const override { return nullptr; }
+  size_t length() const override { return _length; }
+  void Dispose() override {}
+
+ private:
+  const int _length;
+};

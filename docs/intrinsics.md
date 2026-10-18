@@ -41,23 +41,65 @@ boundary and local handle lifetime; unavailable entries return null.
 
 ## Engine finalization
 
-`build-tools/v8-hardening.patch` finalizes both raw and managed contexts before
-they are returned to the host. After builtin and enabled feature installation,
-it removes WebAssembly, SharedArrayBuffer, Atomics, and ShadowRealm globals,
-traverses native-context roots and ECMAScript global data properties, freezes
-the intrinsic graph using V8's `FROZEN` integrity level, and makes builtin global
-bindings non-writable and non-configurable. `globalThis` is also a locked binding;
-the global object remains extensible for application globals and host capabilities.
-The traversal reads data fields and accessor pairs directly; it neither invokes
-getters nor creates Segmenters. Native-context map prototypes cover hidden roots.
-Internal tables, embedder data, global objects, and extras bindings are excluded.
+The ordered hardening patches install immutable builtin properties and complete
+the core, iteration, Intl, and Temporal subsystems after their enabled features
+are installed. Subsystem completion seals their explicit builtin graphs using
+V8's `FROZEN` integrity level. Global binding publication also locks bindings
+restored from the mutable engine seed. `globalThis` is a locked binding; the
+global object remains extensible for application globals and host capabilities.
+
+`VerifyAndCaptureZigIntrinsics` independently traverses native-context roots and
+standard global bindings, verifies frozen objects and immutable bindings, and
+captures the inventory. It never freezes objects, changes descriptors, or deletes
+globals; a missed subsystem root fails context creation. Traversal reads data
+fields and accessor pairs directly, without invoking getters or constructing
+Segmenters. Internal tables, embedder data, globals, and extras bindings are
+excluded from sealing.
+
+WebAssembly is built in (`v8_enable_webassembly=true`, the default; pass
+`-Dwebassembly=false` to compile it out). `WasmJs::Install` exposes the namespace and
+`CompleteZigWasmIntrinsics` (patch 0007) seals its whole graph through the context's
+preinstalled `WebAssembly` object, then the global binding becomes immutable like the others.
+Custom snapshots serialize only the preinstalled object, because the JS-API callbacks that
+`Install` creates are not snapshot external references; such contexts do not expose
+`WebAssembly`. ShadowRealm's installer returns without installing its API. `v8.has_webassembly`
+reports the measured build capability. Toggling Wasm requires rebuilding the engine,
+regenerating bindings, and recreating snapshots; previous archives and snapshots are incompatible.
+
+SharedArrayBuffer and Atomics remain available with frozen intrinsic objects and
+locked global bindings. Blocking `Atomics.wait()` is controlled per isolate by
+`Isolate.CreateParams.allow_explicit_blocking_api` (Zig default: false) and can be changed
+for existing contexts with `Isolate.setAllowExplicitBlockingApi`. Managed runtimes default
+to false; opt in with `Runtime.Options.allow_explicit_blocking_api = true`. This switch
+does not disable nonblocking atomic operations or `Atomics.waitAsync()`.
 
 RegExp legacy match-state accessors (`input`, aliases, and `$1`–`$9`) are omitted
 at engine installation. Standard accessors such as `Symbol.species` remain.
-Date methods retain their original native identity and are frozen normally;
-`Date.prototype` is an ordinary prototype, so setter wrappers are unnecessary.
+`Date` is reduced to `Date.now()`: the constructor throws for both call and `new`,
+`Date.parse`, `Date.UTC`, and every `Date.prototype` member are omitted, and
+`Date.prototype` is an empty frozen object (`v8-no-date.patch`). Use Temporal
+for calendar, time zone, and instant arithmetic; building without Temporal
+leaves no date functionality beyond `Date.now()`.
 When Temporal is enabled, its initializer runs directly before finalization
 rather than leaving properties that replace themselves on first access.
+
+## Native stack-trace configuration
+
+`Error.stackTraceLimit` is not installed or read. Each native context owns a
+serialized numeric setting, exposed only by `Context.getStackTraceLimit()` and
+`Context.setStackTraceLimit(limit)`. `StackTraceLimit` is a tagged union:
+`.unlimited`, `.{ .limited = frames }` (`u31`), or `.none`. The default is
+`.{ .limited = 10 }`; `.limited = 0` is equivalent to `.none`, and getters
+canonicalize zero to `.none`. Unlimited uses V8's maximum native frame limit.
+
+Managed callers can supply `Scope.Options.stack_trace_limit` and use the Scope
+getter/setter, which enter the context themselves. Raw callers must enter the
+owning isolate on its thread and keep a HandleScope live. Changes affect future
+captures, not errors already created. A forged JavaScript value or accessor with
+the old name has no effect. Inspector-specific capture requests remain separate.
+Finalized custom snapshots preserve their limit; fresh contexts and restored
+construction seeds initialize from the engine default before managed options
+are applied.
 
 The build's `mksnapshot` process disables finalization only for the extensible
 engine seed snapshot. Runtime contexts restored from that seed install enabled
@@ -92,12 +134,12 @@ replace validation or context hardening.
 
 ## Maintaining the V8 patch
 
-The engine changes live in `build-tools/v8-intrinsics.patch` and
-`build-tools/v8-hardening.patch`, applied in that order. The normal build
-runs `build-tools/apply-v8-patches.sh` after fetching V8 and before GN generation.
-It uses `git apply --check`, applies the patch once, and recognizes an already
-applied patch using `git apply --reverse --check`. A conflict fails the build with
-an explicit rebase instruction. The patches modify native-context fields,
+The engine changes live in `build-tools/patches/v8/` (intrinsics, hardening, no-date, mimalloc), applied in
+name order. The normal build
+runs `build-tools/scripts/apply-patches.sh` after fetching V8 and before GN generation.
+It records applied patches in the checkout, reapplies only a changed tail, and
+fails the build with an explicit rebase instruction on conflict (see
+`build-tools/README.md`). The patches modify native-context fields,
 bootstrap installation/finalization, and the seed snapshot policy; no generated
 V8 file is hand-edited.
 

@@ -1,9 +1,9 @@
 const std = @import("std");
-const binding = @import("../binding.zig");
+const binding = @import("../generated/binding.zig");
 const v8 = @import("../v8.zig");
 const support = v8.support;
 const V8 = v8.V8;
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 
 pub const Address = ?*opaque {};
 

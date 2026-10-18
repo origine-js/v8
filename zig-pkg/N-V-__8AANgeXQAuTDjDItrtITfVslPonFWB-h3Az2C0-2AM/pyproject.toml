@@ -1,4 +1,0 @@
-[tool.pyright]
-venvPath = 'recipes/.recipe_deps/_venv'
-venv = 'normal'
-extraPaths = ['recipes/.recipe_deps/_path']

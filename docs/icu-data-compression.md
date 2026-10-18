@@ -24,7 +24,7 @@ The compressed payload is 3,808,080 bytes versus 10,822,192 original bytes:
 The Zig build flattens the decoder archive into `libv8_zig.a`. GN builds the
 binding/loader and data array, but does not build zstd. `zig build build-zstd`
 also installs the decoder alone for inspection. Python compression dependencies
-are pinned in `build-tools/compress-icu.py` and run via uv.
+are pinned in `build-tools/scripts/compress-icu.py` and run via uv.
 
 The binding registers a lazy provider and disables external data files before
 V8 initialization. Both `V8.initialize` and `V8.initializeICU` leave the package
@@ -34,7 +34,7 @@ verifies its length, and registers a 16-byte-aligned immutable buffer through
 Later requests reuse it. This defers the whole package; it does not implement
 per-item decompression.
 
-`build-tools/icu-lazy-data.patch` adds the provider hook to the pinned ICU
+`build-tools/patches/icu/0001-lazy-data.patch` adds the provider hook to the pinned ICU
 checkout. The build applies it separately from the V8 patches. ICU invokes the
 provider before acquiring its data-cache mutex; thread-safe static initialization
 serializes concurrent first requests and caches success or failure. Allocation,
@@ -66,12 +66,11 @@ the same multilingual formatting/Thai segmentation output as the saved binary.
 All three focused ICU tests passed, including idempotent initialization and
 multilingual service coverage. Formatting and whitespace checks passed.
 
-With deferred loading, all 105 library tests and the additional isolated
-concurrent-first-use test pass. Generated-binding checks also pass. In paired
-30-run release-shell measurements, V8 initialization decreased from 11.886 ms
-to 0.353 ms; total initialization decreased from 14.092 ms to 2.608 ms. First
-actual ICU data use now pays the expansion cost. See
-[startup measurements](shell-performance.md#deferred-icu-decompression).
+Deferred loading keeps the ICU package compressed through V8 initialization,
+context creation and plain JavaScript execution. First actual ICU data use pays
+the expansion cost. The isolated concurrent-first-use test checks this behavior;
+see [startup measurement guidance](shell-performance.md#startup-tracing) for
+measuring the current shell.
 
 Yes: ICU data can be filtered and compressed. Per-item lazy decompression with a shared zstd dictionary is feasible, but requires a custom ICU loader change; it is not an existing public ICU configuration switch. Compressing data does not compress ICU's native machine code.
 

@@ -1,5 +1,5 @@
 const std = @import("std");
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 const Platform = v8.Platform;
 const Isolate = v8.Isolate;

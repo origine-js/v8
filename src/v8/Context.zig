@@ -1,4 +1,4 @@
-const e = @import("../externs.gen.zig");
+const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 const Isolate = v8.Isolate;
 const ObjectTemplate = v8.ObjectTemplate;
@@ -13,6 +13,19 @@ pub const Context = extern struct {
     data: Data,
 
     const Self = @This();
+
+    /// Borrows this context on its isolate thread with the isolate entered and
+    /// a live HandleScope. Returns a native setting by value; retains nothing.
+    pub fn getStackTraceLimit(self: Self) v8.StackTraceLimit {
+        return .fromNative(e.v8__Context__GetStackTraceLimit(self));
+    }
+
+    /// Copies limit into this context for subsequent captures. Requires its
+    /// isolate entered on its owning thread and a live HandleScope; retains no
+    /// caller resources and does not access JavaScript properties or run getters.
+    pub fn setStackTraceLimit(self: Self, limit: v8.StackTraceLimit) void {
+        e.v8__Context__SetStackTraceLimit(self, limit.toNative());
+    }
 
     pub fn from_opaque(o: MaybeHandle) ?Self {
         return .{ .data = Data.from_opaque(o) orelse return null };

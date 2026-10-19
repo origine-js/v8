@@ -18,6 +18,8 @@
         "pub const FunctionCallbackInfoParts = extern struct { isolate: ?*anyopaque, return_value: ?*anyopaque, data: ?*const anyopaque, length: c_int };",
         // v8-script.h: struct StartupData { const char* data; int raw_size; }
         "pub const StartupData = extern struct { data: ?[*]const u8, raw_size: c_int };",
+        // binding/binding.cc: struct simdutf__result { int error; size_t count; }
+        "pub const SimdutfResult = extern struct { @\"error\": c_int, count: usize };",
     },
 
     // C++ spelling (exactly as clang prints it) -> Zig type expression.
@@ -25,6 +27,7 @@
         // binding/support.h: enum class MaybeBool { JustFalse, JustTrue, Nothing }.
         // v8.zig has the ABI-identical enum, with helpers; reuse it.
         .{ .cpp = "MaybeBool", .zig = "v8.support.MaybeBool" },
+        .{ .cpp = "simdutf__result", .zig = "support.SimdutfResult" },
         .{ .cpp = "two_pointers_t", .zig = "support.TwoPointers" },
         .{ .cpp = "memory_span_t", .zig = "support.MemorySpan" },
         .{ .cpp = "const_memory_span_t", .zig = "support.ConstMemorySpan" },

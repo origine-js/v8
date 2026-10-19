@@ -25,11 +25,13 @@ Command Line Tools).
   `String::Write*`/`Utf8Length` (`size_t`), `NewExternalOneByte` (`int` length),
   `Function::GetScriptOrigin` (heap copy + `v8__ScriptOrigin__DELETE`), default global template
   (`v8__ObjectTemplate__New__DEFAULT`; hardened contexts always need one).
-* **Shims rusty needs live in `binding/rusty.cc`**: cppgc, simdutf, Locker/Unlocker, custom
+* **Shims rusty needs live in `binding/rusty.cc`**: cppgc, Locker/Unlocker, custom
   platform, serializer/deserializer delegates, WasmModuleCompilation, ResourceConstraints,
   `Object::Wrap/Unwrap`, aligned-pointer accessors with tags, ICU time zone. It is a separate
   archive member, so Zig links never pull it in (it calls functions only Rust defines).
   `zig build check-bindings` treats these as expected exports.
+* **simdutf shims (`simdutf__*`) live in `binding/binding.cc`**, shared with Zig. `bindgen` generates their
+  externs like the `v8__*` ones (`simdutf__result` is mapped in `typemap.zon`), and `src/v8/simdutf.zig` calls them.
 * **No Date.** `Date` and `v8__Date__*` are gone from both sides (patch 0003/0005).
 * **v8_inspector and CRDTP** are behind the `inspector` cargo feature (off by default; V8's inspector
   is always inside `libv8_zig.a`). Their shims (`v8_inspector__*`, `crdtp__*`, from upstream

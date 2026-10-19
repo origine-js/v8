@@ -1,8 +1,11 @@
 //! Builds V8 plus our C++ shim (`binding/`) into a single static library.
 //!
 //! Pipeline: stage shims into the V8 tree -> fetch (depot_tools, gclient, clang)
-//! -> `gn gen` -> `autoninja`. Every stage is idempotent, so the steps simply run
-//! each time and defer to rsync/markers/ninja for incrementality.
+//! -> `gn gen` -> `autoninja`. Every stage is idempotent and defers to
+//! rsync/markers/ninja for incrementality, but starting ninja alone costs hundreds of
+//! milliseconds. The pipeline therefore runs only for the explicit `build-v8` step (or
+//! when no archive has been built yet); it publishes the archive at a stable path that
+//! ordinary builds link without re-checking V8.
 
 const std = @import("std");
 const zstd_build = @import("zstd.build.zig");
@@ -151,6 +154,22 @@ fn bundleArchive(
     bundle.addArtifactArg(decoder);
     bundle.step.dependOn(after);
     return .{ .lib = lib, .run = bundle };
+}
+
+/// Copies `src` to a build-cache output and to the stable `dest` path (skipping the
+/// write when identical, so mtimes stay put). Borrows b, src and dest through graph
+/// construction; the stable file is owned by the cache directory, the output by the build cache.
+fn publish(b: *std.Build, src: LazyPath, dest: []const u8) Bundle {
+    const run = b.addSystemCommand(&.{ "sh", "-c", "cmp -s \"$1\" \"$2\" || { mkdir -p \"$(dirname \"$2\")\" && cp -f \"$1\" \"$2\"; } && cp -f \"$1\" \"$3\"", "publish" });
+    run.addFileArg(src);
+    run.addArg(dest);
+    return .{ .lib = run.addOutputFileArg(std.fs.path.basename(dest)), .run = run };
+}
+
+/// Reports whether the absolute `path` exists; borrows b and path, retains nothing.
+fn exists(b: *std.Build, path: []const u8) bool {
+    std.Io.Dir.accessAbsolute(b.graph.io, path, .{}) catch return false;
+    return true;
 }
 
 /// Adds a step that syncs `checkout` with the series in `build-tools/patches/<series>`.
@@ -304,8 +323,19 @@ pub fn add(
     // are flattened with the llvm-ar that shipped with (and matches) V8's clang.
     const bitcode_darwin = !gn_args.is_debug and gn_args.thin_lto and target.result.os.tag.isDarwin();
     const bundle = bundleArchive(b, v8_dir, out_dir, decoder, bitcode_darwin, gn_args.temporal, &ninja.step);
-    const lib = bundle.lib;
-    const lib_no_temporal = if (gn_args.temporal) bundleArchive(b, v8_dir, out_dir, decoder, bitcode_darwin, false, &ninja.step).lib else lib;
+    const stable_dir = b.fmt("{s}/{s}/zig-bundle", .{ v8_dir, out_dir });
+    const stable_lib = b.fmt("{s}/libv8_zig.a", .{stable_dir});
+    const stable_no_temporal = if (gn_args.temporal) b.fmt("{s}/libv8_zig_no_temporal.a", .{stable_dir}) else stable_lib;
+    const published = publish(b, bundle.lib, stable_lib);
+    const published_no_temporal = if (gn_args.temporal)
+        publish(b, bundleArchive(b, v8_dir, out_dir, decoder, bitcode_darwin, false, &ninja.step).lib, stable_no_temporal)
+    else
+        published;
+    // Without a built archive, linking pulls in the whole pipeline once. Afterwards the
+    // archives are plain files and V8 is rebuilt only by `build-v8`.
+    const have_archive = exists(b, stable_lib);
+    const lib: LazyPath = if (have_archive) .{ .cwd_relative = stable_lib } else published.lib;
+    const lib_no_temporal: LazyPath = if (exists(b, stable_no_temporal)) .{ .cwd_relative = stable_no_temporal } else published_no_temporal.lib;
 
     if (target.result.os.tag == .macos) {
         const native_test_module = b.createModule(.{
@@ -327,8 +357,9 @@ pub fn add(
     }
 
     b.step("patch-v8", "Fetch V8 and apply the patch series without building").dependOn(&icu_patch.step);
-    const step = b.step("build-v8", "Fetch and build V8");
-    step.dependOn(&bundle.run.step);
+    const step = b.step("build-v8", "Fetch, patch and rebuild V8 (ordinary builds reuse the last archive)");
+    step.dependOn(&published.run.step);
+    step.dependOn(&published_no_temporal.run.step);
 
     return .{
         .lib = lib,

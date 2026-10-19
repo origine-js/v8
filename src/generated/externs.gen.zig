@@ -240,6 +240,7 @@ pub const support = struct {
     pub const ConstMemorySpan = extern struct { data: ?[*]const u8, size: usize };
     pub const FunctionCallbackInfoParts = extern struct { isolate: ?*anyopaque, return_value: ?*anyopaque, data: ?*const anyopaque, length: c_int };
     pub const StartupData = extern struct { data: ?[*]const u8, raw_size: c_int };
+    pub const SimdutfResult = extern struct { @"error": c_int, count: usize };
 };
 
 /// bool ()
@@ -2205,6 +2206,307 @@ pub extern fn v8__PropertyDescriptor__set_enumerable(self: Ptr("PropertyDescript
 
 /// void (v8::PropertyDescriptor *, bool)
 pub extern fn v8__PropertyDescriptor__set_configurable(self: Ptr("PropertyDescriptor", false), configurable: bool) void;
+
+/// bool (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_utf8(buf: ?[*]const u8, len: usize) bool;
+
+/// simdutf__result (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_utf8_with_errors(buf: ?[*]const u8, len: usize) support.SimdutfResult;
+
+/// bool (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_ascii(buf: ?[*]const u8, len: usize) bool;
+
+/// simdutf__result (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_ascii_with_errors(buf: ?[*]const u8, len: usize) support.SimdutfResult;
+
+/// bool (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_utf16le(buf: ?[*]const u16, len: usize) bool;
+
+/// simdutf__result (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_utf16le_with_errors(buf: ?[*]const u16, len: usize) support.SimdutfResult;
+
+/// bool (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_utf16be(buf: ?[*]const u16, len: usize) bool;
+
+/// simdutf__result (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_utf16be_with_errors(buf: ?[*]const u16, len: usize) support.SimdutfResult;
+
+/// bool (const char32_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_utf32(buf: ?[*]const u32, len: usize) bool;
+
+/// simdutf__result (const char32_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__validate_utf32_with_errors(buf: ?[*]const u32, len: usize) support.SimdutfResult;
+
+/// size_t (const char *, size_t, char16_t *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf8_to_utf16le(input: ?[*]const u8, length: usize, output: ?[*]u16) usize;
+
+/// simdutf__result (const char *, size_t, char16_t *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf8_to_utf16le_with_errors(input: ?[*]const u8, length: usize, output: ?[*]u16) support.SimdutfResult;
+
+/// size_t (const char *, size_t, char16_t *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_valid_utf8_to_utf16le(input: ?[*]const u8, length: usize, output: ?[*]u16) usize;
+
+/// size_t (const char16_t *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf16le_to_utf8(input: ?[*]const u16, length: usize, output: ?[*]u8) usize;
+
+/// simdutf__result (const char16_t *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf16le_to_utf8_with_errors(input: ?[*]const u16, length: usize, output: ?[*]u8) support.SimdutfResult;
+
+/// size_t (const char16_t *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_valid_utf16le_to_utf8(input: ?[*]const u16, length: usize, output: ?[*]u8) usize;
+
+/// size_t (const char *, size_t, char16_t *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf8_to_utf16be(input: ?[*]const u8, length: usize, output: ?[*]u16) usize;
+
+/// size_t (const char16_t *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf16be_to_utf8(input: ?[*]const u16, length: usize, output: ?[*]u8) usize;
+
+/// size_t (const char *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf8_to_latin1(input: ?[*]const u8, length: usize, output: ?[*]u8) usize;
+
+/// simdutf__result (const char *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf8_to_latin1_with_errors(input: ?[*]const u8, length: usize, output: ?[*]u8) support.SimdutfResult;
+
+/// size_t (const char *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_valid_utf8_to_latin1(input: ?[*]const u8, length: usize, output: ?[*]u8) usize;
+
+/// size_t (const char *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_latin1_to_utf8(input: ?[*]const u8, length: usize, output: ?[*]u8) usize;
+
+/// size_t (const char *, size_t, char16_t *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_latin1_to_utf16le(input: ?[*]const u8, length: usize, output: ?[*]u16) usize;
+
+/// size_t (const char16_t *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf16le_to_latin1(input: ?[*]const u16, length: usize, output: ?[*]u8) usize;
+
+/// size_t (const char *, size_t, char32_t *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf8_to_utf32(input: ?[*]const u8, length: usize, output: ?[*]u32) usize;
+
+/// size_t (const char32_t *, size_t, char *)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__convert_utf32_to_utf8(input: ?[*]const u32, length: usize, output: ?[*]u8) usize;
+
+/// size_t (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__utf8_length_from_utf16le(input: ?[*]const u16, length: usize) usize;
+
+/// size_t (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__utf8_length_from_utf16be(input: ?[*]const u16, length: usize) usize;
+
+/// size_t (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__utf16_length_from_utf8(input: ?[*]const u8, length: usize) usize;
+
+/// size_t (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__utf8_length_from_latin1(input: ?[*]const u8, length: usize) usize;
+
+/// size_t (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__latin1_length_from_utf8(input: ?[*]const u8, length: usize) usize;
+
+/// size_t (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__utf32_length_from_utf8(input: ?[*]const u8, length: usize) usize;
+
+/// size_t (const char32_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__utf8_length_from_utf32(input: ?[*]const u32, length: usize) usize;
+
+/// size_t (const char32_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__utf16_length_from_utf32(input: ?[*]const u32, length: usize) usize;
+
+/// size_t (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__utf32_length_from_utf16le(input: ?[*]const u16, length: usize) usize;
+
+/// size_t (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__count_utf8(input: ?[*]const u8, length: usize) usize;
+
+/// size_t (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__count_utf16le(input: ?[*]const u16, length: usize) usize;
+
+/// size_t (const char16_t *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__count_utf16be(input: ?[*]const u16, length: usize) usize;
+
+/// int (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__detect_encodings(input: ?[*]const u8, length: usize) c_int;
+
+/// size_t (const char *, size_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__maximal_binary_length_from_base64(input: ?[*]const u8, length: usize) usize;
+
+/// simdutf__result (const char *, size_t, char *, uint64_t, uint64_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__base64_to_binary(input: ?[*]const u8, length: usize, output: ?[*]u8, options: u64, last_chunk_options: u64) support.SimdutfResult;
+
+/// size_t (size_t, uint64_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__base64_length_from_binary(length: usize, options: u64) usize;
+
+/// size_t (const char *, size_t, char *, uint64_t)
+/// Borrows every pointer argument for the call only; input and output buffers must
+/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+/// and retains nothing after return.
+pub extern fn simdutf__binary_to_base64(input: ?[*]const u8, length: usize, output: ?[*]u8, options: u64) usize;
 
 test "every generated extern resolves against v8.zig" {
     std.testing.refAllDecls(@This());

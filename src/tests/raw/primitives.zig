@@ -27,6 +27,12 @@ test "String: encodings and lengths" {
             var buf: [11]u8 = undefined;
             try t.expectEqual(@as(usize, 11), utf8.writeUtf8(env.isolate, &buf));
             try t.expectEqualStrings("héllo 🍏", &buf);
+
+            // Lone surrogates are written as U+FFFD (EF BF BD), not as WTF-8.
+            const lone = v8.String.initTwoByte(env.isolate, &[_]u16{ 'a', 0xD800, 'b' });
+            var lone_buf: [5]u8 = undefined;
+            try t.expectEqual(@as(usize, 5), lone.writeUtf8(env.isolate, &lone_buf));
+            try t.expectEqualSlices(u8, &.{ 'a', 0xEF, 0xBF, 0xBD, 'b' }, &lone_buf);
         }
     }.run);
 }

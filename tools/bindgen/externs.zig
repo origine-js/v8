@@ -1,4 +1,4 @@
-//! Generates `src/generated/externs.gen.zig`: one `pub extern fn` per `v8__*` shim
+//! Generates `src/generated/externs.gen.zig`: one `pub extern fn` per `v8__*`/`simdutf__*` shim
 //! defined in binding.cc, with ABI-exact Zig types (see types.zig).
 
 const std = @import("std");
@@ -119,7 +119,9 @@ pub fn generate(
     typemap: TypeMap,
     out: *Io.Writer.Allocating,
 ) !Stats {
-    const dump = try clang.astDump("v8__");
+    // clang's filter is a single substring, so dump each shim family and join:
+    // the dumps are streams of top-level JSON objects.
+    const dump = try std.mem.concat(arena, u8, &.{ try clang.astDump("v8__"), try clang.astDump("simdutf__") });
     const funcs = try ast.parse(arena, dump);
 
     var mapper: Mapper = .{ .arena = arena, .overrides = typemap.types };
@@ -160,7 +162,15 @@ pub fn generate(
         };
         stats.emitted += 1;
         try body.writer.print("/// {s}\n", .{f.signature});
-        if (std.mem.startsWith(u8, f.name, "v8__Intrinsics__")) {
+        if (std.mem.startsWith(u8, f.name, "simdutf__")) {
+            try body.writer.writeAll(
+                \\/// Borrows every pointer argument for the call only; input and output buffers must
+                \\/// not overlap and outputs must be sized by the matching *_length_from_* shim.
+                \\/// Needs no isolate, context or handle scope; thread-safe. Returns copied values
+                \\/// and retains nothing after return.
+                \\
+            );
+        } else if (std.mem.startsWith(u8, f.name, "v8__Intrinsics__")) {
             try body.writer.writeAll(
                 \\/// Borrows context and any name bytes through return on the entered isolate
                 \\/// thread, with a live HandleScope. Returns a GC-owned local handle valid

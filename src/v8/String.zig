@@ -7,11 +7,11 @@ const Name = v8.Name;
 pub const String = extern struct {
     pub const NewStringType = enum(c_int) { Normal, Internalized };
 
+    /// Mirrors `v8::String::WriteFlags` (the V2 Write* API). Pure constants.
     pub const WriteFlags = struct {
         pub const None = @as(c_int, 0);
         pub const NullTermination = @as(c_int, 1) << 0;
-        pub const PreserveAsciiNull = @as(c_int, 1) << 1;
-        pub const ReplaceInvalidUtf8 = @as(c_int, 1) << 2;
+        pub const ReplaceInvalidUtf8 = @as(c_int, 1) << 1;
     };
 
     name: Name,

@@ -1,12 +1,17 @@
 default:
     @just --list
 
-# Library with release V8 (patches apply automatically).
+# Library with release V8. Patches apply on the first build; run `just rebuild` after changing V8.
 build:
     zig build
 
-# Working on V8 or its patches: debug V8 for quick incremental compiles.
+# Rebuild V8 (fetch, patch, ninja); plain `zig build` reuses the last archive.
+rebuild:
+    zig build build-v8
+
+# Working on V8 or its patches: rebuild a debug V8 for quick incremental compiles.
 dev:
+    zig build build-v8 -Dv8_debug=true
     zig build -Dv8_debug=true
 
 # Fetch V8 and apply patches only, then edit .lp-cache/v8-*/ and run `just new-patch`.

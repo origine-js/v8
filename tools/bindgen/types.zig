@@ -1,4 +1,4 @@
-//! Maps the C++ types used by the `v8__*` shims to Zig types.
+//! Maps the C++ types used by the `v8__*` and `simdutf__*` shims to Zig types.
 //!
 //! Mapping is ABI driven and deliberately conservative: a type that cannot be
 //! mapped with certainty makes its function "unmapped" (reported, not emitted)
@@ -77,6 +77,8 @@ fn prim(name: []const u8) ?Prim {
         .{ "uintptr_t", Prim{ .zig = "usize" } },
         .{ "int8_t", Prim{ .zig = "i8", .bytes = true } },
         .{ "uint8_t", Prim{ .zig = "u8", .bytes = true } },
+        .{ "char16_t", Prim{ .zig = "u16", .bytes = true } },
+        .{ "char32_t", Prim{ .zig = "u32", .bytes = true } },
         .{ "int16_t", Prim{ .zig = "i16" } },
         .{ "uint16_t", Prim{ .zig = "u16", .bytes = true } },
         .{ "int32_t", Prim{ .zig = "i32" } },

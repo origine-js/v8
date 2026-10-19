@@ -136,13 +136,15 @@ A fresh clone downloads the pinned packages in `build.zig.zon`, then bootstraps
 depot_tools and fetches V8 15.2.124.1 and its dependencies over HTTPS. Git and
 network access to GitHub, pkg.lightpanda.io, and Chromium's source and toolchain
 download servers are required. No private repository credentials are required.
-The build applies the committed patches in `build-tools/patches/` automatically.
+The first build applies the committed patches in `build-tools/patches/` automatically;
+`zig build build-v8` re-applies them and rebuilds V8.
 Keep `zig-pkg/`, `.lp-cache/`, `.zig-cache/`, and `zig-out/` local; they are
 download/build caches and must not be committed.
 
 ```sh
 zig build                    # release V8 (default)
-zig build -Dv8_debug=true    # debug V8: quicker incremental compiles while changing V8
+zig build build-v8           # rebuild V8 after changing it or its patches; plain builds reuse the archive
+zig build build-v8 -Dv8_debug=true  # debug V8: quicker incremental compiles while changing V8
 zig build patch-v8           # fetch V8 and apply patches only
 ```
 

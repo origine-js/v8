@@ -14,6 +14,7 @@ pub const SharedBackingStore = @import("v8/native_types.zig").SharedBackingStore
 // Exact C++ name prevents the extern resolver from treating shared_ptr as a local handle.
 pub const std_shared_ptr_BackingStore = SharedBackingStore;
 pub const support = @import("v8/support.zig");
+pub const simdutf = @import("v8/simdutf.zig");
 pub const Platform = @import("v8/Platform.zig").Platform;
 pub const V8 = @import("v8/V8.zig").V8;
 pub const ResourceConstraints = @import("v8/ResourceConstraints.zig").ResourceConstraints;

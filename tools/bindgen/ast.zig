@@ -1,4 +1,4 @@
-//! Reads `clang -Xclang -ast-dump=json` output for the `v8__*` shims.
+//! Reads `clang -Xclang -ast-dump=json` output for the `v8__*` and `simdutf__*` shims.
 //!
 //! With `-ast-dump-filter` clang prints one pretty-printed top-level JSON
 //! object per matching declaration, each closed by a `}` at column 0, so the
@@ -62,7 +62,7 @@ fn addNode(arena: std.mem.Allocator, funcs: *std.ArrayList(Func), chunk: []const
     const node = try std.json.parseFromSliceLeaky(Node, arena, chunk, .{ .ignore_unknown_fields = true });
     if (!std.mem.eql(u8, node.kind, "FunctionDecl")) return;
     const name = node.name orelse return;
-    if (!std.mem.startsWith(u8, name, "v8__")) return;
+    if (!isShim(name)) return;
     // Only extern "C" functions (unmangled), never static helpers.
     const mangled = node.mangledName orelse return;
     if (!(std.mem.eql(u8, mangled, name) or (mangled.len == name.len + 1 and mangled[0] == '_' and std.mem.eql(u8, mangled[1..], name)))) return;
@@ -85,6 +85,12 @@ fn addNode(arena: std.mem.Allocator, funcs: *std.ArrayList(Func), chunk: []const
         .params = params.items,
         .signature = fn_type,
     });
+}
+
+/// Whether `name` is one of the extern "C" shim families the generator covers:
+/// `v8__*` and the simdutf bridge `simdutf__*`. Accepts and returns values only.
+pub fn isShim(name: []const u8) bool {
+    return std.mem.startsWith(u8, name, "v8__") or std.mem.startsWith(u8, name, "simdutf__");
 }
 
 /// Index of the `(` that opens the parameter list: the first one outside of

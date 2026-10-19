@@ -1,8 +1,8 @@
 //! `bindgen check`: keeps the views of the C ABI honest.
 //!
-//!   lib      the `v8__*` symbols the built libv8_zig.a really exports (nm)
-//!   gen      the externs in src/generated/externs.gen.zig
-//!   wrapped  the externs src/v8/*.zig actually calls (`e.v8__*`)
+//!   lib      the `v8__*` and `simdutf__*` symbols the built libv8_zig.a really exports (nm)
+//!   gen      the externs (v8__* and simdutf__*) in src/generated/externs.gen.zig
+//!   wrapped  the externs src/v8/*.zig actually calls (`e.v8__*`, `e.simdutf__*`)
 //!   shims    the shims in binding/rusty.cc: exported for rusty_v8 only, so they
 //!            are expected in `lib` without a Zig extern
 //!   rusty    optional: the shims upstream rusty_v8 defines, as a porting checklist
@@ -116,7 +116,7 @@ fn libSymbols(arena: std.mem.Allocator, io: Io, lib_path: []const u8) !Set {
         // `<addr> T <symbol>`
         if (!std.mem.eql(u8, prev, "T")) continue;
         const name = if (last.len != 0 and last[0] == '_') last[1..] else last;
-        if (std.mem.startsWith(u8, name, "v8__")) try set.put(arena, name, {});
+        if (isShimName(name)) try set.put(arena, name, {});
     }
     return set;
 }
@@ -128,7 +128,7 @@ fn collect(arena: std.mem.Allocator, src: []const u8, prefix: []const u8) !Set {
     while (std.mem.indexOfPos(u8, src, pos, prefix)) |at| {
         pos = at + prefix.len;
         const rest = src[pos..];
-        if (!std.mem.startsWith(u8, rest, "v8__")) continue;
+        if (!isShimName(rest)) continue;
         var end: usize = 0;
         while (end < rest.len and isIdent(rest[end])) end += 1;
         try set.put(arena, rest[0..end], {});
@@ -143,7 +143,7 @@ fn definitions(arena: std.mem.Allocator, src: []const u8) !Set {
     var lines = std.mem.splitScalar(u8, src, '\n');
     while (lines.next()) |line| {
         if (line.len == 0 or !std.ascii.isAlphabetic(line[0])) continue;
-        const at = std.mem.indexOf(u8, line, "v8__") orelse continue;
+        const at = std.mem.indexOf(u8, line, "v8__") orelse std.mem.indexOf(u8, line, "simdutf__") orelse continue;
         var end = at;
         while (end < line.len and isIdent(line[end])) end += 1;
         if (end >= line.len or line[end] != '(') continue;
@@ -152,6 +152,12 @@ fn definitions(arena: std.mem.Allocator, src: []const u8) !Set {
         try set.put(arena, line[at..end], {});
     }
     return set;
+}
+
+/// Whether `s` starts with a covered shim prefix (`v8__` or `simdutf__`).
+/// Pure string test; retains nothing.
+fn isShimName(s: []const u8) bool {
+    return std.mem.startsWith(u8, s, "v8__") or std.mem.startsWith(u8, s, "simdutf__");
 }
 
 fn isIdent(c: u8) bool {
@@ -176,15 +182,17 @@ fn lessThan(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
 
-/// `v8__Object__Get` -> class `Object`; one line per class with its methods.
+/// `v8__Object__Get` -> class `Object` (all `simdutf__*` go under class `simdutf`); one line per class with its methods.
 fn printByClass(arena: std.mem.Allocator, names: []const []const u8) !void {
     var classes: std.array_hash_map.String(std.ArrayList([]const u8)) = .empty;
     for (names) |n| {
-        const body = n["v8__".len..];
-        const split = std.mem.indexOf(u8, body, "__") orelse body.len;
-        const gop = try classes.getOrPut(arena, body[0..split]);
+        // The simdutf shims are free functions: one `simdutf` class.
+        const is_simdutf = std.mem.startsWith(u8, n, "simdutf__");
+        const body = if (is_simdutf) n["simdutf__".len..] else n["v8__".len..];
+        const split = if (is_simdutf) 0 else std.mem.indexOf(u8, body, "__") orelse body.len;
+        const gop = try classes.getOrPut(arena, if (is_simdutf) "simdutf" else body[0..split]);
         if (!gop.found_existing) gop.value_ptr.* = .empty;
-        try gop.value_ptr.append(arena, if (split < body.len) body[split + 2 ..] else "");
+        try gop.value_ptr.append(arena, if (is_simdutf) body else if (split < body.len) body[split + 2 ..] else "");
     }
     const Ctx = struct {
         keys: []const []const u8,

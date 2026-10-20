@@ -23,6 +23,23 @@ pub fn build(b: *std.Build) void {
     b.addNamedLazyPath("v8", v8.lib);
     b.addNamedLazyPath("v8_no_temporal", v8.lib_no_temporal);
     b.addNamedLazyPath("clang_bin", .{ .cwd_relative = clang_bin });
+    // For a Rust consumer of the `v8` crate (rusty_v8 build.rs): the checkout, the shim sources and the
+    // GN compile commands that select V8's ABI. Absent for a prebuilt archive, which has no GN output.
+    b.addNamedLazyPath("binding", b.path("binding"));
+    if (v8.build_dir) |build_dir| {
+        b.addNamedLazyPath("v8_root", .{ .cwd_relative = std.fs.path.dirname(std.fs.path.dirname(build_dir).?).? });
+        const commands = b.fmt("{s}/compile_commands.json", .{build_dir});
+        const have_commands = if (std.Io.Dir.accessAbsolute(b.graph.io, commands, .{})) |_| true else |_| false;
+        if (have_commands) {
+            b.addNamedLazyPath("gn_compile_commands", .{ .cwd_relative = commands });
+        } else {
+            // First build: GN has not run yet; copy its output once it has.
+            const copy = b.addSystemCommand(&.{"cp"});
+            copy.addArg(commands);
+            b.addNamedLazyPath("gn_compile_commands", copy.addOutputFileArg("compile_commands.json"));
+            copy.step.dependOn(v8.gn_step.?);
+        }
+    }
     var link_lib = v8.lib;
     if (link_native and target.result.os.tag == .macos) {
         const native = b.addSystemCommand(&.{ "uv", "run", "--script" });

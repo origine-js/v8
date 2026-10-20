@@ -1195,6 +1195,45 @@ impl Isolate {
     unsafe { drop(Box::from_raw(annex_ptr)) };
   }
 
+  /// Attaches an annex to an isolate that was created outside this crate (for
+  /// example by Zig), so the scope machinery (`CallbackScope`, `Global`, slots)
+  /// works for it. The annex lives in embedder data slot 0, which the embedder
+  /// must therefore leave unused. Returns `false` and does nothing when an
+  /// annex is already attached.
+  ///
+  /// # Safety
+  ///
+  /// `ptr` must point at a live isolate whose embedder data slot 0 is either
+  /// null or holds an annex attached by this function. The caller must call
+  /// [`Isolate::detach_foreign_annex`] after dropping every `Global`/`Weak` it
+  /// created and before the isolate is disposed.
+  pub unsafe fn attach_foreign_annex(ptr: *mut RealIsolate) -> bool {
+    let mut isolate = unsafe { Isolate::from_raw_ptr(ptr) };
+    isolate.assert_embedder_data_slot_count_and_offset_correct();
+    if !isolate.get_data_internal(Self::ANNEX_SLOT).is_null() {
+      return false;
+    }
+    isolate.create_annex(Box::new(()));
+    true
+  }
+
+  /// Removes and frees the annex attached by [`Isolate::attach_foreign_annex`],
+  /// running pending finalizers and clearing slot 0. Does nothing when no
+  /// annex is attached.
+  ///
+  /// # Safety
+  ///
+  /// `ptr` must point at a live isolate. No `CallbackScope` or `Local` created
+  /// through the annex may be in use, and the isolate must not be an
+  /// [`OwnedIsolate`] (which tears its own annex down on drop).
+  pub unsafe fn detach_foreign_annex(ptr: *mut RealIsolate) {
+    let mut isolate = unsafe { Isolate::from_raw_ptr(ptr) };
+    if isolate.get_data_internal(Self::ANNEX_SLOT).is_null() {
+      return;
+    }
+    drop(unsafe { isolate.dispose_annex() });
+  }
+
   /// Snapshot-path teardown.
   ///
   /// Used by [`OwnedIsolate::create_blob`], which consumes the isolate

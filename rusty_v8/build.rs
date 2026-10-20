@@ -158,7 +158,8 @@ fn build_binding(root: &Path, binding_dir: &Path, gn_out: &Path) {
     .generate()
     .expect("Unable to generate bindings");
 
-  let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("src_binding.rs");
+  let out_path =
+    PathBuf::from(env::var("OUT_DIR").unwrap()).join("src_binding.rs");
   println!(
     "cargo:rustc-env=RUSTY_V8_SRC_BINDING_PATH={}",
     out_path.display()
@@ -173,14 +174,20 @@ fn build_binding(root: &Path, binding_dir: &Path, gn_out: &Path) {
 fn print_link_flags(archive: &Path, mimalloc: &Path) {
   for p in [archive, mimalloc] {
     println!("cargo:rerun-if-changed={}", p.display());
-    println!("cargo:rustc-link-search=native={}", p.parent().unwrap().display());
+    println!(
+      "cargo:rustc-link-search=native={}",
+      p.parent().unwrap().display()
+    );
   }
   let stem = |p: &Path| {
     let n = p.file_stem().unwrap().to_str().unwrap();
     n.strip_prefix("lib").unwrap_or(n).to_string()
   };
-  println!("cargo:rustc-link-lib=static={}", stem(archive));
-  println!("cargo:rustc-link-lib=static={}", stem(mimalloc));
+  // `-bundle`: never copy the archives into a consuming staticlib/rlib. The
+  // final link (Zig) supplies V8 and mimalloc exactly once; `rusty_v8`'s own
+  // binaries/tests get them through these directives as before.
+  println!("cargo:rustc-link-lib=static:-bundle={}", stem(archive));
+  println!("cargo:rustc-link-lib=static:-bundle={}", stem(mimalloc));
 
   match env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
     "macos" | "ios" => {

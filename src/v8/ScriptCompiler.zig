@@ -14,6 +14,23 @@ pub const ScriptCompiler = extern struct {
         pub fn deinit(self: v8.ScriptCompiler.CachedData) void {
             e.v8__ScriptCompiler__CachedData__DELETE(self.handle);
         }
+
+        /// Leading fields of V8's `CachedData`; the binding asserts these offsets.
+        const Layout = extern struct { data: ?[*]const u8, length: c_int, rejected: bool };
+
+        /// Borrows the cache; the bytes belong to it (or to the buffer it was created over)
+        /// and are valid until `deinit` or, for a cache a Source owns, the Source's `deinit`.
+        pub fn bytes(handle: *const Opaque) []const u8 {
+            const layout: *const Layout = @ptrCast(@alignCast(handle));
+            return (layout.data orelse return &.{})[0..@intCast(layout.length)];
+        }
+
+        /// Whether V8 refused the cache during a compile that consumed it (version, flags or
+        /// source mismatch). Only meaningful after that compile. Borrows the cache.
+        pub fn rejected(handle: *const Opaque) bool {
+            const layout: *const Layout = @ptrCast(@alignCast(handle));
+            return layout.rejected;
+        }
     };
     /// Construct in its final address, and call deinit before releasing storage.
     pub const Source = extern struct {

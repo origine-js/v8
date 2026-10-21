@@ -273,6 +273,44 @@ test "ScriptCompiler: script caching, module requests and evaluation" {
     }.run);
 }
 
+test "ScriptCompiler: a module code cache is consumed for equal source and rejected otherwise" {
+    try withEnv(struct {
+        /// Borrows the entered fixture through return; local handles expire with its
+        /// HandleScope. The test-owned cache bytes are copied before the producing cache is
+        /// released; nothing escapes to the caller.
+        fn run(env: *Env) !void {
+            const text = "export const answer = () => { let n = 0; for (let i = 0; i < 4; i++) n += i; return n; };";
+            var origin = v8.ScriptOrigin.init(env.str("cache.mjs").name.primitive.value, 0, 0, false, -1, null, false, false, true, null);
+            var produce_source: v8.ScriptCompiler.Source = undefined;
+            produce_source.init(env.str(text), &origin, null);
+            defer produce_source.deinit();
+            const module = v8.ScriptCompiler.compileModule(env.isolate, &produce_source, 0, 0).?;
+            const cache = module.getUnboundModuleScript().?.createCodeCache().?;
+            defer cache.deinit();
+            const bytes = v8.ScriptCompiler.CachedData.bytes(cache.handle);
+            try t.expect(bytes.len > 0);
+            const copy = try t.allocator.dupe(u8, bytes);
+            defer t.allocator.free(copy);
+
+            // Same source: accepted, and the module behaves the same.
+            var accepted: v8.ScriptCompiler.Source = undefined;
+            accepted.init(env.str(text), &origin, v8.ScriptCompiler.CachedData.init(copy.ptr, @intCast(copy.len)));
+            defer accepted.deinit();
+            const consumed = v8.ScriptCompiler.compileModule(env.isolate, &accepted, 1, 0).?;
+            try t.expect(!v8.ScriptCompiler.CachedData.rejected(accepted.getCachedData().?));
+            try t.expect(consumed.instantiateModule(env.context, resolveTestModule, null).?);
+            try t.expect(consumed.evaluate(env.context).?.isPromise());
+
+            // A source of another length is refused and compiles from scratch.
+            var rejected: v8.ScriptCompiler.Source = undefined;
+            rejected.init(env.str(text ++ " "), &origin, v8.ScriptCompiler.CachedData.init(copy.ptr, @intCast(copy.len)));
+            defer rejected.deinit();
+            try t.expect(v8.ScriptCompiler.compileModule(env.isolate, &rejected, 1, 0) != null);
+            try t.expect(v8.ScriptCompiler.CachedData.rejected(rejected.getCachedData().?));
+        }
+    }.run);
+}
+
 test "Wasm compiled-module ownership and heap-space statistics" {
     try withEnv(struct {
         /// Borrows the entered fixture through return; local handles expire with

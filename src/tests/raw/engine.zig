@@ -161,6 +161,87 @@ test "Intrinsics: frozen graph and bindings survive a custom context snapshot" {
     try t.expect(v8.Script.compile(context, v8.String.initUtf8(isolate, "Object.isFrozen(Array.prototype) && !Reflect.deleteProperty(globalThis, 'Date') && !Object.hasOwn(RegExp, '$1') && typeof RegExp[Symbol.species] === 'function'"), null).?.run(context).?.isTrue());
 }
 
+var snapshot_dependency: v8.MaybeHandle = null;
+
+/// Resolves every import to the test's single dependency module; borrows nothing
+/// and retains nothing. Valid only while `snapshot_dependency` is set.
+fn resolveSnapshotDependency(_: v8.Context, _: v8.String, _: v8.FixedArray, _: v8.Module) callconv(.c) v8.MaybeHandle {
+    return snapshot_dependency;
+}
+
+// Local V8 scopes are released before return; the blob is freed on every path.
+test "Module: an evaluated ES module graph survives a context snapshot without re-evaluating" {
+    ensureV8();
+    const evaluated: u32 = 4;
+    const aba = v8.ArrayBuffer.Allocator.initDefault();
+    defer aba.deinit();
+    var params = v8.Isolate.CreateParams.init();
+    params.array_buffer_allocator = aba;
+    var main_index: usize = undefined;
+    var dependency_index: usize = undefined;
+    const blob = make: {
+        var creator: v8.SnapshotCreator = undefined;
+        creator.init(&params);
+        defer creator.deinit();
+        const isolate = creator.getIsolate().?;
+        {
+            var h_scope: v8.HandleScope = undefined;
+            h_scope.init(isolate);
+            defer h_scope.deinit();
+            const context = v8.Context.init(isolate, null, null, null);
+            context.enter();
+            defer context.exit();
+            var origin = v8.ScriptOrigin.init(v8.String.initUtf8(isolate, "init.mjs").name.primitive.value, 0, 0, false, -1, null, false, false, true, null);
+            var dependency_source: v8.ScriptCompiler.Source = undefined;
+            dependency_source.init(v8.String.initUtf8(isolate, "export let count = 0; export function bump() { return ++count; }"), &origin, null);
+            defer dependency_source.deinit();
+            const dependency = v8.ScriptCompiler.compileModule(isolate, &dependency_source, 0, 0).?;
+            var main_source: v8.ScriptCompiler.Source = undefined;
+            main_source.init(v8.String.initUtf8(isolate, "import { bump } from 'dep'; export const first = bump();"), &origin, null);
+            defer main_source.deinit();
+            const main_module = v8.ScriptCompiler.compileModule(isolate, &main_source, 0, 0).?;
+            snapshot_dependency = dependency.data.handle;
+            defer snapshot_dependency = null;
+            try t.expect(main_module.instantiateModule(context, resolveSnapshotDependency, null).?);
+            try t.expect(main_module.evaluate(context).?.isPromise());
+            try t.expectEqual(evaluated, main_module.getStatus());
+            creator.setDefaultContext(context);
+            main_index = creator.addDataToContext(context, main_module.data);
+            dependency_index = creator.addDataToContext(context, dependency.data);
+        }
+        // CreateBlob must run outside all handle scopes.
+        break :make creator.createBlob(0);
+    };
+    defer blob.deinit();
+    try t.expect(blob.slice().len > 0);
+    params.snapshot_blob = &blob;
+    const isolate = v8.Isolate.init(&params);
+    defer isolate.deinit();
+    isolate.enter();
+    defer isolate.exit();
+    var h_scope: v8.HandleScope = undefined;
+    h_scope.init(isolate);
+    defer h_scope.deinit();
+    const context = v8.Context.init(isolate, null, null, null);
+    context.enter();
+    defer context.exit();
+    const main_data = context.getDataFromSnapshotOnce(main_index).?;
+    const dependency_data = context.getDataFromSnapshotOnce(dependency_index).?;
+    try t.expect(main_data.isModule());
+    const main_module = v8.Module.from_opaque(main_data.handle).?;
+    const dependency = v8.Module.from_opaque(dependency_data.handle).?;
+    try t.expectEqual(evaluated, main_module.getStatus());
+    try t.expectEqual(evaluated, dependency.getStatus());
+    // Evaluating again must not run the body a second time.
+    _ = main_module.evaluate(context);
+    const namespace = main_module.getModuleNamespace().?.toObject(context).?;
+    try t.expectEqual(@as(f64, 1), namespace.get(context, v8.String.initUtf8(isolate, "first").name.primitive.value).?.numberValue(context).?);
+    // The dependency's state carried over: the next bump continues from 1.
+    const dependency_namespace = dependency.getModuleNamespace().?.toObject(context).?;
+    const bump = v8.Function.from_opaque(dependency_namespace.get(context, v8.String.initUtf8(isolate, "bump").name.primitive.value).?.data.handle).?;
+    try t.expectEqual(@as(f64, 2), bump.call(context, v8.Primitive.initUndefined(isolate).value, &.{}).?.numberValue(context).?);
+}
+
 test "Date: only Date.now remains and Temporal replaces calendar functionality" {
     try withEnv(struct {
         /// Borrows env and its entered context/live HandleScope through return.

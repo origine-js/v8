@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use std::ptr::null;
 use std::ptr::null_mut;
 
-use crate::ArrayBuffer;
+use crate::ArrayBufferBase;
 use crate::Isolate;
 use crate::Local;
 use crate::PinScope;
@@ -484,7 +484,7 @@ unsafe extern "C" fn drop_serialization_data(data: *mut c_void) {
 impl WasmMemoryObject {
   /// Returns underlying ArrayBuffer.
   #[inline(always)]
-  pub fn buffer(&self) -> Local<'_, ArrayBuffer> {
+  pub fn buffer(&self) -> Local<'_, ArrayBufferBase> {
     unsafe { Local::from_raw(v8__WasmMemoryObject__Buffer(self)) }.unwrap()
   }
 }
@@ -586,7 +586,7 @@ unsafe extern "C" {
 
   fn v8__WasmMemoryObject__Buffer(
     this: *const WasmMemoryObject,
-  ) -> *mut ArrayBuffer;
+  ) -> *mut ArrayBufferBase;
 
   fn v8__WasmModuleCompilation__NEW() -> *mut InternalWasmModuleCompilation;
   fn v8__WasmModuleCompilation__DELETE(

@@ -92,6 +92,8 @@ fn shell_split(s: &str) -> Vec<String> {
   words
 }
 
+/// Borrows build paths through return; writes generated ABI declarations into
+/// Cargo-owned OUT_DIR. Panics on parse/write failure and retains no input paths.
 fn build_binding(root: &Path, binding_dir: &Path, gn_out: &Path) {
   if env::var("LIBCLANG_PATH").is_err() {
     println!(
@@ -141,6 +143,11 @@ fn build_binding(root: &Path, binding_dir: &Path, gn_out: &Path) {
     .header(header.display().to_string())
     .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
     .clang_args(clang_args)
+    // libc++ 24 implements the deprecated, unused std::aligned_union through a
+    // recursive union that panics bindgen's layout traversal. No public V8 or
+    // shim declaration uses this trait. Omit only its definition while parsing;
+    // native C++ compilation still sees the unmodified matching libc++ headers.
+    .clang_arg("-D_LIBCPP___TYPE_TRAITS_ALIGNED_UNION_H")
     .generate_cstr(true)
     .rustified_enum(".*UseCounterFeature")
     .rustified_enum(".*ModuleImportPhase")

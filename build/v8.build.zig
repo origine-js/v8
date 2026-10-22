@@ -9,10 +9,11 @@
 
 const std = @import("std");
 const zstd_build = @import("zstd.build.zig");
+const mimalloc_build = @import("mimalloc.build.zig");
 
 const LazyPath = std.Build.LazyPath;
 
-pub const version = "15.2.124.1";
+pub const version = "15.8.30";
 
 pub const V8 = struct {
     /// `libv8_zig.a`, a complete static library containing V8 and the shim.
@@ -71,6 +72,8 @@ const GnArgs = struct {
     temporal: bool,
     /// Build V8's WebAssembly engine (Liftoff/TurboFan wasm, trap handler).
     webassembly: bool,
+    /// Use Google's exact-version builtin profile; V8 checks hashes and discards mismatches.
+    builtin_pgo: bool,
 
     /// Borrows self and target for this call; returns build-allocator-owned GN text
     /// valid until build teardown. Allocation failure panics; retains no inputs.
@@ -86,6 +89,9 @@ const GnArgs = struct {
         // Replace the raw linked ICU package with our compressed embedded copy.
         // mksnapshot still needs the uncompressed build-time data file.
         lines.appendSlice(a, &.{ "icu_use_data_file=true", "icu_use_stub_data=true" }) catch @panic("OOM");
+        // Preserve the full ICU backend used by our compressed-data provider and
+        // locale API. V8 15.8 otherwise defaults to the distinct ICU4X backend.
+        lines.append(a, "v8_enable_ecma402_icu4x=false") catch @panic("OOM");
         lines.append(a, b.fmt("is_debug={}", .{self.is_debug})) catch @panic("OOM");
         if (!self.is_debug) {
             lines.append(a, "is_clang=true") catch @panic("OOM");
@@ -102,6 +108,14 @@ const GnArgs = struct {
         if (self.optimize_for_size) lines.append(a, "optimize_for_size=true") catch @panic("OOM");
         if (!self.runtime_call_stats) lines.append(a, "v8_enable_runtime_call_stats=false") catch @panic("OOM");
         if (!self.temporal) lines.append(a, "v8_enable_temporal_support=false") catch @panic("OOM");
+        if (self.builtin_pgo) {
+            lines.appendSlice(a, &.{
+                "v8_enable_builtins_optimization=true",
+                "v8_enable_builtins_profiling=false",
+                "dcheck_always_on=false",
+            }) catch @panic("OOM");
+            lines.append(a, b.fmt("v8_builtins_profiling_log_file=\"//tools/builtins-pgo/profiles/{s}.profile\"", .{googleProfile(target)})) catch @panic("OOM");
+        }
 
         if (self.mac_sdk_path) |path| {
             lines.append(a, b.fmt("mac_sdk_path=\"{s}\"", .{path})) catch @panic("OOM");
@@ -121,6 +135,15 @@ const GnArgs = struct {
         return std.mem.join(a, "\n", lines.items) catch @panic("OOM");
     }
 };
+
+/// Accepts a target descriptor and returns a static profile name; retains no resources.
+fn googleProfile(target: std.Build.ResolvedTarget) []const u8 {
+    return switch (target.result.cpu.arch) {
+        .aarch64, .x86_64 => "x64",
+        .arm, .x86 => "x86",
+        else => @panic("Google builtin PGO supports arm64/x64/arm/x86; pass -Dbuiltin_pgo=false"),
+    };
+}
 
 const Bundle = struct { lib: LazyPath, run: *std.Build.Step.Run };
 
@@ -232,8 +255,12 @@ pub fn add(
         .thin_lto = b.option(bool, "thin_lto", "Build release V8 as ThinLTO bitcode (default: on; Darwin Zig links convert it to native objects)") orelse true,
         .temporal = b.option(bool, "temporal", "Build the Temporal API") orelse true,
         .webassembly = b.option(bool, "webassembly", "Build V8's WebAssembly engine") orelse true,
-        .mac_sdk_path = b.option([]const u8, "mac_sdk_path", "macOS SDK directory to build V8 against; V8 15.2 GN rejects paths outside the build directory, so leave unset and select the SDK with xcode-select/DEVELOPER_DIR"),
+        .builtin_pgo = b.option(bool, "builtin_pgo", "Use Google's exact-version builtin PGO baseline (default: on for release desktop V8)") orelse (optimize != .debug and target.result.os.tag != .ios),
+        .mac_sdk_path = b.option([]const u8, "mac_sdk_path", "macOS SDK directory to build V8 against; V8 15.8 GN rejects paths outside the build directory, so leave unset and select the SDK with xcode-select/DEVELOPER_DIR"),
     };
+    if (gn_args.builtin_pgo and (gn_args.is_debug or !gn_args.webassembly or
+        !gn_args.v8_enable_sandbox or target.result.os.tag == .ios))
+        @panic("Google builtin PGO requires release V8, WebAssembly, pointer compression and sandbox; pass -Dbuiltin_pgo=false for this configuration");
     const cache_root = b.option([]const u8, "cache_root", "Directory holding the V8 and depot_tools checkouts") orelse b.root.joinString(b.allocator, ".lp-cache") catch @panic("OOM");
 
     const v8_dir = b.fmt("{s}/v8-{s}", .{ cache_root, version });
@@ -288,8 +315,9 @@ pub fn add(
     compress.addFileArg(b.path("build-tools/scripts/compress-icu.py"));
     const icu_data_dir = if (target.result.os.tag == .ios) "ios" else "common";
     compress.addArg(b.fmt("{s}/third_party/icu/{s}/icudtl.dat", .{ v8_dir, icu_data_dir }));
-    _ = compress.addOutputFileArg2(b.fmt("{s}/zig/binding/icu-data.gen.cc", .{v8_dir}), .{});
+    const compressed_source = compress.addOutputFileArg2("icu-data.gen.cc", .{});
     compress.step.dependOn(&icu_patch.step);
+    const published_icu = publish(b, compressed_source, b.fmt("{s}/zig/binding/icu-data.gen.cc", .{v8_dir}));
 
     // 5. Generate and build.
     const path_env = b.fmt("{s}:{s}", .{ depot_dir, b.graph.environ_map.get("PATH") orelse "" });
@@ -308,7 +336,15 @@ pub fn add(
     gn.setCwd(.{ .cwd_relative = v8_dir });
     gn.setEnvironmentVariable("PATH", path_env);
     gn.has_side_effects = true;
-    gn.step.dependOn(&compress.step);
+    gn.step.dependOn(&published_icu.run.step);
+    if (gn_args.builtin_pgo) {
+        const profiles = b.addSystemCommand(&.{ "uv", "run" });
+        profiles.addFileArg(b.path("build-tools/scripts/download-pgo.py"));
+        profiles.addArgs(&.{ v8_dir, googleProfile(target) });
+        profiles.has_side_effects = true;
+        profiles.step.dependOn(&fetch.step);
+        gn.step.dependOn(&profiles.step);
+    }
 
     const ninja = b.addSystemCommand(&.{ b.fmt("{s}/autoninja", .{depot_dir}), "-C", out_dir, "v8_zig" });
     ninja.setCwd(.{ .cwd_relative = v8_dir });
@@ -349,7 +385,16 @@ pub fn add(
         native_test_module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/{s}/gen", .{ v8_dir, out_dir }) });
         native_test_module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/{s}/gen/third_party/partition_alloc/src", .{ v8_dir, out_dir }) });
         native_test_module.addSystemFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{gn_args.mac_sdk_path orelse "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"}) });
-        native_test_module.addObjectFile(lib);
+        // Zig's Mach-O linker cannot consume the release archive's LLVM bitcode.
+        // Use the same native-object conversion as the exported Zig module.
+        const native_archive = b.addSystemCommand(&.{ "uv", "run", "--script" });
+        native_archive.addFileArg(b.path("build-tools/scripts/native-archive.py"));
+        native_archive.addFileArg(lib);
+        const native_lib = native_archive.addOutputFileArg("libv8_zig.a");
+        native_archive.addArg(b.fmt("{s}/third_party/llvm-build/Release+Asserts/bin", .{v8_dir}));
+        native_archive.addArgs(&.{ "--target", b.fmt("{s}-apple-macos{f}", .{ @tagName(target.result.cpu.arch), target.result.os.version_range.semver.min }) });
+        native_test_module.addObjectFile(native_lib);
+        native_test_module.linkLibrary(mimalloc_build.add(b, target, .safe));
         const native_test = b.addExecutable(.{ .name = "darwin-frameworks-test", .root_module = native_test_module, .use_llvm = true });
         const run_native_test = b.addRunArtifact(native_test);
         b.step("test-darwin-frameworks", "Test deferred macOS framework APIs and JIT policy").dependOn(&run_native_test.step);

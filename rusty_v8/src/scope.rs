@@ -648,8 +648,9 @@ impl<'s> PinnedRef<'s, HandleScope<'_>> {
     }
   }
 
+  /// Borrows a Data local through return; V8 retains it for continuations.
   #[inline(always)]
-  pub fn set_continuation_preserved_embedder_data(&self, data: Local<Value>) {
+  pub fn set_continuation_preserved_embedder_data(&self, data: Local<Data>) {
     unsafe {
       let isolate = self.0.isolate;
       raw::v8__Context__SetContinuationPreservedEmbedderData(
@@ -659,8 +660,9 @@ impl<'s> PinnedRef<'s, HandleScope<'_>> {
     }
   }
 
+  /// Returns a Data local borrowed until this handle scope closes.
   #[inline(always)]
-  pub fn get_continuation_preserved_embedder_data(&self) -> Local<'s, Value> {
+  pub fn get_continuation_preserved_embedder_data(&self) -> Local<'s, Data> {
     unsafe {
       self
         .cast_local(|sd| {

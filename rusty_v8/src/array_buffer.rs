@@ -8,6 +8,7 @@ use std::ptr::null;
 use std::slice;
 
 use crate::ArrayBuffer;
+use crate::ArrayBufferBase;
 use crate::DataView;
 use crate::Isolate;
 use crate::Local;
@@ -64,8 +65,9 @@ unsafe extern "C" {
   ) -> bool;
   fn v8__BackingStore__DELETE(this: *mut BackingStore);
 
+  /// Borrows a buffer during construction; result is a local in the live handle scope.
   fn v8__DataView__New(
-    arraybuffer: *const ArrayBuffer,
+    arraybuffer: *const ArrayBufferBase,
     byte_offset: usize,
     length: usize,
   ) -> *const DataView;
@@ -681,18 +683,48 @@ impl ArrayBuffer {
 }
 
 impl DataView {
-  /// Returns a new DataView.
+  /// Borrows the entered scope and buffer, returning a view local in that scope.
+  /// The view retains its backing buffer; invalid construction panics.
   #[inline(always)]
   pub fn new<'s>(
     scope: &PinScope<'s, '_, ()>,
-    arraybuffer: Local<'s, ArrayBuffer>,
+    arraybuffer: impl Into<Local<'s, ArrayBufferBase>>,
     byte_offset: usize,
     length: usize,
   ) -> Local<'s, DataView> {
     unsafe {
-      scope
-        .cast_local(|_| v8__DataView__New(&*arraybuffer, byte_offset, length))
+      scope.cast_local(|_| {
+        v8__DataView__New(&*arraybuffer.into(), byte_offset, length)
+      })
     }
     .unwrap()
+  }
+}
+
+unsafe extern "C" {
+  /// Borrows the local buffer through return; retains nothing.
+  fn v8__ArrayBufferBase__ByteLength(this: *const ArrayBufferBase) -> usize;
+  /// Returns storage borrowed while the buffer lives and is not detached or resized.
+  fn v8__ArrayBufferBase__Data(this: *const ArrayBufferBase) -> *mut c_void;
+  /// Borrows the buffer; returns an owned reference released by SharedRef::drop.
+  fn v8__ArrayBufferBase__GetBackingStore(
+    this: *const ArrayBufferBase,
+  ) -> SharedRef<BackingStore>;
+}
+
+impl ArrayBufferBase {
+  /// Borrows the local buffer through return; retains no resources.
+  pub fn byte_length(&self) -> usize {
+    unsafe { v8__ArrayBufferBase__ByteLength(self) }
+  }
+
+  /// Borrows the buffer; storage is valid while it lives and is not detached or resized.
+  pub fn data(&self) -> Option<NonNull<c_void>> {
+    NonNull::new(unsafe { v8__ArrayBufferBase__Data(self) })
+  }
+
+  /// Borrows the buffer and returns a caller-owned shared reference, released on drop.
+  pub fn get_backing_store(&self) -> SharedRef<BackingStore> {
+    unsafe { v8__ArrayBufferBase__GetBackingStore(self) }
   }
 }

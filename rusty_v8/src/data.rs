@@ -907,12 +907,38 @@ impl_partial_eq! { Value for Array use identity }
 impl_partial_eq! { Object for Array use identity }
 impl_partial_eq! { Array for Array use identity }
 
+/// Base of ordinary and shared array buffers. Locals borrow the current handle scope.
+#[repr(C)]
+#[derive(Debug)]
+pub struct ArrayBufferBase(Opaque);
+
+impl_deref! { Object for ArrayBufferBase }
+impl_from! { ArrayBufferBase for Data }
+impl_from! { ArrayBufferBase for Value }
+impl_from! { ArrayBufferBase for Object }
+impl_from! { ArrayBuffer for ArrayBufferBase }
+impl_from! { SharedArrayBuffer for ArrayBufferBase }
+impl_try_from! { Data for ArrayBufferBase if v => v.is_value() && (cast::<Value>(v).is_array_buffer() || cast::<Value>(v).is_shared_array_buffer()) }
+impl_try_from! { Value for ArrayBufferBase if v => v.is_array_buffer() || v.is_shared_array_buffer() }
+impl_try_from! { Object for ArrayBufferBase if v => v.is_array_buffer() || v.is_shared_array_buffer() }
+impl_try_from! { ArrayBufferBase for ArrayBuffer if v => v.is_array_buffer() }
+impl_try_from! { ArrayBufferBase for SharedArrayBuffer if v => v.is_shared_array_buffer() }
+impl_eq! { for ArrayBufferBase }
+impl_hash! { for ArrayBufferBase use get_identity_hash }
+impl_partial_eq! { ArrayBufferBase for ArrayBufferBase use identity }
+impl_partial_eq! { ArrayBuffer for ArrayBufferBase use identity }
+impl_partial_eq! { SharedArrayBuffer for ArrayBufferBase use identity }
+impl_partial_eq! { ArrayBufferBase for ArrayBuffer use identity }
+impl_partial_eq! { ArrayBufferBase for SharedArrayBuffer use identity }
+impl_partial_eq! { Value for ArrayBufferBase use identity }
+impl_partial_eq! { ArrayBufferBase for Value use identity }
+
 /// An instance of the built-in ArrayBuffer constructor (ES6 draft 15.13.5).
 #[repr(C)]
 #[derive(Debug)]
 pub struct ArrayBuffer(Opaque);
 
-impl_deref! { Object for ArrayBuffer }
+impl_deref! { ArrayBufferBase for ArrayBuffer }
 impl_try_from! { Data for ArrayBuffer if v => v.is_value() && cast::<Value>(v).is_array_buffer() }
 impl_try_from! { Value for ArrayBuffer if v => v.is_array_buffer() }
 impl_try_from! { Object for ArrayBuffer if v => v.is_array_buffer() }
@@ -1427,7 +1453,7 @@ impl_partial_eq! { Set for Set use identity }
 #[derive(Debug)]
 pub struct SharedArrayBuffer(Opaque);
 
-impl_deref! { Object for SharedArrayBuffer }
+impl_deref! { ArrayBufferBase for SharedArrayBuffer }
 impl_try_from! { Data for SharedArrayBuffer if v => v.is_value() && cast::<Value>(v).is_shared_array_buffer() }
 impl_try_from! { Value for SharedArrayBuffer if v => v.is_shared_array_buffer() }
 impl_try_from! { Object for SharedArrayBuffer if v => v.is_shared_array_buffer() }

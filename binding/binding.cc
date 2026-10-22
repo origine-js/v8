@@ -1598,10 +1598,12 @@ void v8__ObjectTemplate__SetInternalFieldCount(const v8::ObjectTemplate& self,
   ref_to_local(self)->SetInternalFieldCount(value);
 }
 
+// Borrows local handles on the isolate thread. The template retains data and
+// callback code; callbacks must remain executable until isolate disposal.
 void v8__ObjectTemplate__SetNativeDataProperty(
     const v8::ObjectTemplate& self, const v8::Name& key,
     v8::AccessorNameGetterCallback getter,
-    v8::AccessorNameSetterCallback setter, const v8::Value* data_or_null,
+    v8::AccessorNameSetterCallbackV2 setter, const v8::Value* data_or_null,
     v8::PropertyAttribute attr) {
   ref_to_local(self)->SetNativeDataProperty(ref_to_local(key), getter, setter,
                                              ptr_to_local(data_or_null), attr);
@@ -1710,8 +1712,9 @@ bool v8__Object__IsApiWrapper(const v8::Object& self) {
   return ref_to_local(self)->IsApiWrapper();
 }
 
+// Borrows self on the entered isolate thread; result expires with the handle scope.
 const v8::Value* v8__Object__GetPrototype(const v8::Object& self) {
-  return local_to_ptr(ref_to_local(self)->GetPrototypeV2());
+  return local_to_ptr(ref_to_local(self)->GetPrototype());
 }
 
 MaybeBool v8__Object__Set(const v8::Object& self, const v8::Context& context,
@@ -1737,10 +1740,12 @@ MaybeBool v8__Object__SetIndex(const v8::Object& self,
       ref_to_local(context), index, ref_to_local(value)));
 }
 
+// Borrows local handles through return in the entered context. Retains the
+// prototype in self on success; failure preserves V8's pending exception.
 MaybeBool v8__Object__SetPrototype(const v8::Object& self,
                                    const v8::Context& context,
                                    const v8::Value& prototype) {
-  return maybe_to_maybe_bool(ref_to_local(self)->SetPrototypeV2(
+  return maybe_to_maybe_bool(ref_to_local(self)->SetPrototype(
       ref_to_local(context), ref_to_local(prototype)));
 }
 
@@ -1773,11 +1778,13 @@ MaybeBool v8__Object__DefineProperty(const v8::Object& self,
       ref_to_local(context), ref_to_local(key), desc));
 }
 
+// Borrows locals in the entered context; on success the object retains data
+// and callback code. Callbacks must outlive the isolate; failure preserves V8 exceptions.
 MaybeBool v8__Object__SetAccessor(const v8::Object& self,
                                   const v8::Context& context,
                                   const v8::Name& key,
                                   v8::AccessorNameGetterCallback getter,
-                                  v8::AccessorNameSetterCallback setter,
+                                  v8::AccessorNameSetterCallbackV2 setter,
                                   const v8::Value* data_or_null,
                                   v8::PropertyAttribute attr) {
   return maybe_to_maybe_bool(ref_to_local(self)->SetNativeDataProperty(
@@ -2116,13 +2123,33 @@ void v8__BigInt__ToWordsArray(const v8::BigInt& self, int* sign_bit,
   ref_to_local(self)->ToWordsArray(sign_bit, word_count, words);
 }
 
-const v8::ArrayBuffer* v8__ArrayBufferView__Buffer(
-    const v8::ArrayBufferView& self) {
-  return local_to_ptr(ref_to_local(self)->Buffer());
+// Borrows the buffer through return; returns its byte length without retaining it.
+size_t v8__ArrayBufferBase__ByteLength(const v8::ArrayBufferBase& self) {
+  return self.ByteLength();
 }
 
+// Borrows the buffer; returned storage remains valid while the buffer is alive
+// and its backing store is not detached or resized.
+void* v8__ArrayBufferBase__Data(const v8::ArrayBufferBase& self) {
+  return self.Data();
+}
+
+// Borrows the buffer; transfers one shared backing-store reference to the caller,
+// which must release it with std__shared_ptr__v8__BackingStore__reset.
+two_pointers_t v8__ArrayBufferBase__GetBackingStore(const v8::ArrayBufferBase& self) {
+  return make_pod<two_pointers_t>(ref_to_local(self)->GetBackingStore());
+}
+
+// Borrows self on its isolate thread; returned local expires with its handle scope.
+const v8::ArrayBufferBase* v8__ArrayBufferView__Buffer(
+    const v8::ArrayBufferView& self) {
+  return local_to_ptr(ref_to_local(self)->GetBuffer());
+}
+
+// Borrows the view on its isolate thread; returned storage requires a live buffer
+// whose backing store is not detached or resized. Retains no resources.
 const void* v8__ArrayBufferView__Buffer__Data(const v8::ArrayBufferView& self) {
-  return ref_to_local(self)->Buffer()->Data();
+  return ref_to_local(self)->GetBuffer()->Data();
 }
 
 size_t v8__ArrayBufferView__ByteLength(const v8::ArrayBufferView& self) {
@@ -2215,7 +2242,9 @@ size_t v8__ArrayBuffer__ByteLength(const v8::ArrayBuffer& self) {
   return self.ByteLength();
 }
 
-const v8::DataView* v8__DataView__New(const v8::ArrayBuffer& ab, size_t offset,
+// Borrows the buffer on its isolate thread; the returned view retains it and its
+// local handle expires with the current handle scope.
+const v8::DataView* v8__DataView__New(const v8::ArrayBufferBase& ab, size_t offset,
                                       size_t length) {
   return local_to_ptr(v8::DataView::New(ref_to_local(ab), offset, length));
 }
@@ -2281,14 +2310,18 @@ uint32_t v8__Context__GetNumberOfEmbedderDataFields(const v8::Context& self) {
   return ref_to_local(self)->GetNumberOfEmbedderDataFields();
 }
 
+// Borrows the context on its isolate thread; the host-owned returned pointer is
+// valid until the host releases its storage. Retains no resources.
 void* v8__Context__GetAlignedPointerFromEmbedderData(const v8::Context& self,
                                                      int index) {
-  return ref_to_local(self)->GetAlignedPointerFromEmbedderData(index);
+  return ref_to_local(self)->GetAlignedPointerFromEmbedderData(index, v8::kEmbedderDataTypeTagDefault);
 }
 
+// Borrows the local context; retains a host pointer until replacement or context
+// disposal. Caller owns its storage. Requires the entered isolate thread.
 void v8__Context__SetAlignedPointerInEmbedderData(v8::Context& self, int index,
                                                   void* value) {
-  ref_to_local(self)->SetAlignedPointerInEmbedderData(index, value);
+  ref_to_local(self)->SetAlignedPointerInEmbedderData(index, value, v8::kEmbedderDataTypeTagDefault);
 }
 
 const v8::Data* v8__Context__GetEmbedderData(const v8::Context& self,
@@ -2363,40 +2396,36 @@ const v8::Context* v8__Context__FromSnapshot(
   return maybe_local_to_ptr(maybe_local);
 }
 
+// Borrows local data on the entered isolate thread; V8 retains it on continuations.
+// An empty handle clears the value. No host storage is retained.
 void v8__Context__SetContinuationPreservedEmbedderData(v8::Isolate* isolate,
-                                                       const v8::Value* data) {
+                                                       const v8::Data* data) {
   isolate->SetContinuationPreservedEmbedderData(ptr_to_local(data));
 }
 
-const v8::Value* v8__Context__GetContinuationPreservedEmbedderData(
+// Borrows the entered isolate; the returned data local expires with the current
+// handle scope. Retains no host storage.
+const v8::Data* v8__Context__GetContinuationPreservedEmbedderData(
     v8::Isolate* isolate) {
   auto value = isolate->GetContinuationPreservedEmbedderData();
   return local_to_ptr(value);
 }
 
-// Roots a MicrotaskQueue created for an isolate. With the default
-// v8_cppgc_microtask_queue setting the queue is cppgc-managed and this handle
-// only holds a persistent root (associated contexts keep it alive afterwards);
-// otherwise the handle owns the queue.
+// Owns a cppgc root, released before isolate disposal. Associated contexts
+// retain the GC-managed queue independently of this root.
 class MicrotaskQueueHandle {
  public:
+  // Borrows the entered isolate for creation; roots the queue until destruction.
   MicrotaskQueueHandle(v8::Isolate* isolate, v8::MicrotasksPolicy policy)
       : queue_(v8::MicrotaskQueue::New(isolate, policy)) {}
 
+  // Returns a borrowed queue valid while this root or an associated context lives.
   v8::MicrotaskQueue* Get() const {
-#ifdef V8_CPPGC_MICROTASK_QUEUE
     return queue_.Get();
-#else
-    return queue_.get();
-#endif
   }
 
  private:
-#ifdef V8_CPPGC_MICROTASK_QUEUE
   cppgc::Persistent<v8::MicrotaskQueue> queue_;
-#else
-  std::unique_ptr<v8::MicrotaskQueue> queue_;
-#endif
 };
 
 MicrotaskQueueHandle* v8__MicrotaskQueueHandle__New(
@@ -2691,9 +2720,10 @@ const v8::Object* v8__PropertyCallbackInfo__This(
   return local_to_ptr(self.Holder());
 }
 
+// Borrows callback info during its callback; result expires with its handle scope.
 const v8::Object* v8__PropertyCallbackInfo__Holder(
     const v8::PropertyCallbackInfo<v8::Value>& self) {
-  return local_to_ptr(self.HolderV2());
+  return local_to_ptr(self.Holder());
 }
 
 uintptr_t* v8__PropertyCallbackInfo__GetReturnValue(
@@ -2911,8 +2941,10 @@ void v8__AllowJavascriptExecutionScope__DESTRUCT(
   self->~AllowJavascriptExecutionScope();
 }
 
+// Each constructor borrows the buffer on its isolate thread; the returned view
+// retains it and its local handle expires with the current handle scope.
 #define V(NAME)                                                          \
-  const v8::NAME* v8__##NAME##__New(const v8::ArrayBuffer& buf_ptr,      \
+  const v8::NAME* v8__##NAME##__New(const v8::ArrayBufferBase& buf_ptr,      \
                                     size_t byte_offset, size_t length) { \
     return local_to_ptr(                                                 \
         v8::NAME::New(ref_to_local(buf_ptr), byte_offset, length));     \
@@ -3651,7 +3683,9 @@ MaybeBool v8__Module__InstantiateModule(
       ref_to_local(context), cb, source_callback));
 }
 
-const v8::Value* v8__Module__Evaluate(const v8::Module& self,
+// Borrows locals in the entered context. The promise local expires with the
+// handle scope; an empty result preserves V8's pending exception.
+const v8::Promise* v8__Module__Evaluate(const v8::Module& self,
                                       const v8::Context& context) {
   return maybe_local_to_ptr(
       ref_to_local(self)->Evaluate(ref_to_local(context)));
@@ -3770,9 +3804,11 @@ void v8__WasmStreaming__SetUrl(WasmStreamingSharedPtr* self, const char* url,
   self->inner->SetUrl(url, len);
 }
 
-const v8::ArrayBuffer* v8__WasmMemoryObject__Buffer(
+// Borrows the memory object on its isolate thread; the buffer local expires with
+// the handle scope. The memory object retains the underlying buffer.
+const v8::ArrayBufferBase* v8__WasmMemoryObject__Buffer(
     const v8::WasmMemoryObject& self) {
-  return local_to_ptr(ref_to_local(self)->Buffer());
+  return local_to_ptr(ref_to_local(self)->GetBuffer());
 }
 
 #endif

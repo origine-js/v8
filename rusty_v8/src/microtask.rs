@@ -111,10 +111,8 @@ impl MicrotaskQueue {
 /// This handle must be dropped before its isolate is disposed because dropping
 /// it releases a root through the isolate's heap.
 ///
-/// With the default `v8_cppgc_microtask_queue` GN setting, contexts associated
-/// with the queue keep it alive after this handle is dropped. If that setting
-/// is disabled through `EXTRA_GN_ARGS`, this handle owns the queue and must
-/// outlive every associated context.
+/// Contexts associated with the GC-managed queue keep it alive after this
+/// handle is dropped.
 #[derive(Debug)]
 pub struct MicrotaskQueueHandle(NonNull<MicrotaskQueueHandleRaw>);
 

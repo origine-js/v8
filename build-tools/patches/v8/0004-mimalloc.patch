@@ -98,7 +98,7 @@ index 32161ba8197..af456097164 100644
    // |_msize| cannot handle a null pointer.
    if (!ptr) return 0;
 diff --git a/src/handles/traced-handles.cc b/src/handles/traced-handles.cc
-index 765cf5216e0..35905847a4d 100644
+index 077e28feef8..ce64eae909c 100644
 --- a/src/handles/traced-handles.cc
 +++ b/src/handles/traced-handles.cc
 @@ -65,7 +65,7 @@ TracedNodeBlock* TracedNodeBlock::Create(TracedHandles& traced_handles) {

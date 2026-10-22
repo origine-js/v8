@@ -1519,7 +1519,7 @@ fn script_origin() {
 #[test]
 fn get_version() {
   assert_eq!(v8::V8::get_version(), v8::VERSION_STRING);
-  assert!(v8::V8::get_version().len() > 3);
+  assert!(v8::V8::get_version().starts_with("15.8.30"));
 }
 
 #[test]
@@ -2137,7 +2137,7 @@ fn object_template_set_accessor() {
                   key: v8::Local<v8::Name>,
                   value: v8::Local<v8::Value>,
                   args: v8::PropertyCallbackArguments,
-                  _rv: v8::ReturnValue<()>| {
+                  _rv: v8::ReturnValue<v8::Boolean>| {
       let this = args.holder();
 
       assert!(args.data().is_undefined());
@@ -2177,7 +2177,7 @@ fn object_template_set_accessor() {
        key: v8::Local<v8::Name>,
        value: v8::Local<v8::Value>,
        args: v8::PropertyCallbackArguments,
-       _rv: v8::ReturnValue<()>| {
+       _rv: v8::ReturnValue<v8::Boolean>| {
         let this = args.holder();
 
         assert!(args.data().is_string());
@@ -3504,7 +3504,7 @@ fn object_set_accessor_with_setter() {
                   key: v8::Local<v8::Name>,
                   value: v8::Local<v8::Value>,
                   args: v8::PropertyCallbackArguments,
-                  _rv: v8::ReturnValue<()>| {
+                  _rv: v8::ReturnValue<v8::Boolean>| {
       println!("setter called");
 
       let this = args.holder();
@@ -3605,7 +3605,7 @@ fn object_set_accessor_with_setter_with_property() {
                   key: v8::Local<v8::Name>,
                   value: v8::Local<v8::Value>,
                   args: v8::PropertyCallbackArguments,
-                  _rv: v8::ReturnValue<()>| {
+                  _rv: v8::ReturnValue<v8::Boolean>| {
       println!("setter called");
 
       let this = args.holder();
@@ -3710,7 +3710,7 @@ fn object_set_accessor_with_data() {
                   key: v8::Local<v8::Name>,
                   value: v8::Local<v8::Value>,
                   args: v8::PropertyCallbackArguments,
-                  _rv: v8::ReturnValue<()>| {
+                  _rv: v8::ReturnValue<v8::Boolean>| {
       println!("setter called");
 
       let this = args.holder();
@@ -5818,19 +5818,33 @@ fn continuation_preserved_embedder_data() {
 
     let context = v8::Context::new(scope, Default::default());
     let scope = &mut v8::ContextScope::new(scope, context);
-    let data = scope.get_continuation_preserved_embedder_data();
+    let data = v8::Local::<v8::Value>::try_from(
+      scope.get_continuation_preserved_embedder_data(),
+    )
+    .unwrap();
     assert!(data.is_undefined());
 
     let value = v8::String::new(scope, "hello").unwrap();
     scope.set_continuation_preserved_embedder_data(value.into());
-    let data = scope.get_continuation_preserved_embedder_data();
+    let data = v8::Local::<v8::Value>::try_from(
+      scope.get_continuation_preserved_embedder_data(),
+    )
+    .unwrap();
     assert!(data.is_string());
     assert_eq!(data.to_rust_string_lossy(scope), "hello");
 
     eval(scope, "b = 2 + 3").unwrap();
-    let data = scope.get_continuation_preserved_embedder_data();
+    let data = v8::Local::<v8::Value>::try_from(
+      scope.get_continuation_preserved_embedder_data(),
+    )
+    .unwrap();
     assert!(data.is_string());
     assert_eq!(data.to_rust_string_lossy(scope), "hello");
+
+    scope.set_continuation_preserved_embedder_data(context.into());
+    let data = scope.get_continuation_preserved_embedder_data();
+    assert!(data.is_context());
+    assert_eq!(v8::Local::<v8::Context>::try_from(data).unwrap(), context);
   }
 }
 
@@ -8850,7 +8864,7 @@ fn cpu_profiler_bindings() {
 fn synthetic_evaluation_steps<'s>(
   context: v8::Local<'s, v8::Context>,
   module: v8::Local<v8::Module>,
-) -> Option<v8::Local<'s, v8::Value>> {
+) -> Option<v8::Local<'s, v8::Promise>> {
   v8::callback_scope!(unsafe scope, context);
   let mut set = |name, value| {
     let name = v8::String::new(scope, name).unwrap();
@@ -8877,7 +8891,10 @@ fn synthetic_evaluation_steps<'s>(
     scope.reset();
   }
 
-  Some(v8::undefined(scope).into())
+  let resolver = v8::PromiseResolver::new(scope).unwrap();
+  let value = v8::undefined(scope).into();
+  assert_eq!(resolver.resolve(scope, value), Some(true));
+  Some(resolver.get_promise(scope))
 }
 
 #[test]
@@ -15983,4 +16000,33 @@ fn object_call_as_function_with_context() {
       2
     );
   }
+}
+
+/// Owns the fixture isolate; all local buffers/views expire before isolate disposal.
+/// Shared backing-store references are released on success and panic unwinding.
+#[test]
+fn array_buffer_base_shared_views() {
+  let _setup_guard = setup::parallel_test();
+  let isolate = &mut v8::Isolate::new(Default::default());
+  v8::scope!(let scope, isolate);
+  let context = v8::Context::new(scope, Default::default());
+  let scope = &mut v8::ContextScope::new(scope, context);
+  let shared = v8::SharedArrayBuffer::new(scope, 16).unwrap();
+  let view = v8::Uint8Array::new(scope, shared, 2, 4).unwrap();
+  let base = view.buffer(scope).unwrap();
+  assert!(base.is_shared_array_buffer());
+  assert_eq!(base.byte_length(), 16);
+  assert!(v8::Local::<v8::ArrayBuffer>::try_from(base).is_err());
+  assert_eq!(
+    v8::Local::<v8::SharedArrayBuffer>::try_from(base).unwrap(),
+    shared
+  );
+  let backing = base.get_backing_store();
+  assert!(backing.is_shared());
+  backing[2].set(73);
+  let mut copied = [0; 4];
+  assert_eq!(view.copy_contents(&mut copied), 4);
+  assert_eq!(copied, [73, 0, 0, 0]);
+  let data_view = v8::DataView::new(scope, base, 0, 4);
+  assert_eq!(data_view.buffer(scope).unwrap(), base);
 }

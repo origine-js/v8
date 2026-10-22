@@ -133,9 +133,22 @@ if you come across this error:<br />
 Compiling v8 will take 20+ minutes.
 
 A fresh clone downloads the pinned packages in `build.zig.zon`, then bootstraps
-depot_tools and fetches V8 15.2.124.1 and its dependencies over HTTPS. Git and
+depot_tools and fetches V8 15.8.30 and its dependencies over HTTPS. Git and
 network access to GitHub, pkg.lightpanda.io, and Chromium's source and toolchain
 download servers are required. No private repository credentials are required.
+The depot_tools pin matches V8 15.8.30's `DEPS`. The build retains the full ICU
+backend for its compressed ICU provider and locale API instead of V8's ICU4X default.
+Release desktop builds enable builtin PGO with Google's matching `15.8.30.0`
+baseline. The downloader verifies the upstream source revision and records a
+SHA-256 receipt. Sixteen builtin profiles are explicitly excluded regardless of
+whether their hashes match; V8 checks hashes for the remaining entries and warns
+when it discards a mismatch. Matching entries guide builtin branch optimization;
+profile-based builtin reordering is disabled. See [builtin PGO](docs/builtin-pgo.md)
+for the exclusions, measured acceptance, and verification commands.
+Arm64 uses Google's x64 profile, as supported by V8. Profiles are downloaded into
+the local V8 cache and are never modified or committed. Debug V8 disables PGO.
+Use `-Dbuiltin_pgo=false` for an unprofiled comparison build; different settings
+use separate output directories. This configures builtin PGO, not C++ compiler PGO.
 The first build applies the committed patches in `build-tools/patches/` automatically;
 `zig build build-v8` re-applies them and rebuilds V8.
 Keep `zig-pkg/`, `.lp-cache/`, `.zig-cache/`, and `zig-out/` local; they are
@@ -153,7 +166,7 @@ Zig code. Debug and release V8 use separate build directories. `just dev`, `just
 and `just new-patch <series> <name>` wrap the V8-development loop; see
 [build-tools/README.md](build-tools/README.md).
 
-V8 15.2 requires GN to place the macOS SDK inside the build directory, so GN selects the SDK itself
+V8 15.8 requires GN to place the macOS SDK inside the build directory, so GN selects the SDK itself
 (the active Xcode / Command Line Tools) and links it there. Do not pass an absolute `-Dmac_sdk_path`
 pointing outside the build directory: GN rejects it (`File is not inside output directory`). To build
 against a different SDK, switch it with `xcode-select` or `DEVELOPER_DIR`.

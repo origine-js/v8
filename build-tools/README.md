@@ -26,9 +26,16 @@ Each directory holds `NNNN-name.patch` files applied in name order, as plain
    subsystem completion, verifies the inventory without freezing, skips
    ShadowRealm, adds native per-context stack-trace configuration, and publishes
    immutable builtin bindings restored from the extensible engine seed
+7. `0007-wasm-hardening` installs and seals the WebAssembly namespace
+8. `0008-pgo-context-layout` appends private context fields after upstream slots,
+   preserving upstream field offsets for Google's builtin PGO baseline
+9. `0009-pgo-compatible-builtins` explicitly excludes the 16 builtins listed in
+   [builtin PGO](../docs/builtin-pgo.md), disables profile-based reordering, and
+   retains hash checks for all remaining entries. Mismatches warn and discard
+   optimization data without changing the baseline or hardened code.
 
-The build disables WebAssembly at compile time. Bindings are measured against
-that configuration; restoring Wasm requires rebuilding, regenerating bindings,
+The build enables WebAssembly by default. Bindings are measured against
+that configuration; changing Wasm requires rebuilding, regenerating bindings,
 and recreating snapshots. Hardening changes also require new engine archives
 and snapshots because the native context layout now includes a stack-trace limit.
 
@@ -52,3 +59,9 @@ reapplies from that patch on.
 
 Bump the version, run the build, and rebase each failing patch in order: apply the series up to
 the failing patch, fix the conflict in the checkout, and regenerate that patch.
+Release builds fetch Google's matching builtin profile through `scripts/download-pgo.py`
+before GN generation. Metadata must match the source commit, and `mksnapshot`
+retains profile-hash validation, discarding incompatible entries with warnings.
+Never alter profile hashes to accept changed code. Profile-based builtin reordering
+is disabled because the explicit exclusions must also be excluded from reordering.
+Branch optimization still uses matching, non-excluded profiles.

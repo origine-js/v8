@@ -134,11 +134,13 @@ pub const Context = extern struct {
         ));
     }
 
-    pub fn setContinuationPreservedEmbedderData(isolate: Isolate, data: ?Value) void {
-        e.v8__Context__SetContinuationPreservedEmbedderData(isolate.handle, if (data) |v| v.data.handle else null);
+    /// Borrows a local Data handle on the isolate thread; V8 retains it for continuations.
+    pub fn setContinuationPreservedEmbedderData(isolate: Isolate, data: ?Data) void {
+        e.v8__Context__SetContinuationPreservedEmbedderData(isolate.handle, if (data) |v| v.handle else null);
     }
 
-    pub fn getContinuationPreservedEmbedderData(isolate: Isolate) ?Value {
+    /// Returns a borrowed Data local valid until the current handle scope closes.
+    pub fn getContinuationPreservedEmbedderData(isolate: Isolate) ?Data {
         return .from_opaque(e.v8__Context__GetContinuationPreservedEmbedderData(isolate.handle));
     }
 };

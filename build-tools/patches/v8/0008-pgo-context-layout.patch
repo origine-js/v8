@@ -1,0 +1,26 @@
+diff --git a/src/objects/contexts.h b/src/objects/contexts.h
+index 7b63ad259e4..7681f098cc5 100644
+--- a/src/objects/contexts.h
++++ b/src/objects/contexts.h
+@@ -266,8 +266,6 @@ enum ContextLookupFlags {
+   V(JS_WEAK_REF_FUNCTION_INDEX, JSFunction, js_weak_ref_fun)                   \
+   V(JS_FINALIZATION_REGISTRY_FUNCTION_INDEX, JSFunction,                       \
+     js_finalization_registry_fun)                                              \
+-  V(ZIG_STACK_TRACE_LIMIT_INDEX, Number, zig_stack_trace_limit)               \
+-  V(ZIG_INTRINSIC_OBJECTS_INDEX, FixedArray, zig_intrinsic_objects)            \
+   V(JSON_OBJECT, JSObject, json_object)                                        \
+   V(PROMISE_WITHRESOLVERS_RESULT_MAP_INDEX, Map,                               \
+     promise_withresolvers_result_map)                                          \
+@@ -441,8 +439,11 @@ enum ContextLookupFlags {
+   V(RETAINED_MAPS, Object, retained_maps)                                      \
+   V(SHARED_SPACE_JS_OBJECT_HAS_INSTANCE_INDEX, JSFunction,                     \
+     shared_space_js_object_has_instance)                                       \
++  NATIVE_CONTEXT_FIELDS_TEMPORAL(V)                                           \
++  /* Embedder fields follow upstream slots to preserve builtin PGO graphs. */ \
+   V(ZIG_INTRINSIC_FUNCTIONS_INDEX, FixedArray, zig_intrinsic_functions)        \
+-  NATIVE_CONTEXT_FIELDS_TEMPORAL(V)
++  V(ZIG_INTRINSIC_OBJECTS_INDEX, FixedArray, zig_intrinsic_objects)            \
++  V(ZIG_STACK_TRACE_LIMIT_INDEX, Number, zig_stack_trace_limit)
+ 
+ // JSFunctions are pairs (context, function code), sometimes also called
+ // closures. A Context object is used to represent function contexts and

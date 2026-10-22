@@ -1,6 +1,6 @@
 [package]
 name = "v8"
-version = "152.2.0"
+version = "158.0.0"
 description = "Rust bindings to V8"
 readme = "README.md"
 authors = ["the Deno authors"]
@@ -46,10 +46,12 @@ inspector = []
 [dependencies]
 bitflags = "2.5"
 paste = "1.0"
-temporal_capi = { version = "0.2.3", features = ["zoneinfo64"] }
+temporal_capi = { version = "=0.2.6", features = ["zoneinfo64"] }
 
 [build-dependencies]
-bindgen = "0.72"
+# Generated bindings live in OUT_DIR; formatting them is unnecessary. Disabling
+# prettyplease also avoids its syn-2 AST conflicting with bindgen's syn-3 AST.
+bindgen = { version = "0.73.2", default-features = false, features = ["runtime", "logging"] }
 serde_json = "1"
 
 [dev-dependencies]

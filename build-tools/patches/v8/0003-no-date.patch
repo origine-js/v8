@@ -1,8 +1,8 @@
 diff --git a/src/builtins/builtins-date.cc b/src/builtins/builtins-date.cc
-index 191d34a9265..c3a507a72da 100644
+index ad5c62f6383..d4aa971e51f 100644
 --- a/src/builtins/builtins-date.cc
 +++ b/src/builtins/builtins-date.cc
-@@ -55,94 +55,11 @@ Tagged<Object> SetDateValue(Isolate* isolate, DirectHandle<JSDate> date,
+@@ -56,94 +56,11 @@ Tagged<Object> SetDateValue(Isolate* isolate, DirectHandle<JSDate> date,
  }  // namespace
  
  // https://tc39.es/ecma262/#sec-date-constructor
@@ -101,10 +101,10 @@ index 191d34a9265..c3a507a72da 100644
  
  // ES6 section 20.3.3.1 Date.now ( )
 diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
-index 764f17a7707..38c4bab6d97 100644
+index 3ed64597a4f..7f5a9962848 100644
 --- a/src/init/bootstrapper.cc
 +++ b/src/init/bootstrapper.cc
-@@ -3115,133 +3115,10 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
+@@ -3035,133 +3035,10 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      InstallWithIntrinsicDefaultProto(isolate_, date_fun,
                                       Context::DATE_FUNCTION_INDEX);
  
@@ -240,7 +240,7 @@ index 764f17a7707..38c4bab6d97 100644
    }
  
    {  // -- P r o m i s e
-@@ -6195,11 +6072,6 @@ void Genesis::InitializeGlobal_harmony_temporal() {
+@@ -6031,11 +5908,6 @@ void Genesis::InitializeGlobal_harmony_temporal() {
    JSObject::AddProperty(isolate(),
        direct_handle(native_context()->global_object(), isolate()),
        "Temporal", temporal, DONT_ENUM);

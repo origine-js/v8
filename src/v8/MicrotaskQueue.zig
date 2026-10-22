@@ -13,7 +13,7 @@ pub const MicrotaskQueue = struct {
     pub const Opaque = opaque {};
 
     /// Borrowed queue; valid while `root` is alive, or while an associated context is
-    /// alive when V8 uses the default cppgc-managed queue.
+    /// alive. V8 manages queues through cppgc.
     handle: *Opaque,
     /// Rooting handle owned by this value and released by `deinit`; null when the
     /// queue is borrowed (for example from `Context.getMicrotaskQueue`).
@@ -29,9 +29,9 @@ pub const MicrotaskQueue = struct {
         return .{ .handle = e.v8__MicrotaskQueueHandle__Get(root).?, .root = root };
     }
 
-    /// Releases the root created by `init`; asserts the queue is not a borrowed view. With the default cppgc-managed queue, contexts
-    /// associated with the queue keep it alive afterwards; otherwise the queue is deleted
-    /// here and must outlive no associated context. Must precede isolate disposal.
+    /// Releases the root created by `init`; asserts the queue is not a borrowed
+    /// view. Associated contexts keep the queue alive afterwards. Must run on
+    /// the isolate thread before isolate disposal.
     pub fn deinit(self: Self) void {
         e.v8__MicrotaskQueueHandle__DELETE(self.root.?);
     }

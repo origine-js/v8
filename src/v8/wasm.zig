@@ -8,8 +8,9 @@ pub const WasmMemoryObject = extern struct {
         return .{ .object = v8.Object.from_opaque(o) orelse return null };
     }
 
-    pub fn buffer(self: WasmMemoryObject) ?v8.ArrayBuffer {
-        return v8.ArrayBuffer.from_opaque(e.v8__WasmMemoryObject__Buffer(self));
+    /// Borrows self; returns a buffer local valid until the current handle scope closes.
+    pub fn buffer(self: WasmMemoryObject) ?v8.ArrayBufferBase {
+        return v8.ArrayBufferBase.from_opaque(e.v8__WasmMemoryObject__Buffer(self));
     }
 };
 

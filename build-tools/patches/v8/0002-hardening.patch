@@ -1,19 +1,19 @@
 diff --git a/src/flags/flag-definitions.h b/src/flags/flag-definitions.h
-index cb05b58a148..0cec540d041 100644
+index b4b977d0bf3..6d0000a8b82 100644
 --- a/src/flags/flag-definitions.h
 +++ b/src/flags/flag-definitions.h
-@@ -312,6 +312,9 @@ DEFINE_BOOL(use_strict, false, "enforce strict mode")
+@@ -380,6 +380,9 @@ DEFINE_BOOL(use_strict, false, "enforce strict mode")
  
  DEFINE_DEVELOPER_FLAG(trace_temporal, "trace temporal code")
  
 +// zig-v8: disabled only while building the extensible engine seed snapshot.
 +DEFINE_BOOL(zig_harden_intrinsics, true, "freeze intrinsic graph and builtin globals")
 +
- DEFINE_BOOL(harmony, false, "enable all completed harmony features")
- DEFINE_BOOL(harmony_shipping, true, "enable all shipped harmony features")
+ DEFINE_IMPLICATION(js_import_bytes, js_immutable_arraybuffer)
  
+ DEFINE_BOOL(js_postmessage_share_immutable_arraybuffer, true,
 diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
-index a21b8a2eceb..01b3bdf14a3 100644
+index 7d8091954d1..3ed64597a4f 100644
 --- a/src/init/bootstrapper.cc
 +++ b/src/init/bootstrapper.cc
 @@ -4,6 +4,11 @@
@@ -28,7 +28,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
  #include "include/v8-function.h"
  #include "src/api/api-inl.h"
  #include "src/api/api-natives.h"
-@@ -351,6 +356,134 @@ void Bootstrapper::Iterate(RootVisitor* v) {
+@@ -352,6 +357,134 @@ void Bootstrapper::Iterate(RootVisitor* v) {
    v->Synchronize(VisitorSynchronization::kExtensions);
  }
  
@@ -163,7 +163,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
  DirectHandle<NativeContext> Bootstrapper::CreateEnvironment(
      MaybeDirectHandle<JSGlobalProxy> maybe_global_proxy,
      v8::Local<v8::ObjectTemplate> global_proxy_template,
-@@ -367,6 +500,9 @@ DirectHandle<NativeContext> Bootstrapper::CreateEnvironment(
+@@ -368,6 +501,9 @@ DirectHandle<NativeContext> Bootstrapper::CreateEnvironment(
      if (env.is_null() || !InstallExtensions(env, extensions)) {
        return {};
      }
@@ -173,7 +173,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
    }
    LogAllMaps();
    isolate_->heap()->NotifyBootstrapComplete();
-@@ -689,14 +825,6 @@ V8_NOINLINE void SimpleInstallGetterSetter(Isolate* isolate,
+@@ -688,14 +824,6 @@ V8_NOINLINE void SimpleInstallGetterSetter(Isolate* isolate,
        .Check();
  }
  
@@ -188,16 +188,16 @@ index a21b8a2eceb..01b3bdf14a3 100644
  V8_NOINLINE Handle<JSFunction> SimpleInstallGetter(
      Isolate* isolate, DirectHandle<JSObject> base, DirectHandle<Name> name,
      DirectHandle<Name> property_name, Builtin call, AdaptArguments adapt) {
-@@ -1349,6 +1477,8 @@ void Genesis::AddRestrictedFunctionProperties(DirectHandle<JSFunction> empty) {
-                    accessors);
+@@ -1278,6 +1406,8 @@ void InitializeJSArrayMaps(Isolate* isolate,
  }
+ }  // namespace
  
 +// Creates GC-owned native-context tables on the isolate thread. Retains them
 +// in native_context_; temporary handles expire with the enclosing HandleScope.
  void Genesis::CreateRoots() {
    // Allocate the native context FixedArray first and then patch the
    // closure and extension object later (we need the empty function
-@@ -1361,6 +1491,8 @@ void Genesis::CreateRoots() {
+@@ -1290,6 +1420,8 @@ void Genesis::CreateRoots() {
  
    isolate()->heap()->AddToWeakNativeContextList(*native_context());
    isolate()->set_context(*native_context());
@@ -206,13 +206,23 @@ index a21b8a2eceb..01b3bdf14a3 100644
  }
  
  void Genesis::InstallGlobalThisBinding() {
-@@ -2101,23 +2233,6 @@ Handle<JSObject> InitializeTemporal(Isolate* isolate) {
+@@ -2032,34 +2164,6 @@ Handle<JSObject> InitializeTemporal(Isolate* isolate) {
    return temporal;
  }
  
+-// The lazy Temporal accessors may be reached cross-realm, in which case the
+-// current context is the caller's. Initialize Temporal in the holder's realm,
+-// since the result is installed on the holder.
+-Tagged<NativeContext> GetHolderNativeContext(
+-    const v8::PropertyCallbackInfo<v8::Value>& info) {
+-  DirectHandle<JSReceiver> holder = Utils::OpenDirectHandle(*info.Holder());
+-  return holder->GetCreationContext().value();
+-}
+-
 -void LazyInitializeDateToTemporalInstant(
 -    v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info) {
 -  Isolate* isolate = reinterpret_cast<Isolate*>(info.GetIsolate());
+-  SaveAndSwitchContext save(isolate, GetHolderNativeContext(info));
 -  InitializeTemporal(isolate);
 -  DirectHandle<JSFunction> function = SimpleCreateFunction(
 -      isolate, isolate->factory()->InternalizeUtf8String("toTemporalInstant"),
@@ -223,6 +233,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
 -void LazyInitializeGlobalThisTemporal(
 -    v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info) {
 -  Isolate* isolate = reinterpret_cast<Isolate*>(info.GetIsolate());
+-  SaveAndSwitchContext save(isolate, GetHolderNativeContext(info));
 -  DirectHandle<JSObject> temporal = InitializeTemporal(isolate);
 -  info.GetReturnValue().Set(v8::Utils::ToLocal(temporal));
 -}
@@ -230,7 +241,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
  }  // namespace
  
  #endif  // V8_TEMPORAL_SUPPORT
-@@ -2151,6 +2266,8 @@ void Bootstrapper::InitializeLazyPartOfContext(
+@@ -2093,6 +2197,8 @@ void Bootstrapper::InitializeLazyPartOfContext(
  
  // This is only called if we are not using snapshots.  The equivalent
  // work in the snapshot case is done in HookUpGlobalObject.
@@ -239,7 +250,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
  void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
                                 DirectHandle<JSFunction> empty_function) {
    // --- N a t i v e   C o n t e x t ---
-@@ -3321,57 +3438,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
+@@ -3254,57 +3360,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
  
        InstallSpeciesGetter(isolate_, regexp_fun);
  
@@ -295,12 +306,12 @@ index a21b8a2eceb..01b3bdf14a3 100644
 -      INSTALL_CAPTURE_GETTER(9);
 -#undef INSTALL_CAPTURE_GETTER
 +      // zig-v8: never install legacy realm-wide RegExp match-state accessors.
-     }
-     SetConstructorInstanceType(isolate_, regexp_fun,
-                                JS_REG_EXP_CONSTRUCTOR_TYPE);
-@@ -6116,34 +6183,23 @@ void Genesis::InitializeGlobal_js_intl_locale_variants() {
+ 
+       SimpleInstallFunction(isolate_, regexp_fun, "escape",
+                             Builtin::kRegExpEscape, 1, kAdapt);
+@@ -5963,34 +6019,23 @@ void Genesis::InitializeGlobal_regexp_linear_flag() {
+   native_context()->set_regexp_prototype_map(regexp_prototype->map());
  }
- #endif  // V8_INTL_SUPPORT
  
 +// Installs context-owned Temporal objects directly on the isolate thread;
 +// temporary handles expire with the enclosing HandleScope. Runs no JS getters.
@@ -346,7 +357,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
  #endif  // V8_TEMPORAL_SUPPORT
  }
  
-@@ -6701,16 +6757,29 @@ void Genesis::InitializeMapCaches() {
+@@ -6537,16 +6582,29 @@ void Genesis::InitializeMapCaches() {
    }
  }
  
@@ -378,7 +389,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
  bool Genesis::InstallSpecialObjects(
      Isolate* isolate, DirectHandle<NativeContext> native_context) {
    HandleScope scope(isolate);
-@@ -6725,7 +6794,9 @@ bool Genesis::InstallSpecialObjects(
+@@ -6561,7 +6619,9 @@ bool Genesis::InstallSpecialObjects(
    }
  
  #if V8_ENABLE_WEBASSEMBLY
@@ -389,7 +400,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
  #endif  // V8_ENABLE_WEBASSEMBLY
  
  #ifdef V8_ENABLE_MEMORY_CORRUPTION_API
-@@ -7116,6 +7187,11 @@ DirectHandle<Map> Genesis::CreateInitialMapForArraySubclass(
+@@ -6952,6 +7012,11 @@ DirectHandle<Map> Genesis::CreateInitialMapForArraySubclass(
    return initial_map;
  }
  
@@ -401,7 +412,7 @@ index a21b8a2eceb..01b3bdf14a3 100644
  Genesis::Genesis(Isolate* isolate,
                   MaybeDirectHandle<JSGlobalProxy> maybe_global_proxy,
                   v8::Local<v8::ObjectTemplate> global_proxy_template,
-@@ -7231,10 +7307,11 @@ Genesis::Genesis(Isolate* isolate,
+@@ -7066,10 +7131,11 @@ Genesis::Genesis(Isolate* isolate,
        isolate, microtask_queue ? static_cast<MicrotaskQueue*>(microtask_queue)
                                 : isolate->default_microtask_queue());
  
@@ -418,10 +429,10 @@ index a21b8a2eceb..01b3bdf14a3 100644
  
      // Store String.prototype's map again in case it has been changed by
 diff --git a/src/objects/contexts.h b/src/objects/contexts.h
-index cc55ce17953..4e4dc568f81 100644
+index bc4b393ef72..a1bc7555376 100644
 --- a/src/objects/contexts.h
 +++ b/src/objects/contexts.h
-@@ -268,6 +268,7 @@ enum ContextLookupFlags {
+@@ -266,6 +266,7 @@ enum ContextLookupFlags {
    V(JS_WEAK_REF_FUNCTION_INDEX, JSFunction, js_weak_ref_fun)                   \
    V(JS_FINALIZATION_REGISTRY_FUNCTION_INDEX, JSFunction,                       \
      js_finalization_registry_fun)                                              \

@@ -1,0 +1,65 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index 098a2a107de..c22c85af6e8 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -3340,14 +3340,14 @@ template("run_mksnapshot") {
+         "--turbo-profiling-input",
+         rebase_path(v8_builtins_profiling_log_file, root_build_dir),
+ 
+-        # Replace this with --warn-about-builtin-profile-data to see the full
+-        # list of builtins with incompatible profiles.
+-        "--abort-on-bad-builtin-profile-data",
++        # Downstream context layout and builtin removals can change graphs.
++        # Keep V8's hash checks: warn and discard incompatible entries while
++        # using the matching entries from Google's unmodified baseline.
++        "--warn-about-builtin-profile-data",
+       ]
+ 
+-      if (!v8_enable_builtins_profiling && v8_enable_builtins_reordering) {
+-        args += [ "--reorder-builtins" ]
+-      }
++      # Deliberate profile exclusions must also be excluded from reordering.
++      # Matching entries still guide branch optimization.
+     }
+ 
+     # This is needed to distinguish between generating code for the simulator
+diff --git a/src/builtins/profile-data-reader.cc b/src/builtins/profile-data-reader.cc
+index ce34a15e6a3..05c008d02ba 100644
+--- a/src/builtins/profile-data-reader.cc
++++ b/src/builtins/profile-data-reader.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "src/builtins/profile-data-reader.h"
+ 
++#include <cstring>
+ #include <fstream>
+ #include <iostream>
+ #include <unordered_map>
+@@ -185,7 +186,27 @@ EnsureInitProfileData() {
+ 
+ }  // namespace
+ 
++// Borrows name through return; a returned profile aliases process-lifetime
++// storage. Excluded builtins return null without retaining caller resources.
+ const ProfileDataFromFile* ProfileDataFromFile::TryRead(const char* name) {
++  // These entries are deliberately excluded even if a later layout happens to
++  // match Google's hash. The downloaded upstream profile remains unchanged.
++  static constexpr const char* excluded[] = {
++      "RunMicrotasks", "AsyncFunctionEnter", "AsyncFunctionAwait",
++      "AsyncGeneratorYieldWithAwait", "AsyncGeneratorReturn",
++      "AsyncGeneratorPrototypeNext", "AsyncGeneratorPrototypeReturn",
++      "AsyncGeneratorAwait", "FulfillPromise", "RejectPromise",
++      "NewPromiseCapability", "PromiseReject", "PromiseConstructor",
++      "PromiseResolve", "PromisePrototypeThen", "CreateTypedArray"};
++  for (const char* builtin : excluded) {
++    if (std::strcmp(name, builtin) == 0) {
++      if (v8_flags.warn_about_builtin_profile_data) {
++        std::cout << "Ignoring builtin PGO for " << name
++                  << " (explicit downstream exclusion)" << std::endl;
++      }
++      return nullptr;
++    }
++  }
+   const auto& data = EnsureInitProfileData();
+   auto it = data.find(name);
+   return it == data.end() ? nullptr : &it->second;

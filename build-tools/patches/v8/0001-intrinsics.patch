@@ -1,8 +1,8 @@
 diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
-index 9105e2cc67e..a21b8a2eceb 100644
+index 18d80db7de2..7d8091954d1 100644
 --- a/src/init/bootstrapper.cc
 +++ b/src/init/bootstrapper.cc
-@@ -605,6 +605,21 @@ V8_NOINLINE Handle<JSFunction> SimpleCreateFunction(Isolate* isolate,
+@@ -604,6 +604,21 @@ V8_NOINLINE Handle<JSFunction> SimpleCreateFunction(Isolate* isolate,
    return fun;
  }
  
@@ -24,7 +24,7 @@ index 9105e2cc67e..a21b8a2eceb 100644
  V8_NOINLINE Handle<JSFunction> InstallFunctionWithBuiltinId(
      Isolate* isolate, DirectHandle<JSObject> base, const char* name,
      Builtin call, int len, AdaptArguments adapt) {
-@@ -612,6 +627,7 @@ V8_NOINLINE Handle<JSFunction> InstallFunctionWithBuiltinId(
+@@ -611,6 +626,7 @@ V8_NOINLINE Handle<JSFunction> InstallFunctionWithBuiltinId(
        isolate->factory()->InternalizeUtf8String(name);
    Handle<JSFunction> fun =
        SimpleCreateFunction(isolate, internalized_name, call, len, adapt);
@@ -32,7 +32,7 @@ index 9105e2cc67e..a21b8a2eceb 100644
    JSObject::AddProperty(isolate, base, internalized_name, fun, DONT_ENUM);
    return fun;
  }
-@@ -624,6 +640,7 @@ V8_NOINLINE Handle<JSFunction> InstallFunctionAtSymbol(
+@@ -623,6 +639,7 @@ V8_NOINLINE Handle<JSFunction> InstallFunctionAtSymbol(
        isolate->factory()->InternalizeUtf8String(symbol_string);
    Handle<JSFunction> fun =
        SimpleCreateFunction(isolate, internalized_symbol, call, len, adapt);
@@ -40,7 +40,7 @@ index 9105e2cc67e..a21b8a2eceb 100644
    JSObject::AddProperty(isolate, base, symbol, fun, attrs);
    return fun;
  }
-@@ -1005,6 +1022,7 @@ Handle<JSFunction> SimpleInstallFunction(Isolate* isolate,
+@@ -961,6 +978,7 @@ Handle<JSFunction> SimpleInstallFunction(Isolate* isolate,
        isolate->factory()->InternalizeUtf8String(name);
    Handle<JSFunction> fun =
        SimpleCreateFunction(isolate, internalized_name, call, len, adapt);
@@ -48,7 +48,7 @@ index 9105e2cc67e..a21b8a2eceb 100644
    JSObject::AddProperty(isolate, base, internalized_name, fun, attrs);
    return fun;
  }
-@@ -1337,6 +1355,9 @@ void Genesis::CreateRoots() {
+@@ -1266,6 +1284,9 @@ void Genesis::CreateRoots() {
    // and the global object, but in order to create those, we need the
    // native context).
    native_context_ = factory()->NewNativeContext();
@@ -59,10 +59,10 @@ index 9105e2cc67e..a21b8a2eceb 100644
    isolate()->heap()->AddToWeakNativeContextList(*native_context());
    isolate()->set_context(*native_context());
 diff --git a/src/objects/contexts.h b/src/objects/contexts.h
-index f07eeee7a68..cc55ce17953 100644
+index 1859939e43f..bc4b393ef72 100644
 --- a/src/objects/contexts.h
 +++ b/src/objects/contexts.h
-@@ -448,6 +448,7 @@ enum ContextLookupFlags {
+@@ -439,6 +439,7 @@ enum ContextLookupFlags {
    V(RETAINED_MAPS, Object, retained_maps)                                      \
    V(SHARED_SPACE_JS_OBJECT_HAS_INSTANCE_INDEX, JSFunction,                     \
      shared_space_js_object_has_instance)                                       \

@@ -1,5 +1,5 @@
 // Copyright 2019-2021 the Deno authors. All rights reserved. MIT license.
-use crate::ArrayBuffer;
+use crate::ArrayBufferBase;
 use crate::Local;
 use crate::PinScope;
 use crate::TypedArray;
@@ -31,21 +31,23 @@ macro_rules! typed_array {
 
       unsafe extern "C" {
         fn [< v8__ $name __New >](
-          buf_ptr: *const ArrayBuffer,
+          buf_ptr: *const ArrayBufferBase,
           byte_offset: usize,
           length: usize,
         ) -> *const $name;
       }
 
       impl $name {
+        /// Borrows the entered scope and buffer; returns a local view in that scope.
+        /// The view retains its backing buffer. A V8 exception returns None.
         #[inline(always)]
         pub fn new<'s>(
           scope: &PinScope<'s, '_>,
-          buf: Local<ArrayBuffer>,
+          buf: impl Into<Local<'s, ArrayBufferBase>>,
           byte_offset: usize,
           length: usize,
         ) -> Option<Local<'s, $name>> {
-          unsafe { scope.cast_local(|_| [< v8__ $name __New >](&*buf, byte_offset, length)) }
+          unsafe { scope.cast_local(|_| [< v8__ $name __New >](&*buf.into(), byte_offset, length)) }
         }
 
         #[doc = concat!("The largest ", stringify!($name), " size that can be constructed using `new`.")]

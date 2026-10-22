@@ -1,9 +1,12 @@
 # Rust `v8` crate on libv8_zig.a
 
 `rusty_v8` is a vendored fork of [denoland/rusty_v8](https://github.com/denoland/rusty_v8)
-(v152.2.0, V8 15.2.124.1) that links the same `libv8_zig.a` as the Zig modules, so both
+(local version 158.0.0, V8 15.8.30) that links the same `libv8_zig.a` as the Zig modules, so both
 languages share one V8 build, one process-wide platform and the same hardened intrinsics.
 It never downloads or builds V8.
+The lazy `rusty_v8` dependency in `build.zig.zon` is only the upstream 152.2.0
+porting checklist used by `check-bindings`; it does not select the runtime or
+replace this vendored 158.0.0 fork.
 
 ```sh
 zig build rusty                                   # cargo build --release
@@ -56,7 +59,7 @@ Command Line Tools).
 
 ## Toolchain pin and LTO
 
-`rust-toolchain.toml` pins Rust 1.99 (LLVM 23.1.1; V8's bundled clang is LLVM 23.0.0git). V8 is
+`rust-toolchain.toml` pins Rust 1.99 (LLVM 23.1.1; V8's bundled clang is LLVM 24.0.0git). V8 is
 built with `-fsplit-lto-unit`, which the cross-language link needs on the Rust side too, so the
 script passes `-Zsplit-lto-unit` with `RUSTC_BOOTSTRAP=1`.
 

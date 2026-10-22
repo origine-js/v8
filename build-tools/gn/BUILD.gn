@@ -18,6 +18,10 @@ static_library("v8_zig") {
     "//:v8",
     "//:v8_libbase",
     "//:v8_libplatform",
+    # The shim and compressed-data provider call ICU directly. V8's internal
+    # dependency no longer propagates ICU's include configuration to embedders.
+    "//third_party/icu:icu",
+    "//third_party/fp16",
   ]
   configs -= [
     "//build/config/compiler:default_init_stack_vars",
@@ -39,6 +43,7 @@ config("v8_zig_config") {
   include_dirs = [
     "v8",
     "$target_gen_dir/v8",
+    "//third_party/simdutf",
   ]
 
   if (is_debug) {

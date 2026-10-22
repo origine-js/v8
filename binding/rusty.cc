@@ -179,7 +179,8 @@ const v8::Value* v8__Module__GetModuleNamespace2(const v8::Module& self,
   return local_to_ptr(ptr_to_local(&self)->GetModuleNamespace(phase));
 }
 
-const v8::Value* v8__Module__EvaluateForImportDefer(
+// Borrows entered-context locals; returns a promise local or null with a pending exception.
+const v8::Promise* v8__Module__EvaluateForImportDefer(
     const v8::Module& self, const v8::Context& context) {
   return maybe_local_to_ptr(
       ptr_to_local(&self)->EvaluateForImportDefer(ptr_to_local(&context)));
@@ -668,8 +669,7 @@ v8::CppHeap* v8__CppHeap__Create(v8::Platform* platform,
   return heap.release();
 }
 
-void v8__CppHeap__Terminate(v8::CppHeap* cpp_heap) { cpp_heap->Terminate(); }
-
+// Consumes the heap after all borrowed handles are released; destruction terminates it.
 void v8__CppHeap__DELETE(v8::CppHeap* self) { delete self; }
 
 void cppgc__heap__enable_detached_garbage_collections_for_testing(
@@ -684,15 +684,18 @@ void cppgc__heap__collect_garbage_for_testing(
 
 class alignas(16) RustObjButAlign16 : public RustObj {};
 
+// Borrows heap for allocation and returns a GC-owned object. Caller must root
+// the result before a GC safepoint. Oversized or unsupported alignments return null.
 RustObj* cppgc__make_garbage_collectable(v8::CppHeap* heap, size_t size,
                                          size_t alignment) {
+  if (size > UINT32_MAX) return nullptr;
   if (alignment <= 8) {
     return cppgc::MakeGarbageCollected<RustObj>(heap->GetAllocationHandle(),
-                                                cppgc::AdditionalBytes(size));
+                                                cppgc::AdditionalBytes(static_cast<uint32_t>(size)));
   }
   if (alignment <= 16) {
     return cppgc::MakeGarbageCollected<RustObjButAlign16>(
-        heap->GetAllocationHandle(), cppgc::AdditionalBytes(size));
+        heap->GetAllocationHandle(), cppgc::AdditionalBytes(static_cast<uint32_t>(size)));
   }
   return nullptr;
 }

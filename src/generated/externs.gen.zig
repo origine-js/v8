@@ -90,6 +90,7 @@ fn Ptr(comptime raw_name: []const u8, comptime is_const: bool) type {
 pub const types = struct {
     pub const Array = opaque {};
     pub const ArrayBuffer = opaque {};
+    pub const ArrayBufferBase = opaque {};
     pub const ArrayBufferView = opaque {};
     pub const ArrayBuffer_Allocator = opaque {};
     pub const BackingStore = opaque {};
@@ -148,7 +149,6 @@ pub const types = struct {
     pub const PropertyCallbackInfo_Boolean = opaque {};
     pub const PropertyCallbackInfo_Integer = opaque {};
     pub const PropertyCallbackInfo_Value = opaque {};
-    pub const PropertyCallbackInfo_void = opaque {};
     pub const PropertyDescriptor = opaque {};
     pub const Proxy = opaque {};
     pub const RegExp = opaque {};
@@ -1124,8 +1124,8 @@ pub extern fn v8__ObjectTemplate__InternalFieldCount(self: Ref("ObjectTemplate")
 /// void (const v8::ObjectTemplate &, int)
 pub extern fn v8__ObjectTemplate__SetInternalFieldCount(self: Ref("ObjectTemplate"), value: c_int) void;
 
-/// void (const v8::ObjectTemplate &, const v8::Name &, v8::AccessorNameGetterCallback, v8::AccessorNameSetterCallback, const v8::Value *, v8::PropertyAttribute)
-pub extern fn v8__ObjectTemplate__SetNativeDataProperty(self: Ref("ObjectTemplate"), key: Ref("Name"), getter: Named("AccessorNameGetterCallback", ?*const fn (Ref("Name"), Ref("PropertyCallbackInfo_Value")) callconv(.c) void), setter: Named("AccessorNameSetterCallback", ?*const fn (Ref("Name"), Ref("Value"), Ref("PropertyCallbackInfo_void")) callconv(.c) void), data_or_null: Ptr("Value", true), attr: Named("PropertyAttribute", u32)) void;
+/// void (const v8::ObjectTemplate &, const v8::Name &, v8::AccessorNameGetterCallback, v8::AccessorNameSetterCallbackV2, const v8::Value *, v8::PropertyAttribute)
+pub extern fn v8__ObjectTemplate__SetNativeDataProperty(self: Ref("ObjectTemplate"), key: Ref("Name"), getter: Named("AccessorNameGetterCallback", ?*const fn (Ref("Name"), Ref("PropertyCallbackInfo_Value")) callconv(.c) void), setter: Named("AccessorNameSetterCallbackV2", ?*const fn (Ref("Name"), Ref("Value"), Ref("PropertyCallbackInfo_Boolean")) callconv(.c) void), data_or_null: Ptr("Value", true), attr: Named("PropertyAttribute", u32)) void;
 
 /// void (const v8::ObjectTemplate &, v8::NamedPropertyGetterCallback, v8::NamedPropertySetterCallbackV2, v8::NamedPropertyQueryCallback, v8::NamedPropertyDeleterCallback, v8::NamedPropertyEnumeratorCallback, v8::NamedPropertyDefinerCallbackV2, v8::NamedPropertyDescriptorCallback, const v8::Value *, v8::PropertyHandlerFlags)
 pub extern fn v8__ObjectTemplate__SetNamedPropertyHandler(self: Ref("ObjectTemplate"), getter: Named("NamedPropertyGetterCallback", ?*const anyopaque), setter: Named("NamedPropertySetterCallbackV2", ?*const anyopaque), query: Named("NamedPropertyQueryCallback", ?*const anyopaque), deleter: Named("NamedPropertyDeleterCallback", ?*const anyopaque), enumerator: Named("NamedPropertyEnumeratorCallback", ?*const fn (Ref("PropertyCallbackInfo_Array")) callconv(.c) void), definer: Named("NamedPropertyDefinerCallbackV2", ?*const anyopaque), descriptor: Named("NamedPropertyDescriptorCallback", ?*const anyopaque), data_or_null: Ptr("Value", true), flags: Named("PropertyHandlerFlags", i32)) void;
@@ -1196,8 +1196,8 @@ pub extern fn v8__Object__DefineOwnProperty(self: Ref("Object"), context: Ref("C
 /// MaybeBool (const v8::Object &, const v8::Context &, const v8::Name &, v8::PropertyDescriptor &)
 pub extern fn v8__Object__DefineProperty(self: Ref("Object"), context: Ref("Context"), key: Ref("Name"), desc: Ref("PropertyDescriptor")) v8.support.MaybeBool;
 
-/// MaybeBool (const v8::Object &, const v8::Context &, const v8::Name &, v8::AccessorNameGetterCallback, v8::AccessorNameSetterCallback, const v8::Value *, v8::PropertyAttribute)
-pub extern fn v8__Object__SetAccessor(self: Ref("Object"), context: Ref("Context"), key: Ref("Name"), getter: Named("AccessorNameGetterCallback", ?*const fn (Ref("Name"), Ref("PropertyCallbackInfo_Value")) callconv(.c) void), setter: Named("AccessorNameSetterCallback", ?*const fn (Ref("Name"), Ref("Value"), Ref("PropertyCallbackInfo_void")) callconv(.c) void), data_or_null: Ptr("Value", true), attr: Named("PropertyAttribute", u32)) v8.support.MaybeBool;
+/// MaybeBool (const v8::Object &, const v8::Context &, const v8::Name &, v8::AccessorNameGetterCallback, v8::AccessorNameSetterCallbackV2, const v8::Value *, v8::PropertyAttribute)
+pub extern fn v8__Object__SetAccessor(self: Ref("Object"), context: Ref("Context"), key: Ref("Name"), getter: Named("AccessorNameGetterCallback", ?*const fn (Ref("Name"), Ref("PropertyCallbackInfo_Value")) callconv(.c) void), setter: Named("AccessorNameSetterCallbackV2", ?*const fn (Ref("Name"), Ref("Value"), Ref("PropertyCallbackInfo_Boolean")) callconv(.c) void), data_or_null: Ptr("Value", true), attr: Named("PropertyAttribute", u32)) v8.support.MaybeBool;
 
 /// int (const v8::Object &)
 pub extern fn v8__Object__GetIdentityHash(self: Ref("Object")) c_int;
@@ -1376,8 +1376,17 @@ pub extern fn v8__BigInt__WordCount(self: Ref("BigInt")) c_int;
 /// void (const v8::BigInt &, int *, int *, uint64_t *)
 pub extern fn v8__BigInt__ToWordsArray(self: Ref("BigInt"), sign_bit: ?*c_int, word_count: ?*c_int, words: ?*u64) void;
 
-/// const v8::ArrayBuffer *(const v8::ArrayBufferView &)
-pub extern fn v8__ArrayBufferView__Buffer(self: Ref("ArrayBufferView")) Ptr("ArrayBuffer", true);
+/// size_t (const v8::ArrayBufferBase &)
+pub extern fn v8__ArrayBufferBase__ByteLength(self: Ref("ArrayBufferBase")) usize;
+
+/// void *(const v8::ArrayBufferBase &)
+pub extern fn v8__ArrayBufferBase__Data(self: Ref("ArrayBufferBase")) ?*anyopaque;
+
+/// two_pointers_t (const v8::ArrayBufferBase &)
+pub extern fn v8__ArrayBufferBase__GetBackingStore(self: Ref("ArrayBufferBase")) support.TwoPointers;
+
+/// const v8::ArrayBufferBase *(const v8::ArrayBufferView &)
+pub extern fn v8__ArrayBufferView__Buffer(self: Ref("ArrayBufferView")) Ptr("ArrayBufferBase", true);
 
 /// const void *(const v8::ArrayBufferView &)
 pub extern fn v8__ArrayBufferView__Buffer__Data(self: Ref("ArrayBufferView")) ?*const anyopaque;
@@ -1415,8 +1424,8 @@ pub extern fn v8__ArrayBuffer__New__with_backing_store(isolate: Ptr("Isolate", f
 /// size_t (const v8::ArrayBuffer &)
 pub extern fn v8__ArrayBuffer__ByteLength(self: Ref("ArrayBuffer")) usize;
 
-/// const v8::DataView *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__DataView__New(ab: Ref("ArrayBuffer"), offset: usize, length: usize) Ptr("DataView", true);
+/// const v8::DataView *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__DataView__New(ab: Ref("ArrayBufferBase"), offset: usize, length: usize) Ptr("DataView", true);
 
 /// const v8::Context *(v8::Isolate *, const v8::ObjectTemplate *, const v8::Value *, v8::MicrotaskQueue *)
 pub extern fn v8__Context__New(isolate: Ptr("Isolate", false), templ: Ptr("ObjectTemplate", true), global_object: Ptr("Value", true), microtask_queue: Ptr("MicrotaskQueue", false)) Ptr("Context", true);
@@ -1487,11 +1496,11 @@ pub extern fn v8__Context__SetMicrotaskQueue(self: Ref("Context"), microtask_que
 /// const v8::Context *(v8::Isolate *, size_t, v8::Value *, v8::MicrotaskQueue *)
 pub extern fn v8__Context__FromSnapshot(isolate: Ptr("Isolate", false), context_snapshot_index: usize, global_object: Ptr("Value", false), microtask_queue: Ptr("MicrotaskQueue", false)) Ptr("Context", true);
 
-/// void (v8::Isolate *, const v8::Value *)
-pub extern fn v8__Context__SetContinuationPreservedEmbedderData(isolate: Ptr("Isolate", false), data: Ptr("Value", true)) void;
+/// void (v8::Isolate *, const v8::Data *)
+pub extern fn v8__Context__SetContinuationPreservedEmbedderData(isolate: Ptr("Isolate", false), data: Ptr("Data", true)) void;
 
-/// const v8::Value *(v8::Isolate *)
-pub extern fn v8__Context__GetContinuationPreservedEmbedderData(isolate: Ptr("Isolate", false)) Ptr("Value", true);
+/// const v8::Data *(v8::Isolate *)
+pub extern fn v8__Context__GetContinuationPreservedEmbedderData(isolate: Ptr("Isolate", false)) Ptr("Data", true);
 
 /// MicrotaskQueueHandle *(v8::Isolate *, v8::MicrotasksPolicy)
 pub extern fn v8__MicrotaskQueueHandle__New(isolate: Ptr("Isolate", false), policy: Named("MicrotasksPolicy", i32)) Ptr("MicrotaskQueueHandle", false);
@@ -1811,41 +1820,41 @@ pub extern fn v8__AllowJavascriptExecutionScope__CONSTRUCT(buf: Ptr("uninit_t_Is
 /// void (v8::Isolate::AllowJavascriptExecutionScope *)
 pub extern fn v8__AllowJavascriptExecutionScope__DESTRUCT(self: Ptr("Isolate_AllowJavascriptExecutionScope", false)) void;
 
-/// const v8::Uint8Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Uint8Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Uint8Array", true);
+/// const v8::Uint8Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Uint8Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Uint8Array", true);
 
-/// const v8::Uint8ClampedArray *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Uint8ClampedArray__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Uint8ClampedArray", true);
+/// const v8::Uint8ClampedArray *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Uint8ClampedArray__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Uint8ClampedArray", true);
 
-/// const v8::Int8Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Int8Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Int8Array", true);
+/// const v8::Int8Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Int8Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Int8Array", true);
 
-/// const v8::Uint16Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Uint16Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Uint16Array", true);
+/// const v8::Uint16Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Uint16Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Uint16Array", true);
 
-/// const v8::Int16Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Int16Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Int16Array", true);
+/// const v8::Int16Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Int16Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Int16Array", true);
 
-/// const v8::Uint32Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Uint32Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Uint32Array", true);
+/// const v8::Uint32Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Uint32Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Uint32Array", true);
 
-/// const v8::Int32Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Int32Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Int32Array", true);
+/// const v8::Int32Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Int32Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Int32Array", true);
 
-/// const v8::Float16Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Float16Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Float16Array", true);
+/// const v8::Float16Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Float16Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Float16Array", true);
 
-/// const v8::Float32Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Float32Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Float32Array", true);
+/// const v8::Float32Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Float32Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Float32Array", true);
 
-/// const v8::Float64Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__Float64Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("Float64Array", true);
+/// const v8::Float64Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__Float64Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("Float64Array", true);
 
-/// const v8::BigUint64Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__BigUint64Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("BigUint64Array", true);
+/// const v8::BigUint64Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__BigUint64Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("BigUint64Array", true);
 
-/// const v8::BigInt64Array *(const v8::ArrayBuffer &, size_t, size_t)
-pub extern fn v8__BigInt64Array__New(buf_ptr: Ref("ArrayBuffer"), byte_offset: usize, length: usize) Ptr("BigInt64Array", true);
+/// const v8::BigInt64Array *(const v8::ArrayBufferBase &, size_t, size_t)
+pub extern fn v8__BigInt64Array__New(buf_ptr: Ref("ArrayBufferBase"), byte_offset: usize, length: usize) Ptr("BigInt64Array", true);
 
 /// const v8::Script *(const v8::Context &, const v8::String &, const v8::ScriptOrigin *)
 pub extern fn v8__Script__Compile(context: Ref("Context"), source: Ref("String"), origin: Ptr("ScriptOrigin", true)) Ptr("Script", true);
@@ -2072,8 +2081,8 @@ pub extern fn v8__Module__ScriptId(self: Ref("Module")) c_int;
 /// MaybeBool (const v8::Module &, const v8::Context &, v8::Module::ResolveModuleCallback, v8::Module::ResolveSourceCallback)
 pub extern fn v8__Module__InstantiateModule(self: Ref("Module"), context: Ref("Context"), cb: Named("Module_ResolveModuleCallback", ?*const fn (Ref("Context"), Ref("String"), Ref("FixedArray"), Ref("Module")) callconv(.c) v8.MaybeHandle), source_callback: Named("Module_ResolveSourceCallback", ?*const fn (Ref("Context"), Ref("String"), Ref("FixedArray"), Ref("Module")) callconv(.c) v8.MaybeHandle)) v8.support.MaybeBool;
 
-/// const v8::Value *(const v8::Module &, const v8::Context &)
-pub extern fn v8__Module__Evaluate(self: Ref("Module"), context: Ref("Context")) Ptr("Value", true);
+/// const v8::Promise *(const v8::Module &, const v8::Context &)
+pub extern fn v8__Module__Evaluate(self: Ref("Module"), context: Ref("Context")) Ptr("Promise", true);
 
 /// bool (const v8::Module &)
 pub extern fn v8__Module__IsGraphAsync(self: Ref("Module")) bool;
@@ -2126,8 +2135,8 @@ pub extern fn v8__WasmStreaming__Abort(self: Ptr("WasmStreamingSharedPtr", false
 /// void (WasmStreamingSharedPtr *, const char *, size_t)
 pub extern fn v8__WasmStreaming__SetUrl(self: Ptr("WasmStreamingSharedPtr", false), url: ?[*]const u8, len: usize) void;
 
-/// const v8::ArrayBuffer *(const v8::WasmMemoryObject &)
-pub extern fn v8__WasmMemoryObject__Buffer(self: Ref("WasmMemoryObject")) Ptr("ArrayBuffer", true);
+/// const v8::ArrayBufferBase *(const v8::WasmMemoryObject &)
+pub extern fn v8__WasmMemoryObject__Buffer(self: Ref("WasmMemoryObject")) Ptr("ArrayBufferBase", true);
 
 /// void (v8::Isolate *, HeapSnapshotCallback, void *)
 pub extern fn v8__HeapProfiler__TakeHeapSnapshot(isolate: Ptr("Isolate", false), callback: Named("HeapSnapshotCallback", ?*const fn (?*anyopaque, ?[*]const u8, usize) callconv(.c) bool), arg: ?*anyopaque) void;

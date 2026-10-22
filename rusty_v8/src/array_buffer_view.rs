@@ -1,4 +1,4 @@
-use crate::ArrayBuffer;
+use crate::ArrayBufferBase;
 use crate::ArrayBufferView;
 use crate::BackingStore;
 use crate::Local;
@@ -13,7 +13,7 @@ use std::mem::MaybeUninit;
 unsafe extern "C" {
   fn v8__ArrayBufferView__Buffer(
     this: *const ArrayBufferView,
-  ) -> *const ArrayBuffer;
+  ) -> *const ArrayBufferBase;
   fn v8__ArrayBufferView__Buffer__Data(
     this: *const ArrayBufferView,
   ) -> *mut c_void;
@@ -32,23 +32,23 @@ unsafe extern "C" {
 }
 
 impl ArrayBufferView {
-  /// Returns underlying ArrayBuffer.
+  /// Returns underlying ArrayBufferBase.
   #[inline(always)]
   pub fn buffer<'s>(
     &self,
     scope: &PinScope<'s, '_, ()>,
-  ) -> Option<Local<'s, ArrayBuffer>> {
+  ) -> Option<Local<'s, ArrayBufferBase>> {
     unsafe { scope.cast_local(|_| v8__ArrayBufferView__Buffer(self)) }
   }
 
-  /// Returns true if ArrayBufferView's backing ArrayBuffer has already been allocated.
+  /// Returns true if ArrayBufferView's backing ArrayBufferBase has already been allocated.
   pub fn has_buffer(&self) -> bool {
     unsafe { v8__ArrayBufferView__HasBuffer(self) }
   }
 
   /// Get a shared pointer to the backing store of this array buffer. This
   /// pointer coordinates the lifetime management of the internal storage
-  /// with any live ArrayBuffers on the heap, even across isolates. The embedder
+  /// with any live ArrayBufferBases on the heap, even across isolates. The embedder
   /// should not attempt to manage lifetime of the storage through other means.
   #[inline(always)]
   pub fn get_backing_store(&self) -> Option<SharedRef<BackingStore>> {

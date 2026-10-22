@@ -1,8 +1,8 @@
 diff --git a/BUILD.bazel b/BUILD.bazel
-index 83396f2cb7a..a6c25b6f30c 100644
+index 49c841759ba..ea75a827141 100644
 --- a/BUILD.bazel
 +++ b/BUILD.bazel
-@@ -3939,7 +3939,6 @@ filegroup(
+@@ -4003,7 +4003,6 @@ filegroup(
          "src/builtins/builtins-constructor-gen.h",
          "src/builtins/builtins-conversion-gen.cc",
          "src/builtins/builtins-data-view-gen.h",
@@ -11,10 +11,10 @@ index 83396f2cb7a..a6c25b6f30c 100644
          "src/builtins/builtins-global-gen.cc",
          "src/builtins/builtins-handler-gen.cc",
 diff --git a/BUILD.gn b/BUILD.gn
-index 39f578a9c8e..df9e523be14 100644
+index 0e0277b6bc6..098a2a107de 100644
 --- a/BUILD.gn
 +++ b/BUILD.gn
-@@ -3340,7 +3340,6 @@ v8_cluster_source_set("v8_initializers") {
+@@ -3811,7 +3811,6 @@ v8_cluster_source_set("v8_initializers") {
      "src/builtins/builtins-constructor.h",
      "src/builtins/builtins-conversion-gen.cc",
      "src/builtins/builtins-data-view-gen.h",
@@ -24,10 +24,10 @@ index 39f578a9c8e..df9e523be14 100644
      "src/builtins/builtins-handler-gen.cc",
 diff --git a/src/builtins/builtins-date-gen.cc b/src/builtins/builtins-date-gen.cc
 deleted file mode 100644
-index 37125aac607..00000000000
+index 2c15fa4792a..00000000000
 --- a/src/builtins/builtins-date-gen.cc
 +++ /dev/null
-@@ -1,284 +0,0 @@
+@@ -1,299 +0,0 @@
 -// Copyright 2017 the V8 project authors. All rights reserved.
 -// Use of this source code is governed by a BSD-style license that can be
 -// found in the LICENSE file.
@@ -35,6 +35,7 @@ index 37125aac607..00000000000
 -#include "src/builtins/builtins-inl.h"
 -#include "src/builtins/builtins-utils-gen.h"
 -#include "src/codegen/code-stub-assembler-inl.h"
+-#include "src/date/date.h"
 -#include "src/objects/dictionary.h"
 -
 -namespace v8 {
@@ -102,6 +103,20 @@ index 37125aac607..00000000000
 -                    std::make_pair(MachineType::Pointer(), isolate_ptr),
 -                    std::make_pair(MachineType::AnyTagged(), date_receiver),
 -                    std::make_pair(MachineType::AnyTagged(), field_index_smi)));
+-  if (field_index == JSDate::kTimezoneOffset) {
+-    // The offset comes back in milliseconds because the C function runs under
+-    // DisallowGarbageCollection and cannot allocate the HeapNumber that a
+-    // fractional-minute offset needs. Divide here instead. The cached path
+-    // above would skip this, so the field must be uncached.
+-    static_assert(JSDate::kTimezoneOffset >= JSDate::kFirstUncachedField);
+-    Label if_nan(this, Label::kDeferred);
+-    GotoIfNot(TaggedIsSmi(result), &if_nan);
+-    TNode<Smi> offset_ms = CAST(result);
+-    Return(ChangeFloat64ToTagged(Float64Div(
+-        SmiToFloat64(offset_ms),
+-        Float64Constant(static_cast<double>(DateCache::kMsPerMin)))));
+-    BIND(&if_nan);
+-  }
 -  Return(result);
 -}
 -
@@ -313,10 +328,10 @@ index 37125aac607..00000000000
 -}  // namespace internal
 -}  // namespace v8
 diff --git a/src/builtins/builtins-date.cc b/src/builtins/builtins-date.cc
-index c3a507a72da..a76d82d9ec9 100644
+index d4aa971e51f..c556fa150d8 100644
 --- a/src/builtins/builtins-date.cc
 +++ b/src/builtins/builtins-date.cc
-@@ -26,34 +26,6 @@ namespace internal {
+@@ -27,34 +27,6 @@ namespace internal {
  // -----------------------------------------------------------------------------
  // ES6 section 20.3 Date Objects
  
@@ -351,7 +366,7 @@ index c3a507a72da..a76d82d9ec9 100644
  // https://tc39.es/ecma262/#sec-date-constructor
  // zig-v8: Date objects cannot be created or called; only Date.now remains.
  BUILTIN(DateConstructor) {
-@@ -69,798 +41,5 @@ BUILTIN(DateNow) {
+@@ -70,798 +42,5 @@ BUILTIN(DateNow) {
        JSDate::CurrentTimeValue(isolate));
  }
  
@@ -1151,10 +1166,10 @@ index c3a507a72da..a76d82d9ec9 100644
  }  // namespace internal
  }  // namespace v8
 diff --git a/src/builtins/builtins-definitions.h b/src/builtins/builtins-definitions.h
-index 8ec77ac91f1..ceb026172d0 100644
+index 15deb6571c0..d3ddfe83cd3 100644
 --- a/src/builtins/builtins-definitions.h
 +++ b/src/builtins/builtins-definitions.h
-@@ -693,52 +693,7 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
+@@ -725,52 +725,7 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
                                                                                 \
    /* Date */                                                                   \
    CPP(DateConstructor, kDontAdaptArgumentsSentinel)                            \
@@ -1207,7 +1222,9 @@ index 8ec77ac91f1..ceb026172d0 100644
                                                                                 \
    /* DisposabeStack*/                                                          \
    CPP(DisposableStackConstructor, kDontAdaptArgumentsSentinel)                 \
-@@ -1864,7 +1819,5 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
+@@ -1900,9 +1855,7 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
+   CPP(TemporalPlainMonthDayPrototypeToLocaleString,                            \
+       kDontAdaptArgumentsSentinel)                                             \
    CPP(TemporalPlainMonthDayPrototypeValueOf, kDontAdaptArgumentsSentinel)      \
 -  CPP(TemporalPlainMonthDayPrototypeToPlainDate, kDontAdaptArgumentsSentinel)  \
 -                                                                               \
@@ -1216,7 +1233,7 @@ index 8ec77ac91f1..ceb026172d0 100644
  #else  // V8_TEMPORAL_SUPPORT
  #define BUILTIN_LIST_TEMPORAL(CPP, TFJ)
  #endif  // V8_TEMPORAL_SUPPORT
-@@ -1876,9 +1830,6 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
+@@ -1914,9 +1867,6 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
    CPP(CollatorPrototypeCompare, kDontAdaptArgumentsSentinel)                   \
    CPP(CollatorSupportedLocalesOf, kDontAdaptArgumentsSentinel)                 \
    CPP(CollatorPrototypeResolvedOptions, kDontAdaptArgumentsSentinel)           \
@@ -1227,10 +1244,10 @@ index 8ec77ac91f1..ceb026172d0 100644
    CPP(DateTimeFormatInternalFormat, JSParameterCount(1))                       \
    CPP(DateTimeFormatPrototypeFormat, kDontAdaptArgumentsSentinel)              \
 diff --git a/src/compiler/js-call-reducer.cc b/src/compiler/js-call-reducer.cc
-index e8707261d3e..ce2486d2bf8 100644
+index 2fa7a3d2266..7008eb5f95a 100644
 --- a/src/compiler/js-call-reducer.cc
 +++ b/src/compiler/js-call-reducer.cc
-@@ -5552,20 +5552,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
+@@ -5575,20 +5575,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
        return ReduceDataViewAccess(node, DataViewAccess::kSet,
                                    ExternalArrayType::kExternalBigUint64Array);
  
@@ -1251,7 +1268,7 @@ index e8707261d3e..ce2486d2bf8 100644
  
      case Builtin::kTypedArrayPrototypeByteLength:
        return ReduceArrayBufferViewByteLengthAccessor(node, JS_TYPED_ARRAY_TYPE,
-@@ -5755,8 +5741,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
+@@ -5778,8 +5764,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
        return ReduceCollectionIteratorPrototypeNext(
            node, OrderedHashSet::kEntrySize, factory()->empty_ordered_hash_set(),
            FIRST_JS_SET_ITERATOR_TYPE, LAST_JS_SET_ITERATOR_TYPE);
@@ -1260,7 +1277,7 @@ index e8707261d3e..ce2486d2bf8 100644
      case Builtin::kDateNow:
        return ReduceDateNow(node);
      case Builtin::kNumberConstructor:
-@@ -9541,63 +9525,6 @@ Reduction JSCallReducer::ReduceGlobalIsNaN(Node* node) {
+@@ -9605,63 +9589,6 @@ Reduction JSCallReducer::ReduceGlobalIsNaN(Node* node) {
    return Replace(value);
  }
  
@@ -1338,10 +1355,10 @@ index 0d4d10d6dc6..277fdcff6f8 100644
    Reduction ReduceDateNow(Node* node);
    Reduction ReduceNumberParseInt(Node* node);
 diff --git a/src/compiler/turbofan-typer.cc b/src/compiler/turbofan-typer.cc
-index 16fa4b6c443..e21884e4da1 100644
+index c28030ad0cb..a8e48bbfedf 100644
 --- a/src/compiler/turbofan-typer.cc
 +++ b/src/compiler/turbofan-typer.cc
-@@ -1909,25 +1909,6 @@ Type Typer::Visitor::JSCallTyper(Type fun, Typer* t) {
+@@ -1912,25 +1912,6 @@ Type Typer::Visitor::JSCallTyper(Type fun, Typer* t) {
      // Date functions.
      case Builtin::kDateNow:
        return t->cache_->kTimeValueType;
@@ -1368,10 +1385,10 @@ index 16fa4b6c443..e21884e4da1 100644
      // Symbol functions.
      case Builtin::kSymbolConstructor:
 diff --git a/src/debug/debug-evaluate.cc b/src/debug/debug-evaluate.cc
-index d14f6806a01..5b62fb0a88a 100644
+index a214355212e..16f2424864a 100644
 --- a/src/debug/debug-evaluate.cc
 +++ b/src/debug/debug-evaluate.cc
-@@ -665,39 +665,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
+@@ -702,39 +702,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
      // Date builtins.
      case Builtin::kDateConstructor:
      case Builtin::kDateNow:
@@ -1411,7 +1428,7 @@ index d14f6806a01..5b62fb0a88a 100644
      // DisposableStack builtins.
      case Builtin::kDisposableStackConstructor:
      case Builtin::kDisposableStackPrototypeGetDisposed:
-@@ -1004,23 +971,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
+@@ -1039,23 +1006,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
      case Builtin::kMapPrototypeClear:
      case Builtin::kMapPrototypeDelete:
      case Builtin::kMapPrototypeSet:
@@ -1435,7 +1452,7 @@ index d14f6806a01..5b62fb0a88a 100644
      // DisposableStack builtins.
      case Builtin::kDisposableStackPrototypeUse:
      case Builtin::kDisposableStackPrototypeDispose:
-@@ -1294,7 +1244,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
+@@ -1329,7 +1279,6 @@ DebugInfo::SideEffectState BuiltinGetSideEffectState(Builtin id) {
      case Builtin::kTemporalPlainMonthDayPrototypeToLocaleString:
      case Builtin::kTemporalPlainMonthDayPrototypeValueOf:
      case Builtin::kTemporalPlainMonthDayPrototypeToPlainDate:
@@ -1444,10 +1461,10 @@ index d14f6806a01..5b62fb0a88a 100644
  #endif  // V8_TEMPORAL_SUPPORT
  
 diff --git a/src/maglev/maglev-ir.h b/src/maglev/maglev-ir.h
-index 58f997a9b67..06b48363b0f 100644
+index fb5a0f93233..d750ed25983 100644
 --- a/src/maglev/maglev-ir.h
 +++ b/src/maglev/maglev-ir.h
-@@ -10443,7 +10443,6 @@ class CallBuiltin : public VarargsValueNodeT<0, CallBuiltin> {
+@@ -10428,7 +10428,6 @@ class CallBuiltin : public VarargsValueNodeT<0, CallBuiltin> {
    }
  
  #define BUILTIN_RETURN_TYPE_MAP(V)                                       \
@@ -1456,10 +1473,10 @@ index 58f997a9b67..06b48363b0f 100644
    V(MathFloor, NodeType::kNumber)                                        \
    V(MathCeil, NodeType::kNumber)                                         \
 diff --git a/src/maglev/maglev-reducer-inl.h b/src/maglev/maglev-reducer-inl.h
-index 7e3cb806030..74d797767a0 100644
+index 4bb1704d2ae..30691771b60 100644
 --- a/src/maglev/maglev-reducer-inl.h
 +++ b/src/maglev/maglev-reducer-inl.h
-@@ -5129,122 +5129,6 @@ IEEE_754_UNARY_LIST(MATH_UNARY_IEEE_BUILTIN_REDUCER)
+@@ -5566,122 +5566,6 @@ IEEE_754_UNARY_LIST(MATH_UNARY_IEEE_BUILTIN_REDUCER)
  IEEE_754_BINARY_LIST(MATH_BINARY_IEEE_BUILTIN_REDUCER)
  #undef MATH_BINARY_IEEE_BUILTIN_REDUCER
  
@@ -1533,7 +1550,7 @@ index 7e3cb806030..74d797767a0 100644
 -
 -template <typename BaseT>
 -MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetTime(
--    compiler::JSFunctionRef target, CallArguments& args) {
+-    ValueNode* context, compiler::JSFunctionRef target, CallArguments& args) {
 -  auto prologue_result = TryReduceDatePrototypeGetFieldPrologue(target, args);
 -  if (!prologue_result.IsDoneWithoutPayload()) return prologue_result;
 -
@@ -1545,37 +1562,37 @@ index 7e3cb806030..74d797767a0 100644
 -
 -template <typename BaseT>
 -MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetFullYear(
--    compiler::JSFunctionRef target, CallArguments& args) {
+-    ValueNode* context, compiler::JSFunctionRef target, CallArguments& args) {
 -  return TryReduceDatePrototypeGetField(target, args, JSDate::kYear);
 -}
 -template <typename BaseT>
 -MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetMonth(
--    compiler::JSFunctionRef target, CallArguments& args) {
+-    ValueNode* context, compiler::JSFunctionRef target, CallArguments& args) {
 -  return TryReduceDatePrototypeGetField(target, args, JSDate::kMonth);
 -}
 -template <typename BaseT>
 -MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetDate(
--    compiler::JSFunctionRef target, CallArguments& args) {
+-    ValueNode* context, compiler::JSFunctionRef target, CallArguments& args) {
 -  return TryReduceDatePrototypeGetField(target, args, JSDate::kDay);
 -}
 -template <typename BaseT>
 -MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetDay(
--    compiler::JSFunctionRef target, CallArguments& args) {
+-    ValueNode* context, compiler::JSFunctionRef target, CallArguments& args) {
 -  return TryReduceDatePrototypeGetField(target, args, JSDate::kWeekday);
 -}
 -template <typename BaseT>
 -MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetHours(
--    compiler::JSFunctionRef target, CallArguments& args) {
+-    ValueNode* context, compiler::JSFunctionRef target, CallArguments& args) {
 -  return TryReduceDatePrototypeGetField(target, args, JSDate::kHour);
 -}
 -template <typename BaseT>
 -MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetMinutes(
--    compiler::JSFunctionRef target, CallArguments& args) {
+-    ValueNode* context, compiler::JSFunctionRef target, CallArguments& args) {
 -  return TryReduceDatePrototypeGetField(target, args, JSDate::kMinute);
 -}
 -template <typename BaseT>
 -MaybeReduceResult MaglevReducer<BaseT>::TryReduceDatePrototypeGetSeconds(
--    compiler::JSFunctionRef target, CallArguments& args) {
+-    ValueNode* context, compiler::JSFunctionRef target, CallArguments& args) {
 -  return TryReduceDatePrototypeGetField(target, args, JSDate::kSecond);
 -}
 -
@@ -1583,13 +1600,13 @@ index 7e3cb806030..74d797767a0 100644
  template <typename BaseT>
  MaybeReduceResult
 diff --git a/src/maglev/maglev-reducer.h b/src/maglev/maglev-reducer.h
-index 8c8faaa35d8..91c8c4c8c5d 100644
+index be1fed772f3..d5f3c8fa121 100644
 --- a/src/maglev/maglev-reducer.h
 +++ b/src/maglev/maglev-reducer.h
-@@ -1132,14 +1132,6 @@ class MaglevReducer {
-   V(DataViewPrototypeSetInt16)                 \
-   V(DataViewPrototypeSetInt32)                 \
-   V(DataViewPrototypeSetInt8)                  \
+@@ -1257,14 +1257,6 @@ class MaglevReducer {
+   V(DataViewPrototypeSetUint16)                \
+   V(DataViewPrototypeSetUint32)                \
+   V(DataViewPrototypeSetUint8)                 \
 -  V(DatePrototypeGetDate)                      \
 -  V(DatePrototypeGetDay)                       \
 -  V(DatePrototypeGetFullYear)                  \
@@ -1599,11 +1616,11 @@ index 8c8faaa35d8..91c8c4c8c5d 100644
 -  V(DatePrototypeGetSeconds)                   \
 -  V(DatePrototypeGetTime)                      \
    V(FunctionPrototypeHasInstance)              \
-   V(MathAbs)                                   \
-   V(MathCeil)                                  \
-@@ -1169,13 +1161,6 @@ class MaglevReducer {
-   MAGLEV_REDUCER_BUILTIN(DECLARE_BUILTIN_REDUCER)
- #undef DECLARE_BUILTIN_REDUCER
+   V(MapPrototypeEntries)                       \
+   V(MapPrototypeKeys)                          \
+@@ -1324,13 +1316,6 @@ class MaglevReducer {
+       ValueNode* context, compiler::JSFunctionRef target, ValueNode* new_target,
+       CallArguments& args);
  
 -  // Returns kDoneWithoutPayload if checks passed successfully.
 -  MaybeReduceResult TryReduceDatePrototypeGetFieldPrologue(
@@ -1612,11 +1629,11 @@ index 8c8faaa35d8..91c8c4c8c5d 100644
 -      compiler::JSFunctionRef target, CallArguments& args,
 -      JSDate::FieldIndex field);
 -
-   MaybeReduceResult DoTryReduceMathRound(CallArguments& args,
+   MaybeReduceResult DoTryReduceMathRound(ValueNode* context,
+                                          CallArguments& args,
                                           Float64Round::Kind kind);
-   template <typename Int32Binop, typename Float64Binop>
 diff --git a/src/objects/value-serializer.cc b/src/objects/value-serializer.cc
-index ebac6f77e39..25442b03fd2 100644
+index 1b8cb3069ea..907dff853ca 100644
 --- a/src/objects/value-serializer.cc
 +++ b/src/objects/value-serializer.cc
 @@ -4,6 +4,7 @@
@@ -1638,7 +1655,7 @@ index ebac6f77e39..25442b03fd2 100644
  #include "src/objects/js-regexp-inl.h"
  #include "src/objects/js-shared-array.h"
  #include "src/objects/js-struct.h"
-@@ -1954,18 +1959,36 @@ MaybeDirectHandle<JSArray> ValueDeserializer::ReadDenseJSArray() {
+@@ -2001,18 +2006,36 @@ MaybeDirectHandle<JSArray> ValueDeserializer::ReadDenseJSArray() {
    return scope.CloseAndEscape(array);
  }
  
@@ -1687,10 +1704,10 @@ index ebac6f77e39..25442b03fd2 100644
  
  MaybeDirectHandle<JSPrimitiveWrapper> ValueDeserializer::ReadJSPrimitiveWrapper(
 diff --git a/src/objects/value-serializer.h b/src/objects/value-serializer.h
-index 0329d4e5bc2..2e0dbd0dac8 100644
+index 1f2d2006254..7bfee418d68 100644
 --- a/src/objects/value-serializer.h
 +++ b/src/objects/value-serializer.h
-@@ -296,7 +296,7 @@ class ValueDeserializer {
+@@ -320,7 +320,7 @@ class ValueDeserializer {
    MaybeDirectHandle<JSObject> ReadJSObject() V8_WARN_UNUSED_RESULT;
    MaybeDirectHandle<JSArray> ReadSparseJSArray() V8_WARN_UNUSED_RESULT;
    MaybeDirectHandle<JSArray> ReadDenseJSArray() V8_WARN_UNUSED_RESULT;

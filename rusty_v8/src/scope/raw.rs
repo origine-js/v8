@@ -254,11 +254,11 @@ unsafe extern "C" {
   );
   pub(super) fn v8__Context__SetContinuationPreservedEmbedderData(
     this: *mut RealIsolate,
-    value: *const Value,
+    value: *const Data,
   );
   pub(super) fn v8__Context__GetContinuationPreservedEmbedderData(
     this: *mut RealIsolate,
-  ) -> *const Value;
+  ) -> *const Data;
 
   pub(super) fn v8__HandleScope__CONSTRUCT(
     buf: *mut MaybeUninit<HandleScope>,

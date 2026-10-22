@@ -1,7 +1,8 @@
 diff --git a/include/v8-context.h b/include/v8-context.h
+index acaeaae997f..ee3972475d6 100644
 --- a/include/v8-context.h
 +++ b/include/v8-context.h
-@@ -211,6 +211,13 @@
+@@ -218,6 +218,13 @@ class V8_EXPORT Context : public Data {
     * is already entered, this old context is saved so it can be
     * restored when the new context is exited.
     */
@@ -16,9 +17,10 @@ diff --git a/include/v8-context.h b/include/v8-context.h
  
    /**
 diff --git a/src/api/api.cc b/src/api/api.cc
+index a934b128b05..d1133a8f6c4 100644
 --- a/src/api/api.cc
 +++ b/src/api/api.cc
-@@ -905,6 +905,24 @@
+@@ -906,6 +906,24 @@ bool Data::IsCppHeapExternal() const {
    return IsCppHeapExternalObject(*Utils::OpenDirectHandle(this));
  }
  
@@ -44,9 +46,10 @@ diff --git a/src/api/api.cc b/src/api/api.cc
    i::DisallowGarbageCollection no_gc;
    i::Tagged<i::NativeContext> env = *Utils::OpenDirectHandle(this);
 diff --git a/src/execution/isolate.cc b/src/execution/isolate.cc
+index 963d31c2c55..bcdb2d493df 100644
 --- a/src/execution/isolate.cc
 +++ b/src/execution/isolate.cc
-@@ -1739,9 +1739,8 @@
+@@ -1752,9 +1752,8 @@ MaybeDirectHandle<JSObject> Isolate::CaptureAndSetErrorStack(
    Handle<UnionOf<Undefined, FixedArray>> call_site_infos_or_formatted_stack =
        factory()->undefined_value();
  
@@ -58,7 +61,7 @@ diff --git a/src/execution/isolate.cc b/src/execution/isolate.cc
    // is active, and requests more stack frames than the JavaScript
    // program itself, we collect up to the maximum.
    int stack_trace_limit = 0;
-@@ -1769,7 +1768,7 @@
+@@ -1782,7 +1781,7 @@ MaybeDirectHandle<JSObject> Isolate::CaptureAndSetErrorStack(
    // stack trace" above and whether that's usable (meaning the API
    // didn't request to include cross-origin frames), we remember the
    // cap for the stack trace (either a positive limit indicating that
@@ -67,7 +70,7 @@ diff --git a/src/execution/isolate.cc b/src/execution/isolate.cc
    // the API, or a negative limit to indicate the opposite), or we
    // collect a "detailed stack trace" eagerly and stash that away.
    if (capture_stack_trace_for_uncaught_exceptions_) {
-@@ -2194,22 +2193,13 @@
+@@ -2214,22 +2213,13 @@ MaybeDirectHandle<Script> Isolate::CurrentReferrerScript() {
    return direct_handle(script->GetEvalOrigin(), this);
  }
  
@@ -96,93 +99,65 @@ diff --git a/src/execution/isolate.cc b/src/execution/isolate.cc
    return true;
  }
 diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
+index 7f5a9962848..68eac4d0f0e 100644
 --- a/src/init/bootstrapper.cc
 +++ b/src/init/bootstrapper.cc
-@@ -356,23 +356,11 @@
+@@ -357,23 +357,499 @@ void Bootstrapper::Iterate(RootVisitor* v) {
    v->Synchronize(VisitorSynchronization::kExtensions);
  }
  
--// Borrows isolate/context on the isolate thread with a live HandleScope. Roots
--// all temporary handles across GC; commits the context-owned, serialized graph
--// only on success. Failure leaves an unexposed partially finalized context for
--// GC, never a context usable by the caller. No JS getters or constructors run.
--bool FinalizeZigIntrinsics(Isolate* isolate,
--                           DirectHandle<NativeContext> context) {
--  SaveContext saved_context(isolate);
--  isolate->set_context(*context);
--  DirectHandle<JSGlobalObject> global(context->global_object(), isolate);
--  // SharedArrayBuffer and Atomics stay available; blocking waits are governed
--  // independently by the isolate's allow_atomics_wait setting.
--  for (const char* name : {"WebAssembly", "ShadowRealm"}) {
--    DirectHandle<String> key = isolate->factory()->InternalizeUtf8String(name);
--    if (!JSReceiver::DeleteProperty(isolate, global, key, LanguageMode::kStrict)
--             .FromMaybe(false)) return false;
--  }
--
 +// Borrows a completed subsystem root on the isolate thread/HandleScope. Freezes
 +// its builtin graph in place; retains no handles after return. Failure leaves an
 +// unexposed partially completed context. Never use with application/host objects.
 +bool SealZigIntrinsicFamily(Isolate* isolate, Tagged<Object> root) {
 +  if (!v8_flags.zig_harden_intrinsics) return true;
-   std::vector<Handle<JSObject>> graph;
-   // Borrows a tagged value until return; retains ordinary intrinsic objects in
-   // GC-rooted handles for this call. Does not retain globals or internal tables.
-@@ -386,49 +374,7 @@
-     graph.push_back(handle(object, isolate));
-   };
- 
--  // Context slots provide hidden prototypes (including Segments and
--  // SegmentIterator) directly, without allocating guest-visible instances.
--#define ZIG_INTRINSIC_ROOT(index, type, name)                               \
--  {                                                                         \
--    Tagged<Object> value = context->GetNoCell(Context::index);              \
--    if (std::string_view(#type) == "Map" && IsMap(value)) {                 \
--      add(Cast<Map>(value)->prototype());                                   \
--    } else if ((std::string_view(#type) == "JSObject" ||                    \
--                std::string_view(#type) == "JSFunction") &&                 \
--               Context::index != Context::EXTRAS_BINDING_OBJECT_INDEX &&    \
--               Context::index != Context::GLOBAL_PROXY_FUNCTION_INDEX) {    \
--      add(value);                                                           \
--    }                                                                       \
--  }
--  NATIVE_CONTEXT_FIELDS(ZIG_INTRINSIC_ROOT)
--#undef ZIG_INTRINSIC_ROOT
--
--  // Explicit ECMAScript binding inventory: application and host globals stay
--  // extensible and are never traversed merely because they are on the global.
--  constexpr const char* bindings[] = {
--      "globalThis", "Infinity", "NaN", "undefined", "eval", "isFinite", "isNaN",
--      "parseFloat", "parseInt", "decodeURI", "decodeURIComponent", "encodeURI",
--      "encodeURIComponent", "escape", "unescape", "Object", "Function",
--      "Boolean", "Symbol", "Error", "AggregateError", "EvalError", "RangeError",
--      "ReferenceError", "SyntaxError", "TypeError", "URIError", "Number",
--      "BigInt", "Math", "Date", "String", "RegExp", "Array", "Int8Array",
--      "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array",
--      "Uint32Array", "BigInt64Array", "BigUint64Array", "Float16Array",
--      "Float32Array", "Float64Array", "Map", "Set", "WeakMap", "WeakSet",
--      "ArrayBuffer", "SharedArrayBuffer", "Atomics", "DataView", "JSON", "Promise", "Proxy", "Reflect", "Intl",
--      "WeakRef", "FinalizationRegistry", "Iterator", "AsyncIterator",
--      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal"};
--  std::vector<Handle<String>> installed;
--  for (const char* name : bindings) {
--    Handle<String> key = isolate->factory()->InternalizeUtf8String(name);
--    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
--    if (it.state() == LookupIterator::NOT_FOUND) continue;
--    // All builtin global bindings must be data properties by finalization.
--    if (it.state() != LookupIterator::DATA) return false;
--    installed.push_back(key);
--    add(*it.GetDataValue());
--  }
--
++  std::vector<Handle<JSObject>> graph;
++  // Borrows a tagged value until return; retains ordinary intrinsic objects in
++  // GC-rooted handles for this call. Does not retain globals or internal tables.
++  auto add = [&](Tagged<Object> value) {
++    if (!IsJSObject(value) || IsJSGlobalObject(value) ||
++        IsJSGlobalProxy(value)) return;
++    Tagged<JSObject> object = Cast<JSObject>(value);
++    for (auto prior : graph) {
++      if (*prior == object) return;
++    }
++    graph.push_back(handle(object, isolate));
++  };
++
 +  add(root);
-   // Read data and accessor-pair fields directly: descriptor materialization
-   // would invoke native AccessorInfo getters, including lazy properties.
-   for (size_t index = 0; index < graph.size(); ++index) {
-@@ -462,14 +408,551 @@
-     if (!JSReceiver::SetIntegrityLevel(isolate, object, FROZEN, kThrowOnError)
-              .FromMaybe(false)) return false;
-   }
--  for (auto key : installed) {
++  // Read data and accessor-pair fields directly: descriptor materialization
++  // would invoke native AccessorInfo getters, including lazy properties.
++  for (size_t index = 0; index < graph.size(); ++index) {
++    Handle<JSObject> object = graph[index];
++    add(object->map()->prototype());
++    if (IsJSFunction(*object)) {
++      Tagged<JSFunction> function = Cast<JSFunction>(*object);
++      if (function->has_prototype_slot() && function->has_instance_prototype()) {
++        add(function->instance_prototype());
++      }
++    }
++    DirectHandle<FixedArray> keys;
++    if (!JSReceiver::OwnPropertyKeys(isolate, object).ToHandle(&keys)) return false;
++    for (int k = 0; k < static_cast<int>(keys->length().value()); ++k) {
++      DirectHandle<Object> key(keys->get(k), isolate);
++      LookupIterator it(isolate, object, PropertyKey(isolate, key),
++                        LookupIterator::OWN_SKIP_INTERCEPTOR);
++      if (it.state() == LookupIterator::DATA) {
++        add(*it.GetDataValue());
++      } else if (it.state() == LookupIterator::ACCESSOR) {
++        DirectHandle<Object> accessors = it.GetAccessors();
++        if (IsAccessorPair(*accessors)) {
++          auto pair = Cast<AccessorPair>(accessors);
++          add(pair->getter());
++          add(pair->setter());
++        }
++      }
++    }
++  }
++  for (auto object : graph) {
++    if (!JSReceiver::SetIntegrityLevel(isolate, object, FROZEN, kThrowOnError)
++             .FromMaybe(false)) return false;
++  }
 +  return true;
 +}
 +
@@ -285,11 +260,9 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ARRAY_PROTOTYPE_INDEX))) return false;
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_ERROR_PROTOTYPE_INDEX))) return false;
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_DISPOSABLE_STACK_PROTOTYPE_INDEX))) return false;
-+  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_MAP_PROTOTYPE_INDEX))) return false;
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_OBJECT_PROTOTYPE_INDEX))) return false;
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_SET_PROTOTYPE_INDEX))) return false;
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_STRING_PROTOTYPE_INDEX))) return false;
-+  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::INITIAL_WEAKMAP_PROTOTYPE_INDEX))) return false;
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::JSON_OBJECT))) return false;
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::OBJECT_FUNCTION_PROTOTYPE_INDEX))) return false;
 +  if (!SealZigIntrinsicFamily(isolate, context->GetNoCell(Context::PROMISE_PROTOTYPE_INDEX))) return false;
@@ -419,22 +392,14 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
 +      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOW_OBJECT_WITH_OBJECT_PROTOTYPE_MAP))->prototype())) return false;
 +  if (IsMap(context->GetNoCell(Context::SET_UINT8_ARRAY_RESULT_MAP)) &&
 +      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SET_UINT8_ARRAY_RESULT_MAP))->prototype())) return false;
-+  if (IsMap(context->GetNoCell(Context::SLOPPY_FUNCTION_MAP_INDEX)) &&
-+      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_FUNCTION_MAP_INDEX))->prototype())) return false;
-+  if (IsMap(context->GetNoCell(Context::SLOPPY_FUNCTION_WITH_NAME_MAP_INDEX)) &&
-+      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_FUNCTION_WITH_NAME_MAP_INDEX))->prototype())) return false;
-+  if (IsMap(context->GetNoCell(Context::SLOPPY_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX)) &&
-+      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX))->prototype())) return false;
-+  if (IsMap(context->GetNoCell(Context::SLOPPY_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX)) &&
-+      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::SLOPPY_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX))->prototype())) return false;
-+  if (IsMap(context->GetNoCell(Context::STRICT_FUNCTION_MAP_INDEX)) &&
-+      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_FUNCTION_MAP_INDEX))->prototype())) return false;
-+  if (IsMap(context->GetNoCell(Context::STRICT_FUNCTION_WITH_NAME_MAP_INDEX)) &&
-+      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_FUNCTION_WITH_NAME_MAP_INDEX))->prototype())) return false;
-+  if (IsMap(context->GetNoCell(Context::STRICT_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX)) &&
-+      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX))->prototype())) return false;
-+  if (IsMap(context->GetNoCell(Context::STRICT_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX)) &&
-+      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::STRICT_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::FUNCTION_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::FUNCTION_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::FUNCTION_WITH_NAME_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::FUNCTION_WITH_NAME_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX))->prototype())) return false;
++  if (IsMap(context->GetNoCell(Context::FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX)) &&
++      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX))->prototype())) return false;
 +  if (IsMap(context->GetNoCell(Context::METHOD_WITH_NAME_MAP_INDEX)) &&
 +      !SealZigIntrinsicFamily(isolate, Cast<Map>(context->GetNoCell(Context::METHOD_WITH_NAME_MAP_INDEX))->prototype())) return false;
 +  if (IsMap(context->GetNoCell(Context::CLASS_FUNCTION_MAP_INDEX)) &&
@@ -615,117 +580,54 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
 +    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
 +    if (it.state() == LookupIterator::NOT_FOUND) continue;
 +    if (it.state() != LookupIterator::DATA) return false;
-     PropertyDescriptor desc;
-     desc.set_writable(false);
-     desc.set_configurable(false);
-     if (!JSReceiver::DefineOwnProperty(isolate, global, key, &desc,
--                                       Just(kThrowOnError)).FromMaybe(false)) {
--      return false;
++    PropertyDescriptor desc;
++    desc.set_writable(false);
++    desc.set_configurable(false);
++    if (!JSReceiver::DefineOwnProperty(isolate, global, key, &desc,
 +                                      Just(kThrowOnError)).FromMaybe(false)) return false;
 +  }
 +  return true;
 +}
 +
-+// Borrows isolate/context on the isolate thread with a live HandleScope. Roots
-+// all temporary handles across GC; commits the context-owned, serialized graph
-+// only on success. Failure leaves an unexposed partially finalized context for
+ // Borrows isolate/context on the isolate thread with a live HandleScope. Roots
+ // all temporary handles across GC; commits the context-owned, serialized graph
+ // only on success. Failure leaves an unexposed partially finalized context for
+-// GC, never a context usable by the caller. No JS getters or constructors run.
+-bool FinalizeZigIntrinsics(Isolate* isolate,
 +// GC, never a context usable by the caller. Verifies without changing descriptors
 +// or freezing objects; no JS getters or constructors run.
 +bool VerifyAndCaptureZigIntrinsics(Isolate* isolate,
-+                           DirectHandle<NativeContext> context) {
-+  SaveContext saved_context(isolate);
-+  isolate->set_context(*context);
-+  DirectHandle<JSGlobalObject> global(context->global_object(), isolate);
-+  std::vector<Handle<JSObject>> graph;
-+  // Borrows a tagged value until return; retains ordinary intrinsic objects in
-+  // GC-rooted handles for this call. Does not retain globals or internal tables.
-+  auto add = [&](Tagged<Object> value) {
-+    if (!IsJSObject(value) || IsJSGlobalObject(value) ||
-+        IsJSGlobalProxy(value)) return;
-+    Tagged<JSObject> object = Cast<JSObject>(value);
-+    for (auto prior : graph) {
-+      if (*prior == object) return;
+                            DirectHandle<NativeContext> context) {
+   SaveContext saved_context(isolate);
+   isolate->set_context(*context);
+   DirectHandle<JSGlobalObject> global(context->global_object(), isolate);
+-  // SharedArrayBuffer and Atomics stay available; blocking waits are governed
+-  // independently by the isolate's allow_atomics_wait setting.
+-  for (const char* name : {"WebAssembly", "ShadowRealm"}) {
+-    DirectHandle<String> key = isolate->factory()->InternalizeUtf8String(name);
+-    if (!JSReceiver::DeleteProperty(isolate, global, key, LanguageMode::kStrict)
+-             .FromMaybe(false)) return false;
+-  }
+-
+   std::vector<Handle<JSObject>> graph;
+   // Borrows a tagged value until return; retains ordinary intrinsic objects in
+   // GC-rooted handles for this call. Does not retain globals or internal tables.
+@@ -460,17 +936,14 @@ bool FinalizeZigIntrinsics(Isolate* isolate,
      }
-+    graph.push_back(handle(object, isolate));
-+  };
-+
-+  // Context slots provide hidden prototypes (including Segments and
-+  // SegmentIterator) directly, without allocating guest-visible instances.
-+#define ZIG_INTRINSIC_ROOT(index, type, name)                               \
-+  {                                                                         \
-+    Tagged<Object> value = context->GetNoCell(Context::index);              \
-+    if (std::string_view(#type) == "Map" && IsMap(value)) {                 \
-+      add(Cast<Map>(value)->prototype());                                   \
-+    } else if ((std::string_view(#type) == "JSObject" ||                    \
-+                std::string_view(#type) == "JSFunction") &&                 \
-+               Context::index != Context::EXTRAS_BINDING_OBJECT_INDEX &&    \
-+               Context::index != Context::GLOBAL_PROXY_FUNCTION_INDEX) {    \
-+      add(value);                                                           \
-+    }                                                                       \
-+  }
-+  NATIVE_CONTEXT_FIELDS(ZIG_INTRINSIC_ROOT)
-+#undef ZIG_INTRINSIC_ROOT
-+
-+  // Explicit ECMAScript binding inventory: application and host globals stay
-+  // extensible and are never traversed merely because they are on the global.
-+  constexpr const char* bindings[] = {
-+      "globalThis", "Infinity", "NaN", "undefined", "eval", "isFinite", "isNaN",
-+      "parseFloat", "parseInt", "decodeURI", "decodeURIComponent", "encodeURI",
-+      "encodeURIComponent", "escape", "unescape", "Object", "Function",
-+      "Boolean", "Symbol", "Error", "AggregateError", "EvalError", "RangeError",
-+      "ReferenceError", "SyntaxError", "TypeError", "URIError", "Number",
-+      "BigInt", "Math", "Date", "String", "RegExp", "Array", "Int8Array",
-+      "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array",
-+      "Uint32Array", "BigInt64Array", "BigUint64Array", "Float16Array",
-+      "Float32Array", "Float64Array", "Map", "Set", "WeakMap", "WeakSet",
-+      "ArrayBuffer", "SharedArrayBuffer", "Atomics", "DataView", "JSON", "Promise", "Proxy", "Reflect", "Intl",
-+      "WeakRef", "FinalizationRegistry", "Iterator", "AsyncIterator",
-+      "DisposableStack", "AsyncDisposableStack", "SuppressedError", "Temporal"};
-+  std::vector<Handle<String>> installed;
-+  for (const char* name : bindings) {
-+    Handle<String> key = isolate->factory()->InternalizeUtf8String(name);
-+    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
-+    if (it.state() == LookupIterator::NOT_FOUND) continue;
-+    // All builtin global bindings must be data properties by finalization.
-+    if (it.state() != LookupIterator::DATA) return false;
-+    installed.push_back(key);
-+    add(*it.GetDataValue());
-+  }
-+
-+  // Read data and accessor-pair fields directly: descriptor materialization
-+  // would invoke native AccessorInfo getters, including lazy properties.
-+  for (size_t index = 0; index < graph.size(); ++index) {
-+    Handle<JSObject> object = graph[index];
-+    add(object->map()->prototype());
-+    if (IsJSFunction(*object)) {
-+      Tagged<JSFunction> function = Cast<JSFunction>(*object);
-+      if (function->has_prototype_slot() && function->has_instance_prototype()) {
-+        add(function->instance_prototype());
-+      }
-+    }
-+    DirectHandle<FixedArray> keys;
-+    if (!JSReceiver::OwnPropertyKeys(isolate, object).ToHandle(&keys)) return false;
-+    for (int k = 0; k < static_cast<int>(keys->length().value()); ++k) {
-+      DirectHandle<Object> key(keys->get(k), isolate);
-+      LookupIterator it(isolate, object, PropertyKey(isolate, key),
-+                        LookupIterator::OWN_SKIP_INTERCEPTOR);
-+      if (it.state() == LookupIterator::DATA) {
-+        add(*it.GetDataValue());
-+      } else if (it.state() == LookupIterator::ACCESSOR) {
-+        DirectHandle<Object> accessors = it.GetAccessors();
-+        if (IsAccessorPair(*accessors)) {
-+          auto pair = Cast<AccessorPair>(accessors);
-+          add(pair->getter());
-+          add(pair->setter());
-+        }
-+      }
-+    }
-+  }
-+  for (auto object : graph) {
+   }
+   for (auto object : graph) {
+-    if (!JSReceiver::SetIntegrityLevel(isolate, object, FROZEN, kThrowOnError)
 +    if (!JSReceiver::TestIntegrityLevel(isolate, object, FROZEN)
-+             .FromMaybe(false)) return false;
-+  }
-+  for (auto key : installed) {
+              .FromMaybe(false)) return false;
+   }
+   for (auto key : installed) {
+-    PropertyDescriptor desc;
+-    desc.set_writable(false);
+-    desc.set_configurable(false);
+-    if (!JSReceiver::DefineOwnProperty(isolate, global, key, &desc,
+-                                       Just(kThrowOnError)).FromMaybe(false)) {
+-      return false;
+-    }
 +    LookupIterator it(isolate, global, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
 +    if (it.state() != LookupIterator::DATA ||
 +        (it.property_attributes() & (READ_ONLY | DONT_DELETE)) !=
@@ -733,7 +635,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
    }
    Handle<FixedArray> inventory = isolate->factory()->NewFixedArray(
        static_cast<int>(graph.size()), AllocationType::kOld);
-@@ -502,7 +985,7 @@
+@@ -503,7 +976,7 @@ DirectHandle<NativeContext> Bootstrapper::CreateEnvironment(
      }
      if (v8_flags.zig_harden_intrinsics &&
          env->zig_intrinsic_objects()->length().value() == 0 &&
@@ -742,7 +644,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
    }
    LogAllMaps();
    isolate_->heap()->NotifyBootstrapComplete();
-@@ -678,6 +1161,25 @@
+@@ -677,6 +1150,25 @@ V8_NOINLINE DirectHandle<JSFunction> CreateFunction(
        instance_size, inobject_properties, prototype, builtin, len, adapt);
  }
  
@@ -768,7 +670,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  V8_NOINLINE DirectHandle<JSFunction> InstallFunction(
      Isolate* isolate, DirectHandle<JSObject> target, DirectHandle<String> name,
      InstanceType type, int instance_size, int inobject_properties,
-@@ -687,7 +1189,7 @@
+@@ -686,7 +1178,7 @@ V8_NOINLINE DirectHandle<JSFunction> InstallFunction(
    DirectHandle<JSFunction> function =
        CreateFunction(isolate, name, type, instance_size, inobject_properties,
                       prototype, call, len, adapt);
@@ -777,7 +679,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
    return function;
  }
  
-@@ -756,6 +1258,9 @@
+@@ -755,6 +1247,9 @@ void RetainZigIntrinsic(Isolate* isolate, Builtin builtin,
    }
  }
  
@@ -787,7 +689,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  V8_NOINLINE Handle<JSFunction> InstallFunctionWithBuiltinId(
      Isolate* isolate, DirectHandle<JSObject> base, const char* name,
      Builtin call, int len, AdaptArguments adapt) {
-@@ -764,10 +1269,13 @@
+@@ -763,10 +1258,13 @@ V8_NOINLINE Handle<JSFunction> InstallFunctionWithBuiltinId(
    Handle<JSFunction> fun =
        SimpleCreateFunction(isolate, internalized_name, call, len, adapt);
    RetainZigIntrinsic(isolate, call, fun);
@@ -802,7 +704,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  V8_NOINLINE Handle<JSFunction> InstallFunctionAtSymbol(
      Isolate* isolate, DirectHandle<JSObject> base, DirectHandle<Symbol> symbol,
      const char* symbol_string, Builtin call, int len, AdaptArguments adapt,
-@@ -777,10 +1285,13 @@
+@@ -776,10 +1274,13 @@ V8_NOINLINE Handle<JSFunction> InstallFunctionAtSymbol(
    Handle<JSFunction> fun =
        SimpleCreateFunction(isolate, internalized_symbol, call, len, adapt);
    RetainZigIntrinsic(isolate, call, fun);
@@ -817,7 +719,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  V8_NOINLINE DirectHandle<JSFunction> CreateSharedObjectConstructor(
      Isolate* isolate, DirectHandle<String> name, DirectHandle<Map> instance_map,
      Builtin builtin, int len, AdaptArguments adapt) {
-@@ -794,7 +1305,7 @@
+@@ -793,7 +1294,7 @@ V8_NOINLINE DirectHandle<JSFunction> CreateSharedObjectConstructor(
            .Build();
    constructor->set_prototype_or_initial_map(*instance_map, kReleaseStore);
  
@@ -826,7 +728,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
        isolate, constructor, factory->has_instance_symbol(),
        direct_handle(
            isolate->native_context()->shared_space_js_object_has_instance(),
-@@ -803,6 +1314,9 @@
+@@ -802,6 +1303,9 @@ V8_NOINLINE DirectHandle<JSFunction> CreateSharedObjectConstructor(
    return constructor;
  }
  
@@ -836,7 +738,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  V8_NOINLINE void SimpleInstallGetterSetter(Isolate* isolate,
                                             DirectHandle<JSObject> base,
                                             DirectHandle<Name> name,
-@@ -821,10 +1335,13 @@
+@@ -820,10 +1324,13 @@ V8_NOINLINE void SimpleInstallGetterSetter(Isolate* isolate,
        SimpleCreateFunction(isolate, setter_name, call_setter, 1, kAdapt);
  
    JSObject::DefineOwnAccessorIgnoreAttributes(base, name, getter, setter,
@@ -851,7 +753,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  V8_NOINLINE Handle<JSFunction> SimpleInstallGetter(
      Isolate* isolate, DirectHandle<JSObject> base, DirectHandle<Name> name,
      DirectHandle<Name> property_name, Builtin call, AdaptArguments adapt) {
-@@ -837,7 +1354,7 @@
+@@ -836,7 +1343,7 @@ V8_NOINLINE Handle<JSFunction> SimpleInstallGetter(
    DirectHandle<Object> setter = isolate->factory()->undefined_value();
  
    JSObject::DefineOwnAccessorIgnoreAttributes(base, property_name, getter,
@@ -860,7 +762,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
        .Check();
  
    return getter;
-@@ -851,18 +1368,24 @@
+@@ -850,18 +1357,24 @@ V8_NOINLINE Handle<JSFunction> SimpleInstallGetter(Isolate* isolate,
    return SimpleInstallGetter(isolate, base, name, name, call, adapt);
  }
  
@@ -887,7 +789,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                          isolate->factory()->InternalizeUtf8String(name),
                          isolate->factory()->true_value(), NONE);
  }
-@@ -877,10 +1400,13 @@
+@@ -876,10 +1389,13 @@ V8_NOINLINE void InstallSpeciesGetter(Isolate* isolate,
                        kAdapt);
  }
  
@@ -902,7 +804,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                          isolate->factory()->to_string_tag_symbol(), value,
                          static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
  }
-@@ -1139,6 +1665,9 @@
+@@ -1095,6 +1611,9 @@ DirectHandle<Map> CreateNonConstructorMap(Isolate* isolate,
  
  }  // namespace
  
@@ -912,7 +814,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  Handle<JSFunction> SimpleInstallFunction(Isolate* isolate,
                                           DirectHandle<JSObject> base,
                                           const char* name, Builtin call,
-@@ -1151,10 +1680,13 @@
+@@ -1107,10 +1626,13 @@ Handle<JSFunction> SimpleInstallFunction(Isolate* isolate,
    Handle<JSFunction> fun =
        SimpleCreateFunction(isolate, internalized_name, call, len, adapt);
    RetainZigIntrinsic(isolate, call, fun);
@@ -927,7 +829,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::CreateIteratorMaps(DirectHandle<JSFunction> empty) {
    // Create iterator-related meta-objects.
    DirectHandle<JSObject> iterator_prototype = factory()->NewJSObject(
-@@ -1180,12 +1712,12 @@
+@@ -1136,12 +1658,12 @@ void Genesis::CreateIteratorMaps(DirectHandle<JSFunction> empty) {
  
    InstallToStringTag(isolate(), generator_function_prototype,
                       "GeneratorFunction");
@@ -942,7 +844,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                          factory()->constructor_string(),
                          generator_function_prototype,
                          static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
-@@ -1241,6 +1773,9 @@
+@@ -1196,6 +1718,9 @@ void Genesis::CreateIteratorMaps(DirectHandle<JSFunction> empty) {
        *generator_object_prototype_map);
  }
  
@@ -952,7 +854,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::CreateAsyncIteratorMaps(DirectHandle<JSFunction> empty) {
    // %AsyncIteratorPrototype%
    // https://tc39.es/proposal-async-iteration/#sec-asynciteratorprototype
-@@ -1298,11 +1833,11 @@
+@@ -1253,11 +1778,11 @@ void Genesis::CreateAsyncIteratorMaps(DirectHandle<JSFunction> empty) {
    //     %AsyncGeneratorPrototype% intrinsic object.
    // This property has the attributes
    //     { [[Writable]]: false, [[Enumerable]]: false, [[Configurable]]: true }.
@@ -966,7 +868,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                          factory()->constructor_string(),
                          async_generator_function_prototype,
                          static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
-@@ -1491,6 +2026,8 @@
+@@ -1420,6 +1945,8 @@ void Genesis::CreateRoots() {
  
    isolate()->heap()->AddToWeakNativeContextList(*native_context());
    isolate()->set_context(*native_context());
@@ -975,7 +877,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
    native_context()->set_zig_intrinsic_objects(
        ReadOnlyRoots(isolate()).empty_fixed_array());
  }
-@@ -1652,13 +2189,16 @@
+@@ -1581,13 +2108,16 @@ static void InstallWithIntrinsicDefaultProto(Isolate* isolate,
                                               DirectHandle<JSFunction> function,
                                               int context_index) {
    DirectHandle<Smi> index(Smi::FromInt(context_index), isolate);
@@ -993,7 +895,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void InstallError(Isolate* isolate, DirectHandle<JSObject> global,
                    DirectHandle<String> name, int context_index,
                    Builtin error_constructor, int error_function_length) {
-@@ -1686,9 +2226,9 @@
+@@ -1617,9 +2147,9 @@ void InstallError(Isolate* isolate, DirectHandle<JSObject> global,
      DirectHandle<JSObject> prototype(
          Cast<JSObject>(error_fun->instance_prototype()), isolate);
  
@@ -1005,7 +907,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            factory->empty_string(), DONT_ENUM);
  
      if (context_index == Context::ERROR_FUNCTION_INDEX) {
-@@ -1746,6 +2286,9 @@
+@@ -1677,6 +2207,9 @@ void InstallError(Isolate* isolate, DirectHandle<JSObject> global,
  
  namespace {
  
@@ -1015,7 +917,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  Handle<JSObject> InitializeTemporal(Isolate* isolate) {
    DirectHandle<NativeContext> native_context = isolate->native_context();
  
-@@ -1771,7 +2314,7 @@
+@@ -1702,7 +2235,7 @@ Handle<JSObject> InitializeTemporal(Isolate* isolate) {
      // https://tc39.es/ecma262/#sec-temporal-now-object
      DirectHandle<JSObject> now = isolate->factory()->NewJSObject(
          isolate->object_function(), AllocationType::kOld);
@@ -1024,7 +926,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
      InstallToStringTag(isolate, now, "Temporal.Now");
  
      // Note: There are NO Temporal.Now.plainTime
-@@ -2268,6 +2811,9 @@
+@@ -2199,6 +2732,9 @@ void Bootstrapper::InitializeLazyPartOfContext(
  // work in the snapshot case is done in HookUpGlobalObject.
  // Borrows global_object/empty_function during installation on the isolate
  // thread; retains builtin references in GC-owned native-context fields.
@@ -1034,7 +936,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
                                 DirectHandle<JSFunction> empty_function) {
    // --- N a t i v e   C o n t e x t ---
-@@ -2337,7 +2883,7 @@
+@@ -2268,7 +2804,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
    {  // --- O b j e c t ---
      DirectHandle<String> object_name = factory->Object_string();
      DirectHandle<JSFunction> object_function = isolate_->object_function();
@@ -1043,7 +945,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            DONT_ENUM);
  
      SimpleInstallFunction(isolate_, object_function, "assign",
-@@ -2453,7 +2999,7 @@
+@@ -2383,7 +2919,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      native_context()->set_function_prototype(*prototype);
  
      // Setup the methods on the %FunctionPrototype%.
@@ -1052,7 +954,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            function_fun, DONT_ENUM);
      DirectHandle<JSFunction> function_prototype_apply =
          SimpleInstallFunction(isolate_, prototype, "apply",
-@@ -2564,7 +3110,7 @@
+@@ -2484,7 +3020,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      SetConstructorInstanceType(isolate_, array_function,
                                 JS_ARRAY_CONSTRUCTOR_TYPE);
  
@@ -1061,7 +963,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            array_function, DONT_ENUM);
  
      SimpleInstallFunction(isolate_, proto, "at", Builtin::kArrayPrototypeAt, 1,
-@@ -2620,7 +3166,7 @@
+@@ -2540,7 +3076,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
  
        DirectHandle<JSFunction> values = InstallFunctionWithBuiltinId(
            isolate_, proto, "values", Builtin::kArrayPrototypeValues, 0, kAdapt);
@@ -1070,7 +972,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                              DONT_ENUM);
        native_context()->set_array_values_iterator(*values);
      }
-@@ -2680,7 +3226,7 @@
+@@ -2600,7 +3136,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      InstallTrueValuedProperty(isolate_, unscopables, "values");
  
      JSObject::MigrateSlowToFast(unscopables, 0, "Bootstrapping");
@@ -1079,7 +981,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
          isolate_, proto, factory->unscopables_symbol(), unscopables,
          static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
  
-@@ -2740,7 +3286,7 @@
+@@ -2660,7 +3196,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      JSFunction::SetPrototype(isolate_, number_fun, prototype);
  
      // Install the "constructor" property on the {prototype}.
@@ -1088,7 +990,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            number_fun, DONT_ENUM);
  
      // Install the Number.prototype methods.
-@@ -2774,14 +3320,14 @@
+@@ -2694,14 +3230,14 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      DirectHandle<JSFunction> parse_float_fun =
          SimpleInstallFunction(isolate_, number_fun, "parseFloat",
                                Builtin::kNumberParseFloat, 1, kAdapt);
@@ -1105,7 +1007,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            DONT_ENUM);
      native_context()->set_global_parse_int_fun(*parse_int_fun);
  
-@@ -2825,7 +3371,7 @@
+@@ -2745,7 +3281,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      JSFunction::SetPrototype(isolate_, boolean_fun, prototype);
  
      // Install the "constructor" property on the {prototype}.
@@ -1114,7 +1016,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            boolean_fun, DONT_ENUM);
  
      // Install the Boolean.prototype methods.
-@@ -2877,7 +3423,7 @@
+@@ -2797,7 +3333,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      native_context()->set_initial_string_prototype(*prototype);
  
      // Install the "constructor" property on the {prototype}.
@@ -1123,7 +1025,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            string_fun, DONT_ENUM);
  
      // Install the String.prototype methods.
-@@ -2980,14 +3526,14 @@
+@@ -2900,14 +3436,14 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      DirectHandle<JSFunction> trim_start_fun = SimpleInstallFunction(
          isolate_, prototype, "trimStart", Builtin::kStringPrototypeTrimStart, 0,
          kDontAdapt);
@@ -1140,7 +1042,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            DONT_ENUM);
  
      SimpleInstallFunction(isolate_, prototype, "toLocaleLowerCase",
-@@ -3412,7 +3958,7 @@
+@@ -3342,7 +3878,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
    {  // -- g l o b a l T h i s
      DirectHandle<JSGlobalProxy> global_proxy(native_context()->global_proxy(),
                                               isolate_);
@@ -1149,7 +1051,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            global_proxy, DONT_ENUM);
    }
  
-@@ -3433,7 +3979,7 @@
+@@ -3363,7 +3899,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
  
      DirectHandle<JSObject> json_object =
          factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
@@ -1158,7 +1060,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
      SimpleInstallFunction(isolate_, json_object, "parse", Builtin::kJsonParse,
                            2, kDontAdapt);
      SimpleInstallFunction(isolate_, json_object, "stringify",
-@@ -3449,7 +3995,7 @@
+@@ -3379,7 +3915,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
    {  // -- M a t h
      DirectHandle<JSObject> math =
          factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
@@ -1167,7 +1069,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
      SimpleInstallFunction(isolate_, math, "abs", Builtin::kMathAbs, 1, kAdapt);
      SimpleInstallFunction(isolate_, math, "acos", Builtin::kMathAcos, 1,
                            kAdapt);
-@@ -3538,7 +4084,7 @@
+@@ -3472,7 +4008,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
    {  // -- I n t l
      DirectHandle<JSObject> intl =
          factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
@@ -1176,7 +1078,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  
      // https://tc39.es/ecma402/#sec-Intl-toStringTag
      // The initial value of the @@toStringTag property is the string value
-@@ -4065,7 +4611,7 @@
+@@ -4001,7 +4537,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      DirectHandle<String> name = factory->ArrayBuffer_string();
      DirectHandle<JSFunction> array_buffer_fun =
          CreateArrayBuffer(name, ARRAY_BUFFER);
@@ -1185,7 +1087,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
      InstallWithIntrinsicDefaultProto(isolate_, array_buffer_fun,
                                       Context::ARRAY_BUFFER_FUN_INDEX);
      InstallSpeciesGetter(isolate_, array_buffer_fun);
-@@ -4123,7 +4669,7 @@
+@@ -4059,7 +4595,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
    {  // -- A t o m i c s
      DirectHandle<JSObject> atomics_object =
          factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
@@ -1194,7 +1096,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            DONT_ENUM);
      InstallToStringTag(isolate_, atomics_object, "Atomics");
  
-@@ -4200,7 +4746,7 @@
+@@ -4138,7 +4674,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      DirectHandle<JSFunction> values = InstallFunctionWithBuiltinId(
          isolate_, prototype, "values", Builtin::kTypedArrayPrototypeValues, 0,
          kDontAdapt);
@@ -1203,7 +1105,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            values, DONT_ENUM);
  
      // TODO(caitp): alphasort accessors/methods
-@@ -4265,7 +4811,7 @@
+@@ -4203,7 +4739,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      SimpleInstallFunction(isolate_, prototype, "toLocaleString",
                            Builtin::kTypedArrayPrototypeToLocaleString, 0,
                            kDontAdapt);
@@ -1212,7 +1114,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            array_prototype_to_string_fun, DONT_ENUM);
    }
  
-@@ -4400,7 +4946,7 @@
+@@ -4370,7 +4906,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      DirectHandle<JSFunction> entries =
          SimpleInstallFunction(isolate_, prototype, "entries",
                                Builtin::kMapPrototypeEntries, 0, kAdapt);
@@ -1221,7 +1123,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            entries, DONT_ENUM);
      SimpleInstallFunction(isolate_, prototype, "forEach",
                            Builtin::kMapPrototypeForEach, 1, kDontAdapt);
-@@ -4516,9 +5062,9 @@
+@@ -4486,9 +5022,9 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
  
      DirectHandle<JSFunction> values = SimpleInstallFunction(
          isolate_, prototype, "values", Builtin::kSetPrototypeValues, 0, kAdapt);
@@ -1233,7 +1135,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            values, DONT_ENUM);
  
      native_context()->set_initial_set_prototype_map(prototype->map());
-@@ -4593,7 +5139,7 @@
+@@ -4563,7 +5099,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
                               AllocationType::kOld);
      JSObject::ForceSetPrototype(isolate(), wrap_for_valid_iterator_prototype,
                                  iterator_prototype);
@@ -1242,7 +1144,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            factory->constructor_string(), iterator_function,
                            DONT_ENUM);
      SimpleInstallFunction(isolate(), wrap_for_valid_iterator_prototype, "next",
-@@ -4790,7 +5336,7 @@
+@@ -4762,7 +5298,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
      isolate_->proxy_map()->SetConstructor(*proxy_function);
  
      native_context()->set_proxy_function(*proxy_function);
@@ -1251,7 +1153,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  
      DCHECK(!proxy_function->has_prototype_property());
  
-@@ -4803,7 +5349,7 @@
+@@ -4775,7 +5311,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
          factory->InternalizeUtf8String("Reflect");
      DirectHandle<JSObject> reflect =
          factory->NewJSObject(isolate_->object_function(), AllocationType::kOld);
@@ -1260,7 +1162,25 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
      InstallToStringTag(isolate_, reflect, reflect_string);
  
      SimpleInstallFunction(isolate_, reflect, "defineProperty",
-@@ -5190,6 +5736,9 @@
+@@ -5038,7 +5574,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
+     DirectHandle<JSFunction> dispose = SimpleInstallFunction(
+         isolate(), sync_disposable_stack_prototype, "dispose",
+         Builtin::kDisposableStackPrototypeDispose, 0, kAdapt);
+-    JSObject::AddProperty(isolate(), sync_disposable_stack_prototype,
++    InstallZigDataProperty(isolate(), sync_disposable_stack_prototype,
+                           factory->dispose_symbol(), dispose, DONT_ENUM);
+     SimpleInstallFunction(isolate(), sync_disposable_stack_prototype, "adopt",
+                           Builtin::kDisposableStackPrototypeAdopt, 2, kAdapt);
+@@ -5072,7 +5608,7 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
+     DirectHandle<JSFunction> dispose_async = SimpleInstallFunction(
+         isolate(), async_disposable_stack_prototype, "disposeAsync",
+         Builtin::kAsyncDisposableStackPrototypeDisposeAsync, 0, kAdapt);
+-    JSObject::AddProperty(isolate(), async_disposable_stack_prototype,
++    InstallZigDataProperty(isolate(), async_disposable_stack_prototype,
+                           factory->async_dispose_symbol(), dispose_async,
+                           DONT_ENUM);
+     SimpleInstallFunction(isolate(), async_disposable_stack_prototype, "adopt",
+@@ -5255,6 +5791,9 @@ bool Genesis::CompileExtension(Isolate* isolate, v8::Extension* extension) {
                .is_null();
  }
  
@@ -1270,7 +1190,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::InitializeIteratorFunctions() {
    Isolate* isolate = isolate_;
    Factory* factory = isolate->factory();
-@@ -5214,7 +5763,7 @@
+@@ -5279,7 +5818,7 @@ void Genesis::InitializeIteratorFunctions() {
  
      JSObject::ForceSetPrototype(isolate, generator_function_function,
                                  isolate->function_function());
@@ -1279,7 +1199,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
          isolate, generator_function_prototype, factory->constructor_string(),
          generator_function_function,
          static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
-@@ -5245,7 +5794,7 @@
+@@ -5310,7 +5849,7 @@ void Genesis::InitializeIteratorFunctions() {
      JSObject::ForceSetPrototype(isolate, async_generator_function_function,
                                  isolate->function_function());
  
@@ -1288,7 +1208,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
          isolate, async_generator_function_prototype,
          factory->constructor_string(), async_generator_function_function,
          static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
-@@ -5348,7 +5897,7 @@
+@@ -5413,7 +5952,7 @@ void Genesis::InitializeIteratorFunctions() {
      JSObject::ForceSetPrototype(isolate, async_function_constructor,
                                  isolate->function_function());
  
@@ -1297,7 +1217,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
          isolate, async_function_prototype, factory->constructor_string(),
          async_function_constructor,
          static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
-@@ -5430,6 +5979,9 @@
+@@ -5495,6 +6034,9 @@ void Genesis::InitializeCallSiteBuiltins() {
    }
  }
  
@@ -1307,7 +1227,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::InitializeConsole(DirectHandle<JSObject> extras_binding) {
    HandleScope scope(isolate());
    Factory* factory = isolate_->factory();
-@@ -5454,9 +6006,9 @@
+@@ -5519,9 +6061,9 @@ void Genesis::InitializeConsole(DirectHandle<JSObject> extras_binding) {
        factory->NewJSObject(cons, AllocationType::kOld);
    DCHECK(IsJSObject(*console));
  
@@ -1319,7 +1239,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  
    SimpleInstallFunction(isolate_, console, "debug", Builtin::kConsoleDebug, 0,
                          kDontAdapt, NONE);
-@@ -5663,76 +6215,9 @@
+@@ -5679,76 +6221,9 @@ void Genesis::InitializeGlobal_js_iterator_includes() {
                          Builtin::kIteratorPrototypeIncludes, 1, kDontAdapt);
  }
  
@@ -1355,7 +1275,9 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
 -    DirectHandle<JSObject> empty_function(
 -        native_context()->function_prototype(), isolate());
 -    Map::SetPrototype(isolate(), map, empty_function);
--
++// Installs nothing and retains no resources, independent of the upstream flag.
++void Genesis::InitializeGlobal_harmony_shadow_realm() {}
+ 
 -    PropertyAttributes roc_attribs =
 -        static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY);
 -    Map::EnsureDescriptorSlack(isolate_, map, 2);
@@ -1393,13 +1315,10 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
 -        *shadow_realm_import_value_rejected);
 -  }
 -}
-+// Installs nothing and retains no resources, independent of the upstream flag.
-+void Genesis::InitializeGlobal_harmony_shadow_realm() {}
-+
  
  void Genesis::InitializeGlobal_harmony_struct() {
    if (!v8_flags.harmony_struct) return;
-@@ -5761,7 +6246,7 @@
+@@ -5776,7 +6251,7 @@ void Genesis::InitializeGlobal_harmony_struct() {
      JSObject::MakePrototypesFast(shared_struct_type_fun, kStartAtReceiver,
                                   isolate());
      shared_struct_type_fun->shared()->set_native(true);
@@ -1408,7 +1327,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            shared_struct_type_fun, DONT_ENUM);
  
      SimpleInstallFunction(isolate(), shared_struct_type_fun, "isSharedStruct",
-@@ -5777,7 +6262,7 @@
+@@ -5792,7 +6267,7 @@ void Genesis::InitializeGlobal_harmony_struct() {
          Builtin::kSharedArrayConstructor, 0, kAdapt);
  
      // Install SharedArray constructor.
@@ -1417,7 +1336,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            DONT_ENUM);
  
      SimpleInstallFunction(isolate(), shared_array_fun, "isSharedArray",
-@@ -5790,7 +6275,7 @@
+@@ -5805,7 +6280,7 @@ void Genesis::InitializeGlobal_harmony_struct() {
      DirectHandle<JSFunction> mutex_fun = CreateSharedObjectConstructor(
          isolate(), mutex_str, isolate()->factory()->js_atomics_mutex_map(),
          Builtin::kAtomicsMutexConstructor, 0, kAdapt);
@@ -1426,7 +1345,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            DONT_ENUM);
  
      SimpleInstallFunction(isolate(), mutex_fun, "lock",
-@@ -5810,7 +6295,7 @@
+@@ -5825,7 +6300,7 @@ void Genesis::InitializeGlobal_harmony_struct() {
          isolate(), condition_str,
          isolate()->factory()->js_atomics_condition_map(),
          Builtin::kAtomicsConditionConstructor, 0, kAdapt);
@@ -1435,7 +1354,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                            condition_fun, DONT_ENUM);
  
      SimpleInstallFunction(isolate(), condition_fun, "wait",
-@@ -5822,6 +6307,9 @@
+@@ -5837,6 +6312,9 @@ void Genesis::InitializeGlobal_harmony_struct() {
    }
  }
  
@@ -1445,7 +1364,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::InitializeGlobal_sharedarraybuffer() {
    if (v8_flags.enable_sharedarraybuffer_per_context) {
      return;
-@@ -5830,10 +6318,13 @@
+@@ -5845,7 +6323,7 @@ void Genesis::InitializeGlobal_sharedarraybuffer() {
    DirectHandle<JSGlobalObject> global(native_context()->global_object(),
                                        isolate());
  
@@ -1454,31 +1373,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                          isolate()->shared_array_buffer_fun(), DONT_ENUM);
  }
  
-+// Borrows the isolate/context on its owning thread with a live HandleScope.
-+// Installs GC-owned builtin objects/properties; retains no host storage. Bootstrap
-+// failure leaves the context unexposed; V8 allocation failure is fatal.
- void Genesis::InitializeGlobal_js_explicit_resource_management() {
-   if (!v8_flags.js_explicit_resource_management) return;
- 
-@@ -5870,7 +6361,7 @@
-   DirectHandle<JSFunction> dispose = SimpleInstallFunction(
-       isolate(), sync_disposable_stack_prototype, "dispose",
-       Builtin::kDisposableStackPrototypeDispose, 0, kAdapt);
--  JSObject::AddProperty(isolate(), sync_disposable_stack_prototype,
-+  InstallZigDataProperty(isolate(), sync_disposable_stack_prototype,
-                         factory->dispose_symbol(), dispose, DONT_ENUM);
-   SimpleInstallFunction(isolate(), sync_disposable_stack_prototype, "adopt",
-                         Builtin::kDisposableStackPrototypeAdopt, 2, kAdapt);
-@@ -5902,7 +6393,7 @@
-   DirectHandle<JSFunction> dispose_async = SimpleInstallFunction(
-       isolate(), async_disposable_stack_prototype, "disposeAsync",
-       Builtin::kAsyncDisposableStackPrototypeDisposeAsync, 0, kAdapt);
--  JSObject::AddProperty(isolate(), async_disposable_stack_prototype,
-+  InstallZigDataProperty(isolate(), async_disposable_stack_prototype,
-                         factory->async_dispose_symbol(), dispose_async,
-                         DONT_ENUM);
-   SimpleInstallFunction(isolate(), async_disposable_stack_prototype, "adopt",
-@@ -6062,6 +6553,9 @@
+@@ -5898,6 +6376,9 @@ void Genesis::InitializeGlobal_regexp_linear_flag() {
  
  // Installs context-owned Temporal objects directly on the isolate thread;
  // temporary handles expire with the enclosing HandleScope. Runs no JS getters.
@@ -1488,7 +1383,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  void Genesis::InitializeGlobal_harmony_temporal() {
  #ifdef V8_TEMPORAL_SUPPORT
    if (!v8_flags.harmony_temporal) return;
-@@ -6069,7 +6563,7 @@
+@@ -5905,7 +6386,7 @@ void Genesis::InitializeGlobal_harmony_temporal() {
    // zig-v8: initialize directly before finalization; never freeze a
    // replace-on-access property whose later replacement would fail.
    DirectHandle<JSObject> temporal = InitializeTemporal(isolate());
@@ -1497,7 +1392,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
        direct_handle(native_context()->global_object(), isolate()),
        "Temporal", temporal, DONT_ENUM);
  #endif  // V8_TEMPORAL_SUPPORT
-@@ -6096,6 +6590,9 @@
+@@ -5921,6 +6402,9 @@ void Genesis::InitializeGlobal_queueMicrotask() {
                                 Builtin::kGlobalQueueMicrotask, 1, kAdapt);
  }
  
@@ -1507,7 +1402,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  DirectHandle<JSFunction> Genesis::CreateArrayBuffer(
      DirectHandle<String> name, ArrayBufferKind array_buffer_kind) {
    // Create the %ArrayBufferPrototype%
-@@ -6111,7 +6608,7 @@
+@@ -5936,7 +6420,7 @@ DirectHandle<JSFunction> Genesis::CreateArrayBuffer(
                       Builtin::kArrayBufferConstructor, 1, kAdapt);
  
    // Install the "constructor" property on the {prototype}.
@@ -1516,7 +1411,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
                          array_buffer_fun, DONT_ENUM);
  
    switch (array_buffer_kind) {
-@@ -6650,32 +7147,26 @@
+@@ -6475,33 +6959,27 @@ bool Bootstrapper::InstallExtensions(DirectHandle<NativeContext> native_context,
  }
  
  // Borrows isolate/native_context through installation on the isolate thread.
@@ -1548,7 +1443,7 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
      SandboxTesting::InstallMemoryCorruptionApi(isolate);
    }
  #endif  // V8_ENABLE_MEMORY_CORRUPTION_API
-+
+ 
 +  if (v8_flags.zig_harden_intrinsics &&
 +      native_context->zig_intrinsic_objects()->length().value() == 0) {
 +    if (!CompleteZigCoreIntrinsics(isolate, native_context) ||
@@ -1557,10 +1452,11 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
 +        !CompleteZigTemporalIntrinsics(isolate, native_context) ||
 +        !CompleteZigGlobalBindings(isolate, native_context)) return false;
 +  }
- 
++
    return true;
  }
-@@ -7184,6 +7675,8 @@
+ 
+@@ -7008,6 +7486,8 @@ Genesis::Genesis(Isolate* isolate,
    // selected features and must never reinstall into a frozen graph.
    if (native_context()->zig_intrinsic_objects()->length().value() == 0 &&
        (!isolate->serializer_enabled() || v8_flags.zig_harden_intrinsics)) {
@@ -1570,9 +1466,10 @@ diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
  
      // Store String.prototype's map again in case it has been changed by
 diff --git a/src/objects/contexts.h b/src/objects/contexts.h
+index a1bc7555376..7b63ad259e4 100644
 --- a/src/objects/contexts.h
 +++ b/src/objects/contexts.h
-@@ -268,6 +268,7 @@
+@@ -266,6 +266,7 @@ enum ContextLookupFlags {
    V(JS_WEAK_REF_FUNCTION_INDEX, JSFunction, js_weak_ref_fun)                   \
    V(JS_FINALIZATION_REGISTRY_FUNCTION_INDEX, JSFunction,                       \
      js_finalization_registry_fun)                                              \

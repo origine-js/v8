@@ -142,6 +142,16 @@ test "ArrayBuffer and typed views: shared storage, offsets and detachment" {
             try t.expectEqual(@as(usize, 0), view.typedArray.length());
             const shared = v8.SharedArrayBuffer.newWithByteLength(env.isolate, 8).?;
             try t.expectEqual(@as(usize, 8), shared.byteLength());
+            const shared_view = v8.Uint8Array.init(shared, 2, 4).?;
+            const shared_base = shared_view.typedArray.arrayBufferView.buffer().?;
+            try t.expect(shared_base.object.value.isSharedArrayBuffer());
+            try t.expectEqual(@as(usize, 8), shared_base.byteLength());
+            var shared_backing = shared_base.getBackingStore();
+            defer shared_backing.deinit();
+            try t.expect(shared_backing.a != null);
+            try t.expectEqual(v8.ArrayBufferBase.fromBuffer(shared).data(), shared_base.data());
+            const shared_data_view = v8.DataView.init(shared_base, 0, 4).?;
+            try t.expectEqual(@as(usize, 4), shared_data_view.arrayBufferView.byteLength());
         }
     }.run);
 }

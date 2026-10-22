@@ -6,6 +6,10 @@ const Env = support.Env;
 const withEnv = support.withEnv;
 const ensureV8 = support.ensureV8;
 
+test "V8: linked engine is 15.8.30" {
+    try t.expect(std.mem.startsWith(u8, v8.V8.getVersion(), "15.8.30"));
+}
+
 test "WebAssembly: frozen namespace compiles and runs a module" {
     try t.expect(v8.has_webassembly);
     try t.expect(@hasDecl(v8.wasm, "WasmModuleObject"));

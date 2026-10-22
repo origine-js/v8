@@ -9,6 +9,7 @@ use crate::Message;
 use crate::Module;
 use crate::ModuleRequest;
 use crate::Object;
+use crate::Promise;
 use crate::String;
 use crate::UnboundModuleScript;
 use crate::Value;
@@ -104,7 +105,7 @@ where
 // System V ABI.
 #[cfg(not(target_os = "windows"))]
 #[repr(C)]
-pub struct SyntheticModuleEvaluationStepsRet(*const Value);
+pub struct SyntheticModuleEvaluationStepsRet(*const Promise);
 
 #[cfg(not(target_os = "windows"))]
 pub type SyntheticModuleEvaluationSteps<'s> =
@@ -113,35 +114,38 @@ pub type SyntheticModuleEvaluationSteps<'s> =
     Local<'s, Module>,
   ) -> SyntheticModuleEvaluationStepsRet;
 
-// Windows x64 ABI: Local<Value> returned on the stack.
+// Windows x64 ABI: Local<Promise> returned on the stack.
 #[cfg(target_os = "windows")]
 pub type SyntheticModuleEvaluationSteps<'s> =
   unsafe extern "C" fn(
-    *mut *const Value,
+    *mut *const Promise,
     Local<'s, Context>,
     Local<'s, Module>,
-  ) -> *mut *const Value;
+  ) -> *mut *const Promise;
 
 impl<'s, F> MapFnFrom<F> for SyntheticModuleEvaluationSteps<'s>
 where
   F: UnitType
-    + Fn(Local<'s, Context>, Local<'s, Module>) -> Option<Local<'s, Value>>,
+    + Fn(Local<'s, Context>, Local<'s, Module>) -> Option<Local<'s, Promise>>,
 {
   #[cfg(not(target_os = "windows"))]
+  /// Borrows callback locals through return; returns a promise local in their scope.
   fn mapping() -> Self {
     let f = |context, module| {
       SyntheticModuleEvaluationStepsRet(
-        (F::get())(context, module).map_or(null(), |r| -> *const Value { &*r }),
+        (F::get())(context, module)
+          .map_or(null(), |r| -> *const Promise { &*r }),
       )
     };
     f.to_c_fn()
   }
 
   #[cfg(target_os = "windows")]
+  /// Borrows callback locals through return; returns a promise local in their scope.
   fn mapping() -> Self {
     let f = |ret_ptr, context, module| {
       let r = (F::get())(context, module)
-        .map(|r| -> *const Value { &*r })
+        .map(|r| -> *const Promise { &*r })
         .unwrap_or(null());
       unsafe { std::ptr::write(ret_ptr, r) }; // Write result to stack.
       ret_ptr // Return stack pointer to the return value.
@@ -227,7 +231,7 @@ unsafe extern "C" {
   fn v8__Module__EvaluateForImportDefer(
     this: *const Module,
     context: *const Context,
-  ) -> *const Value;
+  ) -> *const Promise;
   fn v8__Module__GetIdentityHash(this: *const Module) -> int;
   fn v8__Module__ScriptId(this: *const Module) -> int;
   fn v8__Module__InstantiateModule(
@@ -239,7 +243,7 @@ unsafe extern "C" {
   fn v8__Module__Evaluate(
     this: *const Module,
     context: *const Context,
-  ) -> *const Value;
+  ) -> *const Promise;
   fn v8__Module__IsGraphAsync(this: *const Module) -> bool;
   fn v8__Module__HasTopLevelAwait(this: *const Module) -> bool;
   fn v8__Module__IsSourceTextModule(this: *const Module) -> bool;
@@ -412,7 +416,7 @@ impl Module {
   pub fn evaluate_for_import_defer<'s>(
     &self,
     scope: &PinScope<'s, '_>,
-  ) -> Option<Local<'s, Value>> {
+  ) -> Option<Local<'s, Promise>> {
     unsafe {
       Local::from_raw(v8__Module__EvaluateForImportDefer(
         self,
@@ -479,7 +483,7 @@ impl Module {
   pub fn evaluate<'s>(
     &self,
     scope: &PinScope<'s, '_>,
-  ) -> Option<Local<'s, Value>> {
+  ) -> Option<Local<'s, Promise>> {
     unsafe {
       scope
         .cast_local(|sd| v8__Module__Evaluate(self, sd.get_current_context()))

@@ -11,7 +11,6 @@ use crate::Message;
 use crate::Module;
 use crate::Object;
 use crate::PinScope;
-use crate::Platform;
 use crate::Promise;
 use crate::PromiseResolver;
 use crate::StartupData;
@@ -2341,6 +2340,7 @@ thread_local! {
 }
 
 #[inline(always)]
+// Returns a copied thread ID; retains no resources. Aborts if IDs are exhausted.
 fn current_thread_id() -> usize {
   CURRENT_THREAD_ID.with(|current| {
     let id = current.get();
@@ -2352,7 +2352,7 @@ fn current_thread_id() -> usize {
     // from another TLS destructor, where panicking would abort the process.
     // A relaxed global counter is sufficient because IDs are only compared.
     let id = NEXT_THREAD_ID
-      .fetch_update(
+      .try_update(
         std::sync::atomic::Ordering::Relaxed,
         std::sync::atomic::Ordering::Relaxed,
         |next| next.checked_add(1),

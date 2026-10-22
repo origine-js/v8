@@ -5,6 +5,7 @@
 /zig-pkg/
 /.claude/
 .DS_Store
+__pycache__/
 
 # Local credentials and environment overrides.
 .env

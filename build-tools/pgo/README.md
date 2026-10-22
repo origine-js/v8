@@ -3,8 +3,10 @@
 The [macOS arm64 profile](profiles/15.8.30/mac-arm64/builtins.profile) contains
 measured PGO data for the 16 builtins excluded from Google's baseline. It was
 generated with V8 15.8.30, our embedder defaults, and all production hardening.
-It is **not enabled in production**: the permanent exclusion policy remains in
-force, and Google's downloaded baseline is unchanged.
+Release builds enable these profiles **only on macOS aarch64**, alongside
+Google's matching baseline entries. Other targets keep the 16 exclusions.
+Google's downloaded baseline is unchanged; the build publishes a separate merged
+cache file. All hardening remains enabled.
 
 This is a focused synthetic training workload, not a benchmark result or a
 claim of improved application performance. It covers ordinary and rejected
@@ -35,8 +37,8 @@ Every generated hash matches a fresh initial-graph dump from the **hardened
 production mksnapshot**. Additional strict-reader validation used the temporary
 unpatched V8 reference with identical embedder settings and
 `--abort-on-bad-builtin-profile-data`; it accepted all 16 profiles without skipping
-them. This additional reference avoids treating production's unconditional
-exclusions as evidence that a profile was accepted.
+them. This additional reference avoids treating an exclusion as evidence that a
+profile was accepted. Production activation also requires strict hash validation.
 
 Only macOS arm64 is validated. In particular, do not apply an arm64-generated
 profile to x64; regenerate and verify it on the intended configuration. Profile
@@ -83,6 +85,13 @@ uv run build-tools/scripts/compare-pgo.py \
   --expect-mismatches 0 --expect-absent 0
 ```
 
-Enabling these profiles or combining them with Google's other entries requires
-a separate production configuration change. This workflow only generates and
-validates the artifacts requested; it preserves the existing exclusion policy.
+Training only generates artifacts. The production build separately invokes
+`prepare-custom-pgo.py` on macOS aarch64, verifies the training configuration,
+source revision and artifact digests, then replaces only the 16 names in a copy
+of Google's profile. Patch `0010` enables those names and strict hash rejection
+only for that target. Profile-based builtin reordering stays disabled.
+
+The manifest's `production_enabled: false` records the state when training
+finished; it is a provenance receipt, not a live build setting. The build's GN
+arguments and merged-profile receipt determine activation. Use
+`-Dbuiltin_pgo=false` to disable both Google and custom builtin PGO.

@@ -1,0 +1,98 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index c22c85af6e8..fc6e97a2660 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -59,6 +59,10 @@ declare_args() {
+   # Dynamically set an additional dependency from v8/custom_deps.
+   v8_custom_deps = ""
+ 
++  # Use configuration-matched profiles for the previously excluded builtins.
++  # Only the validated macOS arm64 configuration may opt in.
++  v8_zig_custom_builtin_pgo = false
++
+   # Sets -DV8_ENABLE_FUTURE.
+   v8_enable_future = false
+ 
+@@ -3346,6 +3350,14 @@ template("run_mksnapshot") {
+         "--warn-about-builtin-profile-data",
+       ]
+ 
++      if (v8_zig_custom_builtin_pgo) {
++        assert(target_os == "mac" && v8_target_cpu == "arm64")
++        args += [
++          "--zig-custom-builtin-pgo",
++          "--abort-on-bad-builtin-profile-data",
++        ]
++      }
++
+       # Deliberate profile exclusions must also be excluded from reordering.
+       # Matching entries still guide branch optimization.
+     }
+diff --git a/src/builtins/profile-data-reader.cc b/src/builtins/profile-data-reader.cc
+index 05c008d02ba..4d5863b9942 100644
+--- a/src/builtins/profile-data-reader.cc
++++ b/src/builtins/profile-data-reader.cc
+@@ -187,10 +187,11 @@ EnsureInitProfileData() {
+ }  // namespace
+ 
+ // Borrows name through return; a returned profile aliases process-lifetime
+-// storage. Excluded builtins return null without retaining caller resources.
++// storage. Exclusions remain in force unless macOS arm64 snapshot generation
++// explicitly opts into configuration-matched data. Retains no caller resources.
+ const ProfileDataFromFile* ProfileDataFromFile::TryRead(const char* name) {
+-  // These entries are deliberately excluded even if a later layout happens to
+-  // match Google's hash. The downloaded upstream profile remains unchanged.
++  // Other targets always exclude these entries. macOS arm64 may explicitly
++  // select locally measured profiles; normal graph-hash validation still applies.
+   static constexpr const char* excluded[] = {
+       "RunMicrotasks", "AsyncFunctionEnter", "AsyncFunctionAwait",
+       "AsyncGeneratorYieldWithAwait", "AsyncGeneratorReturn",
+@@ -198,17 +199,31 @@ const ProfileDataFromFile* ProfileDataFromFile::TryRead(const char* name) {
+       "AsyncGeneratorAwait", "FulfillPromise", "RejectPromise",
+       "NewPromiseCapability", "PromiseReject", "PromiseConstructor",
+       "PromiseResolve", "PromisePrototypeThen", "CreateTypedArray"};
++  bool use_custom = false;
++#if V8_OS_MACOS && defined(V8_TARGET_ARCH_ARM64)
++  use_custom = v8_flags.zig_custom_builtin_pgo;
++#endif
++  bool custom_entry = false;
+   for (const char* builtin : excluded) {
+     if (std::strcmp(name, builtin) == 0) {
+-      if (v8_flags.warn_about_builtin_profile_data) {
+-        std::cout << "Ignoring builtin PGO for " << name
+-                  << " (explicit downstream exclusion)" << std::endl;
++      if (!use_custom) {
++        if (v8_flags.warn_about_builtin_profile_data) {
++          std::cout << "Ignoring builtin PGO for " << name
++                    << " (explicit downstream exclusion)" << std::endl;
++        }
++        return nullptr;
+       }
+-      return nullptr;
++      custom_entry = true;
++      break;
+     }
+   }
+   const auto& data = EnsureInitProfileData();
+   auto it = data.find(name);
++  if (custom_entry && it != data.end() &&
++      v8_flags.warn_about_builtin_profile_data) {
++    std::cout << "Loading configuration-matched builtin PGO for " << name
++              << std::endl;
++  }
+   return it == data.end() ? nullptr : &it->second;
+ }
+ 
+diff --git a/src/flags/flag-definitions.h b/src/flags/flag-definitions.h
+index 6d0000a8b82..09069877203 100644
+--- a/src/flags/flag-definitions.h
++++ b/src/flags/flag-definitions.h
+@@ -382,6 +382,8 @@ DEFINE_DEVELOPER_FLAG(trace_temporal, "trace temporal code")
+ 
+ // zig-v8: disabled only while building the extensible engine seed snapshot.
+ DEFINE_BOOL(zig_harden_intrinsics, true, "freeze intrinsic graph and builtin globals")
++DEFINE_BOOL(zig_custom_builtin_pgo, false,
++            "use validated configuration-matched builtin PGO on macOS arm64")
+ 
+ DEFINE_IMPLICATION(js_import_bytes, js_immutable_arraybuffer)
+ 

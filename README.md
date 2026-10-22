@@ -140,13 +140,16 @@ The depot_tools pin matches V8 15.8.30's `DEPS`. The build retains the full ICU
 backend for its compressed ICU provider and locale API instead of V8's ICU4X default.
 Release desktop builds enable builtin PGO with Google's matching `15.8.30.0`
 baseline. The downloader verifies the upstream source revision and records a
-SHA-256 receipt. Sixteen builtin profiles are explicitly excluded regardless of
-whether their hashes match; V8 checks hashes for the remaining entries and warns
-when it discards a mismatch. Matching entries guide builtin branch optimization;
+SHA-256 receipt. On macOS aarch64, 16 incompatible entries are replaced in a
+separate merged profile with measured data from our hardened configuration;
+strict hash validation rejects mismatches. Other targets explicitly exclude
+these 16 entries and warn when discarding any other mismatch.
+Matching entries guide builtin branch optimization;
 profile-based builtin reordering is disabled. See [builtin PGO](docs/builtin-pgo.md)
 for the exclusions, measured acceptance, and verification commands.
 Arm64 uses Google's x64 profile, as supported by V8. Profiles are downloaded into
-the local V8 cache and are never modified or committed. Debug V8 disables PGO.
+the local V8 cache; Google's originals are never modified or committed. The
+measured macOS aarch64 overlay and its provenance are committed. Debug V8 disables PGO.
 Use `-Dbuiltin_pgo=false` for an unprofiled comparison build; different settings
 use separate output directories. This configures builtin PGO, not C++ compiler PGO.
 The first build applies the committed patches in `build-tools/patches/` automatically;

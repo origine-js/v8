@@ -33,6 +33,9 @@ Each directory holds `NNNN-name.patch` files applied in name order, as plain
    [builtin PGO](../docs/builtin-pgo.md), disables profile-based reordering, and
    retains hash checks for all remaining entries. Mismatches warn and discard
    optimization data without changing the baseline or hardened code.
+10. `0010-macos-arm64-custom-pgo` enables the 16 measured replacement profiles
+    only on macOS aarch64, with strict hash validation. Other targets retain the
+    exclusions from 0009.
 
 The build enables WebAssembly by default. Bindings are measured against
 that configuration; changing Wasm requires rebuilding, regenerating bindings,
@@ -68,5 +71,7 @@ Branch optimization still uses matching, non-excluded profiles.
 
 `scripts/train-pgo.py` can generate configuration-matched profiles for the 16
 excluded builtins using a separate hardened profiling build. See
-[the training workflow and generated artifacts](pgo/README.md). Generation does
-not enable the profiles or change the production exclusion policy.
+[the training workflow and generated artifacts](pgo/README.md). Generation alone
+does not enable profiles. Release macOS aarch64 builds separately validate and
+merge these 16 measured profiles with Google's other entries before GN runs.
+Other targets continue to use Google's baseline with the 16 exclusions.

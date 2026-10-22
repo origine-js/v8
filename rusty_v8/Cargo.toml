@@ -85,3 +85,6 @@ path = "benches/string_encode.rs"
 harness = false
 
 [workspace]
+
+# This vendored crate manages its lints independently of the consumer workspace.
+[lints]

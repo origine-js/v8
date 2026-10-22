@@ -114,7 +114,14 @@ const GnArgs = struct {
                 "v8_enable_builtins_profiling=false",
                 "dcheck_always_on=false",
             }) catch @panic("OOM");
-            lines.append(a, b.fmt("v8_builtins_profiling_log_file=\"//tools/builtins-pgo/profiles/{s}.profile\"", .{googleProfile(target)})) catch @panic("OOM");
+            if (customBuiltinPgo(target)) {
+                lines.appendSlice(a, &.{
+                    "v8_zig_custom_builtin_pgo=true",
+                    "v8_builtins_profiling_log_file=\"//tools/builtins-pgo/profiles/origine-mac-arm64.profile\"",
+                }) catch @panic("OOM");
+            } else {
+                lines.append(a, b.fmt("v8_builtins_profiling_log_file=\"//tools/builtins-pgo/profiles/{s}.profile\"", .{googleProfile(target)})) catch @panic("OOM");
+            }
         }
 
         if (self.mac_sdk_path) |path| {
@@ -135,6 +142,11 @@ const GnArgs = struct {
         return std.mem.join(a, "\n", lines.items) catch @panic("OOM");
     }
 };
+
+/// Copies the target descriptor; returns a value and retains no resources.
+fn customBuiltinPgo(target: std.Build.ResolvedTarget) bool {
+    return target.result.os.tag == .macos and target.result.cpu.arch == .aarch64;
+}
 
 /// Accepts a target descriptor and returns a static profile name; retains no resources.
 fn googleProfile(target: std.Build.ResolvedTarget) []const u8 {
@@ -343,7 +355,19 @@ pub fn add(
         profiles.addArgs(&.{ v8_dir, googleProfile(target) });
         profiles.has_side_effects = true;
         profiles.step.dependOn(&fetch.step);
-        gn.step.dependOn(&profiles.step);
+        if (customBuiltinPgo(target)) {
+            const custom = b.addSystemCommand(&.{ "uv", "run" });
+            custom.addFileArg(b.path("build-tools/scripts/prepare-custom-pgo.py"));
+            custom.addArg(v8_dir);
+            custom.addDirectoryArg(b.path(b.fmt("build-tools/pgo/profiles/{s}/mac-arm64", .{version})));
+            custom.addArgs(&.{ "--gn-args", args });
+            custom.has_side_effects = true;
+            custom.step.dependOn(&profiles.step);
+            custom.step.dependOn(&published_icu.run.step);
+            gn.step.dependOn(&custom.step);
+        } else {
+            gn.step.dependOn(&profiles.step);
+        }
     }
 
     const ninja = b.addSystemCommand(&.{ b.fmt("{s}/autoninja", .{depot_dir}), "-C", out_dir, "v8_zig" });

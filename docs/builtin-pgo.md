@@ -18,12 +18,11 @@ metadata's source revision and version, downloads the unchanged profile into the
 local V8 cache, and records a SHA-256 receipt. It verifies that receipt before
 reusing the cached profile. Google profile files are not committed or rewritten.
 
-## Permanent exclusions
+## Configuration-specific entries
 
-The following 16 builtins are excluded from PGO **even if a future graph matches
-Google's hash**, by explicit project policy. This decision is independent of the
-unpatched upstream comparison. Their implementations, hardening and tests remain
-enabled; only their optimization hints are ignored.
+The following 16 builtins use locally measured profiles on **macOS aarch64 only**.
+On other targets they remain explicitly excluded from PGO, even if a future graph
+matches Google's hash. Their implementations, hardening and tests remain enabled.
 
 | Builtin | Google hash | Hardened graph hash |
 |---|---|---|
@@ -45,9 +44,12 @@ enabled; only their optimization hints are ignored.
 | CreateTypedArray | `e8068af7` | `c1b3e7d5` |
 
 Patch `0009-pgo-compatible-builtins.patch` implements the exclusions in
-`ProfileDataFromFile::TryRead`, returning no profile for these names. It also
+`ProfileDataFromFile::TryRead`, returning no profile for these names by default. It also
 disables profile-based builtin reordering, so excluded entries cannot affect that
-optimization. Matching entries still guide branch optimization.
+optimization. Patch `0010-macos-arm64-custom-pgo.patch` permits these names only
+when the build explicitly selects the validated macOS arm64 overlay. That mode
+requires `--abort-on-bad-builtin-profile-data`; mismatches stop snapshot creation.
+Matching entries still guide branch optimization. Reordering remains disabled.
 
 For other builtins, V8 retains its graph-hash comparison. An incompatible entry
 emits a warning and is discarded. No hash is changed, and no mismatched profile is
@@ -77,7 +79,7 @@ All 1,012 Google hash records matched, including the 16 excluded names. However,
 that initial reference used the stock `.gn` while production uses
 `--root=. --dotfile=zig/.gn`. Identical `args.gn` files do **not** imply identical
 effective GN settings. The initial comparison therefore did not isolate the
-hardening patch series. The explicit exclusion policy remains unchanged.
+hardening patch series.
 
 ## Configuration diagnosis
 
@@ -143,7 +145,7 @@ the enabled feature already changes the generated graph.
 
 These defaults predate the 15.8 upgrade (they are present in the rusty_v8
 integration commit `8e23a39`). No production defaults, hardening, profile contents,
-or permanent exclusions were changed during this diagnosis. Google profiles
+or exclusions were changed during this diagnosis. Google profiles
 are simply incompatible with this embedder configuration for these 16 entries;
 the builtin implementations remain enabled and valid.
 
@@ -157,15 +159,33 @@ are retained beside the profile. The manifest also records successful strict
 reader validation against the configuration-matched reference.
 
 The training workload is focused and synthetic; no performance improvement is
-claimed. These profiles are **not enabled in production**. The exclusion policy
-and Google's baseline remain unchanged.
+claimed. Release builds enable these profiles **only on macOS aarch64**. The
+preparation script verifies the recorded training configuration, source revision,
+dotfile and artifact digests, and writes a separate merged cache profile and
+receipt. It replaces Google's records for exactly these 16 names, preserving
+measured hashes and counters. Google's original baseline remains unchanged.
+Other targets retain the 16 exclusions; Linux custom training is deferred.
+
+The training manifest's `production_enabled: false` describes the generation-time
+state, not the current build selection. `v8_zig_custom_builtin_pgo=true` and the
+`origine-mac-arm64.profile` input select the overlay. `-Dbuiltin_pgo=false`
+disables both Google and custom builtin PGO.
+
+The activated production generator accepted the merged profile with strict hash
+checks: **999 matching, zero mismatched, 13 absent Date entries**. It loaded all
+16 custom entries without an exclusion. As a negative control, the same generator
+and strict flags rejected Google's original `RunMicrotasks` record. Profile
+validation therefore remains active; the overlay supplies measured compatible
+data rather than bypassing the checks.
 
 ## Verification
 
 `zig build build-v8` downloads/verifies the baseline and rebuilds the hardened
-engine. Snapshot output reports `Ignoring builtin PGO for <name> (explicit
-downstream exclusion)` for each excluded entry; any other incompatible entry
-reports `Rejected profile data for <name>`.
+engine. On macOS aarch64 snapshot output reports `Loading configuration-matched
+builtin PGO for <name>` for each custom entry; all applicable entries must pass
+strict hash validation. Other targets report `Ignoring builtin PGO for <name>
+(explicit downstream exclusion)` for the 16 names; other incompatible entries
+report `Rejected profile data for <name>` and discard that entry.
 
 For diagnostic comparison, run a snapshot generator built **without the exclusion
 patch** against the unchanged profile:
@@ -180,7 +200,8 @@ patch** against the unchanged profile:
 
 Use `--abort-on-bad-builtin-profile-data` instead of the warning flag to verify
 strict all-entry acceptance. Keep this diagnostic separate from the hardened
-production build, whose explicit exclusions remain in force.
+production build. The macOS aarch64 production build instead validates the merged
+profile strictly; other targets retain the explicit exclusions.
 
 Compare generated hashes with the unchanged baseline using:
 

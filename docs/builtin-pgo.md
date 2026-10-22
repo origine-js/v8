@@ -16,7 +16,7 @@ directory.
 V8 supports using the x64 builtin profile for arm64. The downloader verifies the
 metadata's source revision and version, downloads the unchanged profile into the
 local V8 cache, and records a SHA-256 receipt. It verifies that receipt before
-reusing the cached profile. Profile files are not committed or rewritten.
+reusing the cached profile. Google profile files are not committed or rewritten.
 
 ## Permanent exclusions
 
@@ -68,16 +68,97 @@ The absent records are `DatePrototypeGetDate`, `DatePrototypeGetDay`,
 
 A graph-hash mismatch does **not** establish that the corresponding builtin's
 source implementation was edited. Constants, shared graph nodes, build settings,
-or layouts used by its generated code can also differ. The exact cause of these
-16 mismatches has not been established.
+or layouts used by its generated code can also differ.
 
 **Unpatched V8 15.8.30 accepts Google's baseline.** A separate V8 source tree at
 the same commit, with no V8 source patches and the same macOS arm64 GN arguments,
 successfully generated a snapshot with `--abort-on-bad-builtin-profile-data`.
-All 1,012 Google hash records matched, including the 16 excluded names.
-This isolates the difference to the downstream V8 patch series rather than those
-shared build settings. It does not imply that these 16 builtin implementations
-were directly edited. The explicit exclusion policy remains unchanged.
+All 1,012 Google hash records matched, including the 16 excluded names. However,
+that initial reference used the stock `.gn` while production uses
+`--root=. --dotfile=zig/.gn`. Identical `args.gn` files do **not** imply identical
+effective GN settings. The initial comparison therefore did not isolate the
+hardening patch series. The explicit exclusion policy remains unchanged.
+
+## Configuration diagnosis
+
+The production dotfile supplies these defaults, inherited from the existing
+embedder configuration:
+
+| GN setting | Stock V8 default | Production default |
+|---|---|---|
+| `v8_enable_javascript_promise_hooks` | `false` | `true` |
+| `v8_promise_internal_field_count` | `0` | `1` |
+| `v8_array_buffer_internal_field_count` | `0` | `2` |
+| `v8_array_buffer_view_internal_field_count` | `0` | `2` |
+| `v8_typed_array_max_size_in_heap` | `64` | `0` |
+
+Initial `V8.TFMachineCode` graphs captured before PGO validation show that
+`AsyncFunctionEnter` has 306 nodes with stock defaults versus 419 in production.
+Production includes a JavaScript context promise-hook call and its exception
+reporting path. `CreateTypedArray` has 4,393 nodes with stock defaults versus
+4,436 in production, including additional embedder-field initialization stores
+and a different heap-allocation threshold constant.
+
+**The 16 mismatches are caused by the embedder configuration, not by the
+hardening patches.** A second control built unpatched V8 using the production
+dotfile. Its `v8_initializers` compiler defines, include paths, C flags, and C++
+flags were identical to production's. The V8 source tree was clean at the pinned
+commit. It reproduced the exact same 16 rejected names **and hash values**.
+
+| V8 source | Effective defaults | Matching Google records | Mismatched | Absent |
+|---|---|---:|---:|---:|
+| Unpatched | Stock `.gn` | 1,012 | 0 | 0 |
+| Unpatched | Production `zig/.gn` | 996 | 16 | 0 |
+| Hardened | Production `zig/.gn` | 983 | 16 | 13 |
+
+All 999 Google entries present in both production-configured builds had
+identical graph hashes. The 13 absent records are the deliberately removed Date
+builtins. Removing hardening therefore does not restore compatibility for these
+16 profiles. The initial stock-reference result was real, but attributing it to
+the absence of hardening was incorrect.
+
+The concrete code-generation mechanisms are:
+
+- The 15 promise/async/microtask builtins use promise-hook or promise-allocation
+  helpers. `src/builtins/promise-misc.tq` includes JavaScript context hooks under
+  `V8_ENABLE_JAVASCRIPT_PROMISE_HOOKS`; `RunAllPromiseHooks` in
+  `src/builtins/builtins-microtask-queue-gen.cc` adds before/after context-hook
+  paths. `AllocateJSPromise` and `ZeroOutEmbedderOffsets` in
+  `src/builtins/builtins-promise-gen.cc` use `Promise::kEmbedderFieldCount`,
+  changing allocation size and emitting extra initialization stores. In the
+  captured `AsyncFunctionEnter` graph, promise allocation grows from 20 to 28
+  bytes, with stores for the extra field and a hook call/exception-reporting path.
+- `CreateTypedArray` uses `SetupTypedArrayEmbedderFields` and
+  `AllocateEmptyOnHeapBuffer` from `src/builtins/builtins-typed-array-gen.cc`,
+  which emit initialization for the configured extra fields. Its allocation
+  logic in `src/builtins/typed-array-createtypedarray.tq` also uses the configured
+  `kMaxTypedArrayInHeap` threshold. Production has extra initialization stores
+  and a zero threshold rather than stock V8's 64-byte threshold.
+
+V8 hashes the initial graph's operation/input structure in
+`src/compiler/pipeline.cc`, before applying PGO. Extra branches, calls, stores,
+and changes to shared constant nodes can invalidate a profile even when the
+builtin's own source file is unchanged. Runtime hook activation is not required:
+the enabled feature already changes the generated graph.
+
+These defaults predate the 15.8 upgrade (they are present in the rusty_v8
+integration commit `8e23a39`). No production defaults, hardening, profile contents,
+or permanent exclusions were changed during this diagnosis. Google profiles
+are simply incompatible with this embedder configuration for these 16 entries;
+the builtin implementations remain enabled and valid.
+
+## Locally trained profiles
+
+A separate [configuration-matched profile](../build-tools/pgo/README.md) is now
+available for all 16 excluded builtins on macOS arm64. It contains actual
+execution counters and branch hints from the hardened engine, with all 16 hashes
+validated against production. Compressed raw counters and a provenance manifest
+are retained beside the profile. The manifest also records successful strict
+reader validation against the configuration-matched reference.
+
+The training workload is focused and synthetic; no performance improvement is
+claimed. These profiles are **not enabled in production**. The exclusion policy
+and Google's baseline remain unchanged.
 
 ## Verification
 
@@ -100,3 +181,42 @@ patch** against the unchanged profile:
 Use `--abort-on-bad-builtin-profile-data` instead of the warning flag to verify
 strict all-entry acceptance. Keep this diagnostic separate from the hardened
 production build, whose explicit exclusions remain in force.
+
+Compare generated hashes with the unchanged baseline using:
+
+```sh
+uv run build-tools/scripts/compare-pgo.py /path/to/x64.profile /tmp/v8-builtin-hashes.txt
+```
+
+`--expect-mismatches` and `--expect-absent` assert the expected counts and exit
+nonzero on a difference. `--compare /path/to/other-hashes.txt` also compares both
+builds' hashes for shared Google entries; `--expect-differences` asserts that
+comparison's difference count. Hash dumping computes the initial hashes even
+for builtins deliberately excluded from applying PGO. Use a fresh dump file for
+each run: V8 appends to an existing hash dump.
+
+To repeat the controlled comparison, prepare an isolated unpatched checkout with
+the same dependencies and `args.gn` as production. Copy the production
+`build-tools/gn/.gn` to its `zig/.gn`, then invoke GN with an explicit source root:
+
+```sh
+gn --root=. --dotfile=zig/.gn gen out/control
+autoninja -C out/control mksnapshot
+```
+
+The explicit `--root=.` is required for this invocation to honor the alternate
+dotfile. Verify the generated `obj/v8_initializers.ninja` settings rather than
+assuming that `args.gn` alone describes the configuration. Run the diagnostic
+snapshot command above from `out/control`. Then, from the `lib/v8_zig` root:
+
+```sh
+uv run build-tools/scripts/compare-pgo.py /path/to/x64.profile \
+  /tmp/unpatched-embedder-hashes.txt --expect-mismatches 16 --expect-absent 0 \
+  --compare /tmp/hardened-hashes.txt --expect-differences 0
+```
+
+For the pinned macOS arm64 configuration this reports 999 shared Google entries
+and zero differences. The stock-default reference should instead report zero
+mismatches and zero absent entries. `--trace-turbo` together with
+`--trace-turbo-filter=AsyncFunctionEnter` or `CreateTypedArray` captures the initial
+`V8.TFMachineCode` graph for inspecting the added paths and stores.

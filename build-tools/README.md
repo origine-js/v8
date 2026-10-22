@@ -65,3 +65,8 @@ retains profile-hash validation, discarding incompatible entries with warnings.
 Never alter profile hashes to accept changed code. Profile-based builtin reordering
 is disabled because the explicit exclusions must also be excluded from reordering.
 Branch optimization still uses matching, non-excluded profiles.
+
+`scripts/train-pgo.py` can generate configuration-matched profiles for the 16
+excluded builtins using a separate hardened profiling build. See
+[the training workflow and generated artifacts](pgo/README.md). Generation does
+not enable the profiles or change the production exclusion policy.

@@ -1,0 +1,127 @@
+{
+  "builtins": {
+    "AsyncFunctionAwait": {
+      "branch_hints": 32,
+      "entry_count": 183558,
+      "executed_blocks": 98,
+      "hash": "280697d4"
+    },
+    "AsyncFunctionEnter": {
+      "branch_hints": 16,
+      "entry_count": 17128,
+      "executed_blocks": 43,
+      "hash": "0a9e6b05"
+    },
+    "AsyncGeneratorAwait": {
+      "branch_hints": 21,
+      "entry_count": 25000,
+      "executed_blocks": 59,
+      "hash": "27d6ebee"
+    },
+    "AsyncGeneratorPrototypeNext": {
+      "branch_hints": 8,
+      "entry_count": 42000,
+      "executed_blocks": 26,
+      "hash": "0893dd84"
+    },
+    "AsyncGeneratorPrototypeReturn": {
+      "branch_hints": 9,
+      "entry_count": 13000,
+      "executed_blocks": 27,
+      "hash": "1f6cef32"
+    },
+    "AsyncGeneratorReturn": {
+      "branch_hints": 17,
+      "entry_count": 13000,
+      "executed_blocks": 49,
+      "hash": "2c096f35"
+    },
+    "AsyncGeneratorYieldWithAwait": {
+      "branch_hints": 24,
+      "entry_count": 38000,
+      "executed_blocks": 73,
+      "hash": "cf76815e"
+    },
+    "CreateTypedArray": {
+      "branch_hints": 72,
+      "entry_count": 128064,
+      "executed_blocks": 235,
+      "hash": "c1b3e7d5"
+    },
+    "FulfillPromise": {
+      "branch_hints": 8,
+      "entry_count": 375206,
+      "executed_blocks": 28,
+      "hash": "f7bb5d7d"
+    },
+    "NewPromiseCapability": {
+      "branch_hints": 9,
+      "entry_count": 18000,
+      "executed_blocks": 20,
+      "hash": "1bbd1451"
+    },
+    "PromiseConstructor": {
+      "branch_hints": 29,
+      "entry_count": 50000,
+      "executed_blocks": 94,
+      "hash": "eff24b43"
+    },
+    "PromisePrototypeThen": {
+      "branch_hints": 30,
+      "entry_count": 36876,
+      "executed_blocks": 78,
+      "hash": "201a7ae9"
+    },
+    "PromiseReject": {
+      "branch_hints": 8,
+      "entry_count": 18000,
+      "executed_blocks": 20,
+      "hash": "f2a59b77"
+    },
+    "PromiseResolve": {
+      "branch_hints": 10,
+      "entry_count": 65701,
+      "executed_blocks": 27,
+      "hash": "00132416"
+    },
+    "RejectPromise": {
+      "branch_hints": 10,
+      "entry_count": 20000,
+      "executed_blocks": 21,
+      "hash": "116cee91"
+    },
+    "RunMicrotasks": {
+      "branch_hints": 60,
+      "entry_count": 1,
+      "executed_blocks": 148,
+      "hash": "de617e6d"
+    }
+  },
+  "counters_gzip_sha256": "86013f7df047b8410ac50eaa703bb5c0f14b0669bebea1bc0c19bb80fb24ce03",
+  "dotfile_sha256": "86dad3ffeea77fb4d145f8d8fb5c71c74d4c4fceab8032aa60514be355ab1f2f",
+  "generator_sha256": "592617f4c9917bf03418230a5ea01d559f74f12dff523ff1fe75f52351b270cf",
+  "hint_min_count": 1000,
+  "hint_ratio": 40,
+  "hints_generator_sha256": "c25e2bfc32fd0f9019781feca096a31bc0255aa2fb05906c8dac764e8ccf8e8c",
+  "iterations_per_phase": 8000,
+  "production_args": "target_os = \"mac\"\ntarget_cpu = \"arm64\"\nv8_target_cpu = \"arm64\"\nuse_siso = true\nis_official_build = false\nicu_use_data_file = true\nicu_use_stub_data = true\nv8_enable_ecma402_icu4x = false\nis_debug = false\nis_clang = true\nuse_thin_lto = true\nsymbol_level = 0\nis_asan = false\nis_tsan = false\nv8_enable_sandbox = true\nv8_enable_webassembly = true\nexclude_unwind_tables = true\nv8_enable_builtins_optimization = true\nv8_enable_builtins_profiling = false\ndcheck_always_on = false\nv8_builtins_profiling_log_file = \"//tools/builtins-pgo/profiles/x64.profile\"\n",
+  "production_enabled": false,
+  "production_mksnapshot_sha256": "8956befe07ceaf34c38e12ca19b57372aaac16eb43243debc6c19048c351b5ec",
+  "profile_sha256": "24b3b647e5e70b5828cc05400e3ef3e4e575983e0332ebab143efb63d5259ea5",
+  "raw_counters_sha256": "cbd337fd74fe270d0ed7afe4745604e563bd6372a814477907ab2e88f01a7ca1",
+  "revision": "a98309795399032afd2f191adaa94ed6e9918437",
+  "scope": "focused synthetic workload; no performance improvement claimed",
+  "strict_reader_validation": {
+    "mksnapshot_sha256": "db85bb26a4133c4813ee2bd2bdd31ba480f2eb1dccbba021fee04c94fb599c12",
+    "result": "accepted with --abort-on-bad-builtin-profile-data; no profiles ignored"
+  },
+  "target_cpu": "arm64",
+  "target_os": "mac",
+  "training_args": "target_os = \"mac\"\ntarget_cpu = \"arm64\"\nv8_target_cpu = \"arm64\"\nuse_siso = true\nis_official_build = false\nicu_use_data_file = true\nicu_use_stub_data = true\nv8_enable_ecma402_icu4x = false\nis_debug = false\nis_clang = true\nuse_thin_lto = true\nsymbol_level = 0\nis_asan = false\nis_tsan = false\nv8_enable_sandbox = true\nv8_enable_webassembly = true\nexclude_unwind_tables = true\nv8_enable_builtins_optimization = true\nv8_enable_builtins_profiling = true\ndcheck_always_on = false\nv8_builtins_profiling_log_file = \"\"\nv8_enable_builtins_reordering = false\n",
+  "training_d8_sha256": "13c0936c15b9845f5431250f4daa7e35798764fd4089a1d234b1d05ce2b112dc",
+  "v8_source_diff_sha256": "105aeeb341fc2cf4c370d5d9304c52d4b39bb34f66c174f14e71f25216933640",
+  "validation": "all 16 hashes match production initial graphs",
+  "version": "15.8.30.0",
+  "workload_result": "{\"iterationsPerPhase\":8000,\"ordinary\":332628088,\"hooked\":332628088,\"hookEvents\":928504}\n",
+  "workload_sha256": "ea08d11fcaccfc2f669629bffd6408e911374aa916c421df2c088ea8c3c9ca49"
+}

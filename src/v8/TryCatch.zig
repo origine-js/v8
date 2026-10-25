@@ -9,7 +9,8 @@ const Message = v8.Message;
 pub const TryCatch = struct {
     pub const Opaque = [binding.sizes.TryCatch]u8;
 
-    inner: Opaque,
+    /// V8 placement-constructs pointer-bearing objects here, so it needs pointer alignment.
+    inner: Opaque align(@alignOf(usize)),
 
     const Self = @This();
 

@@ -15,6 +15,8 @@
 #include "cppgc/platform.h"
 #include "libplatform/libplatform.h"
 #include "support.h"
+#include <mutex>
+
 #include "third_party/simdutf/simdutf.h"
 #include "unicode/locid.h"
 #include "v8-callbacks.h"
@@ -2254,6 +2256,7 @@ struct InternalFieldData {
 };
 
 std::vector<InternalFieldData*> deserialized_data;
+std::mutex deserialized_data_mutex;
 
 void DeserializeInternalFields(v8::Local<v8::Object> holder, int index,
                                v8::StartupData payload, void* data) {
@@ -2263,10 +2266,18 @@ void DeserializeInternalFields(v8::Local<v8::Object> holder, int index,
                                           v8::kEmbedderDataTypeTagDefault);
     return;
   }
+  // Only payloads this embedder wrote have this exact size; anything else is a
+  // corrupt or foreign snapshot and must not be copied into a fixed-size cell.
+  if (payload.raw_size != static_cast<int>(sizeof(InternalFieldData))) {
+    holder->SetAlignedPointerInInternalField(index, nullptr,
+                                          v8::kEmbedderDataTypeTagDefault);
+    return;
+  }
   InternalFieldData* embedder_field = new InternalFieldData{0};
-  memcpy(embedder_field, payload.data, payload.raw_size);
+  memcpy(embedder_field, payload.data, sizeof(InternalFieldData));
   holder->SetAlignedPointerInInternalField(index, embedder_field,
                                         v8::kEmbedderDataTypeTagDefault);
+  std::lock_guard<std::mutex> lock(deserialized_data_mutex);
   deserialized_data.push_back(embedder_field);
 }
 

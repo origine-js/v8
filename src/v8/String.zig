@@ -1,3 +1,4 @@
+const std = @import("std");
 const e = @import("../generated/externs.gen.zig");
 const v8 = @import("../v8.zig");
 const Isolate = v8.Isolate;
@@ -18,37 +19,48 @@ pub const String = extern struct {
 
     const Self = @This();
 
+    /// `len` as V8's `int` length; a longer string can never be created, so this is fatal in
+    /// every build mode (an unchecked cast would silently truncate in release builds).
+    fn cLen(n: usize) c_int {
+        return std.math.cast(c_int, n) orelse tooLong();
+    }
+
+    /// V8 returned an empty handle: the input exceeds `String::kMaxLength`.
+    fn tooLong() noreturn {
+        @panic("v8.String: string exceeds the maximum length");
+    }
+
     pub fn from_opaque(o: MaybeHandle) ?@This() {
         return .{ .name = Name.from_opaque(o) orelse return null };
     }
 
     pub fn initUtf8(isolate: Isolate, str: []const u8) Self {
         return .{
-            .name = Name.from_opaque(e.v8__String__NewFromUtf8(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewFromUtf8(isolate.handle, str.ptr, .Normal, cLen(str.len))) orelse tooLong(),
         };
     }
 
     pub fn initOneByte(isolate: Isolate, str: []const u8) Self {
         return .{
-            .name = Name.from_opaque(e.v8__String__NewFromOneByte(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewFromOneByte(isolate.handle, str.ptr, .Normal, cLen(str.len))) orelse tooLong(),
         };
     }
 
     pub fn initTwoByte(isolate: Isolate, str: []const u16) Self {
         return .{
-            .name = Name.from_opaque(e.v8__String__NewFromTwoByte(isolate.handle, str.ptr, .Normal, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewFromTwoByte(isolate.handle, str.ptr, .Normal, cLen(str.len))) orelse tooLong(),
         };
     }
 
     pub fn initOneByteStatic(isolate: Isolate, str: []const u8) Self {
         return .{
-            .name = Name.from_opaque(e.v8__String__NewExternalOneByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewExternalOneByteStatic(isolate.handle, str.ptr, cLen(str.len))) orelse tooLong(),
         };
     }
 
     pub fn initTwoByteStatic(isolate: Isolate, str: []const u16) Self {
         return .{
-            .name = Name.from_opaque(e.v8__String__NewExternalTwoByteStatic(isolate.handle, str.ptr, @as(c_int, @intCast(str.len)))).?,
+            .name = Name.from_opaque(e.v8__String__NewExternalTwoByteStatic(isolate.handle, str.ptr, cLen(str.len))) orelse tooLong(),
         };
     }
 
@@ -57,7 +69,7 @@ pub const String = extern struct {
     /// string valid until that scope closes. Oversized input or allocation failure
     /// is fatal, matching the normal constructors; no host ownership transfers.
     pub fn initUtf8Internalized(isolate: Isolate, str: []const u8) Self {
-        return from_opaque(e.v8__String__NewFromUtf8(isolate.handle, str.ptr, .Internalized, @intCast(str.len))).?;
+        return from_opaque(e.v8__String__NewFromUtf8(isolate.handle, str.ptr, .Internalized, cLen(str.len))) orelse tooLong();
     }
 
     /// Borrows immutable input until return; V8 copies/canonicalizes its contents.
@@ -65,7 +77,7 @@ pub const String = extern struct {
     /// string valid until that scope closes. Oversized input or allocation failure
     /// is fatal, matching the normal constructors; no host ownership transfers.
     pub fn initOneByteInternalized(isolate: Isolate, str: []const u8) Self {
-        return from_opaque(e.v8__String__NewFromOneByte(isolate.handle, str.ptr, .Internalized, @intCast(str.len))).?;
+        return from_opaque(e.v8__String__NewFromOneByte(isolate.handle, str.ptr, .Internalized, cLen(str.len))) orelse tooLong();
     }
 
     /// Borrows immutable input until return; V8 copies/canonicalizes its contents.
@@ -73,7 +85,7 @@ pub const String = extern struct {
     /// string valid until that scope closes. Oversized input or allocation failure
     /// is fatal, matching the normal constructors; no host ownership transfers.
     pub fn initTwoByteInternalized(isolate: Isolate, str: []const u16) Self {
-        return from_opaque(e.v8__String__NewFromTwoByte(isolate.handle, str.ptr, .Internalized, @intCast(str.len))).?;
+        return from_opaque(e.v8__String__NewFromTwoByte(isolate.handle, str.ptr, .Internalized, cLen(str.len))) orelse tooLong();
     }
 
     /// Borrows self/isolate through return on the entered isolate thread with a

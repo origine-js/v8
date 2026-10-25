@@ -6,7 +6,8 @@ const Isolate = v8.Isolate;
 pub const HandleScope = struct {
     pub const Opaque = [binding.sizes.HandleScope]u8;
 
-    inner: Opaque,
+    /// V8 placement-constructs pointer-bearing objects here, so it needs pointer alignment.
+    inner: Opaque align(@alignOf(usize)),
 
     const Self = @This();
 

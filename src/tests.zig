@@ -2,6 +2,7 @@
 test {
     _ = @import("tests/eu.zig");
     _ = @import("tests/raw/engine.zig");
+    _ = @import("tests/raw/simdutf.zig");
     _ = @import("tests/raw/contexts.zig");
     _ = @import("tests/raw/primitives.zig");
     _ = @import("tests/raw/arrays.zig");

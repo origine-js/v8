@@ -99,7 +99,10 @@ pub const ArrayBuffer = extern struct {
         return .{ .handle = e.v8__ArrayBuffer__NewBackingStore__with_byte_length(isolate.handle, byte_length) orelse return null };
     }
 
+    /// Returns null (consuming nothing) in a V8 sandbox build: V8 aborts the process for memory
+    /// outside the sandbox cage, and the default build enables the sandbox.
     pub fn newBackingStoreWithData(data_arg: ?*anyopaque, byte_length: usize, deleter: v8.Callbacks.BackingStore_DeleterCallback, deleter_data: ?*anyopaque) ?v8.BackingStore {
+        if (v8.V8.isSandboxEnabled()) return null;
         return .{ .handle = e.v8__ArrayBuffer__NewBackingStore__with_data(data_arg, byte_length, deleter, deleter_data) orelse return null };
     }
 

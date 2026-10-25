@@ -69,7 +69,7 @@ multilingual service coverage. Formatting and whitespace checks passed.
 Deferred loading keeps the ICU package compressed through V8 initialization,
 context creation and plain JavaScript execution. First actual ICU data use pays
 the expansion cost. The isolated concurrent-first-use test checks this behavior;
-see [startup measurement guidance](shell-performance.md#startup-tracing) for
+see [startup measurement guidance](../../../docs/shell-performance.md#startup-tracing) for
 measuring the current shell.
 
 Yes: ICU data can be filtered and compressed. Per-item lazy decompression with a shared zstd dictionary is feasible, but requires a custom ICU loader change; it is not an existing public ICU configuration switch. Compressing data does not compress ICU's native machine code.

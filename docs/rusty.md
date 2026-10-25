@@ -50,7 +50,7 @@ Command Line Tools).
 * **WebAssembly is on** (`-Dwebassembly=false` to remove). Patch 0007 installs and seals the
   `WebAssembly` namespace like the other intrinsics.
 * `v8::V8::attach_initialized(platform)` joins a V8 that Zig's `Engine` already initialized
-  (`tests/test_attach.rs`); then neither side initializes or disposes twice.
+  (`rusty_v8/tests/test_attach.rs`); then neither side initializes or disposes twice.
 * Temporal comes from crates.io `temporal_capi`; the Rust build uses `lib_no_temporal`
   (`zig build` still bundles the Zig-side rlibs in `libv8_zig.a`; `v8_no_temporal` is exported as a
   named lazy path).

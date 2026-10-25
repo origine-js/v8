@@ -25,9 +25,21 @@ zig build -Doptimize=small
 ```
 
 Within this package, `zig build` installs native libraries and `zig build test`
-runs package tests. Import-map isolation and shared private capabilities are
-exercised in those tests. To reuse an archive, pass
+runs the package tests (wrapper behavior against a real V8). The managed-runtime
+tests, including import-map isolation and shared private capabilities, live in
+origine's `src/tests/managed/`. To reuse an archive, pass
 `-Dprebuilt_v8_path=/absolute/path/libv8_zig.a`.
+
+| Step | Purpose |
+| --- | --- |
+| `build-v8`, `patch-v8` | Rebuild V8, or only fetch and patch it |
+| `test`, `test-icu-lazy` | Package tests; deferred ICU loading in a fresh process |
+| `gen`, `check-generated`, `check-bindings` | Regenerate or verify the bindings (below) |
+| `rusty`, `test-rusty` | Build and test the Rust `v8` crate on this archive ([rusty](docs/rusty.md)) |
+| `build-zstd` | Build the ICU zstd decoder alone |
+| `test-darwin-frameworks`, `build-darwin-frameworks-test` | macOS only: deferred framework APIs and JIT policy |
+
+The `justfile` wraps the common ones (`just build`, `rebuild`, `dev`, `patch`, `new-patch`, `test`, `test-dev`).
 
 ## Zig modules and source layout
 
@@ -39,6 +51,9 @@ optional startup tracing for applications that need it.
 
 Declare `.v8 = .{ .path = "lib/v8_zig" }` in the application's `build.zig.zon`,
 then call `b.dependency("v8", .{ .target = target, .optimize = optimize })`.
+Other options: `-Dv8_debug`, `-Dbuiltin_pgo`, `-Dcache_root`, `-Dprebuilt_v8_path`, `-Dv8_clang_dir`,
+`-Dthin_lto`, `-Dexclude_unwind_tables`, `-Dtemporal`, `-Dwebassembly`, `-Dsymbol_level`,
+`-Dv8_enable_sandbox`, `-Doptimize_for_size`, `-Druntime_call_stats` (see `zig build --help`).
 Modules link their native dependencies by default, including cached Darwin
 bitcode conversion. External final linkers can pass `.link_native = false`,
 then use `dependency.namedLazyPath("v8")`, `dependency.namedLazyPath("clang_bin")`,
@@ -66,7 +81,7 @@ may still manage platform initialization themselves instead of using `Engine`.
 Source responsibilities are grouped under `v8/`, `generated/`,
 `memory/`, `diagnostics/`, and `tests/`. Generated files remain committed;
 edit their generator or source manifests and regenerate rather than editing outputs.
-`@engine` (process lifecycle) and `@managed` (runtimes and scopes) now live in origine's `src/`.
+`@engine` (process lifecycle) and `@managed` (runtimes and scopes) live in origine's `src/`, not in this package; the examples below use them as the application does.
 From origine, `V8_STARTUP_TRACE=1 zig build run` reports engine, runtime and scope startup stages.
 
 ## Typed value constructors

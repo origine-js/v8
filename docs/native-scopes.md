@@ -1,6 +1,6 @@
 # Native V8 scopes
 
-The managed API in `src/managed.zig` creates separate V8 contexts inside one isolate.
+The managed API (`@managed`, `src/managed.zig` in the origine application, not in this package) creates separate V8 contexts inside one isolate.
 It uses native scripts, ESM linking, synthetic modules, and promises. A project-owned
 bootstrap hardens contexts; there is no SES dependency.
 
@@ -19,7 +19,7 @@ at each checkpoint:
 | 6 | Optional import-map adapter | Scoped/prefix mappings, blocked targets, virtual backends |
 | 7 | Shell, native capabilities, combined adversarial tests | Private native state, forged receivers, callbacks and exceptions |
 
-Tests are grouped by behavior under `src/tests/managed/`. Import-map and shared
+Tests are grouped by behavior under origine's `src/tests/managed/` (run with `zig build test` from the repository root). Import-map and shared
 private-counter demonstrations live there rather than in the shell.
 
 ## Initialization and ownership
@@ -111,13 +111,13 @@ Zig/mimalloc allocations do not reside in the sandbox. Use V8's default allocato
 or a separately implemented sandbox-compatible borrowed allocator in that build.
 
 The `@mimalloc` module's `allocator` has process-lifetime state and supports cross-thread frees;
-there is no Zig allocator deinit call. Zig builds the pinned dependency's `src/static.c`
+there is no Zig allocator deinit call. Zig builds the pinned mimalloc dependency's `src/static.c`
 directly and installs `libmimalloc.a` alongside `libv8_zig.a`. C consumers using the
 `mi_*` APIs must link the mimalloc archive too. No libc malloc overrides or macOS
 malloc-zone interposition are enabled. This selection affects managed metadata
 and/or ArrayBuffer backing stores as requested; V8 GC/code pages and unrelated
 native malloc/new allocations retain their existing paths. The disabled
-`src/alloc.zig` replacement is not imported or modified.
+mimalloc `src/alloc.zig` replacement is not imported or modified.
 
 ### Slice ownership and lifetimes
 

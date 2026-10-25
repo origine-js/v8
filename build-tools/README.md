@@ -7,14 +7,27 @@ Everything the build runs that is not Zig source.
 | `patches/v8/` | Ordered patch series applied to the V8 checkout |
 | `patches/partition_alloc/` | Series for `third_party/partition_alloc` (own git root) |
 | `patches/icu/` | Series for `third_party/icu` (own git root) |
-| `scripts/` | Build helpers: fetch, patch apply/author, ICU compression, archive bundling, startup measurement |
+| `scripts/` | Build helpers, listed below |
 | `gn/` | `BUILD.gn` and `.gn` copied into the V8 checkout at `zig/` |
+| `pgo/` | Configuration-matched builtin PGO profiles and training workload ([pgo/README.md](pgo/README.md)) |
 | `bindgen/` | `layout.zon` and `typemap.zon`, inputs of `zig build gen` |
+
+## Scripts
+
+| Script | Purpose |
+| --- | --- |
+| `fetch-v8.sh` | Prepares depot_tools and the V8 checkout in the cache root (stages guarded by `.bootstrap-complete` markers) |
+| `apply-patches.sh`, `new-patch.sh` | Apply a patch series to a checkout; write the next numbered patch from edits |
+| `compress-icu.py` | Compresses the ICU data package with zstd |
+| `download-pgo.py`, `prepare-custom-pgo.py`, `train-pgo.py`, `compare-pgo.py` | Builtin PGO: fetch Google's baseline, merge the measured overlay, train, compare ([builtin PGO](../docs/builtin-pgo.md)) |
+| `bundle-archives.sh`, `strip-bitcode-ar.py`, `native-archive.py`, `lto-clang.sh` | Flatten V8 and Rust archives into `libv8_zig.a`; drop or convert LLVM bitcode (Darwin); linker driver for cross-language ThinLTO |
+| `cargo-rusty.sh` | Runs cargo for `rusty_v8` against this repository's archive ([rusty](../docs/rusty.md)) |
+| `measure-startup.py`, `compare-startup.py` | Startup stage measurement and binary comparison (see origine's [shell-performance.md](../../../docs/shell-performance.md)) |
 
 ## Patch series
 
 Each directory holds `NNNN-name.patch` files applied in name order, as plain
-`git apply` patches against the pinned V8 version. Current V8 series:
+`git apply` patches against the pinned V8 version. The `icu` series has `0001-lazy-data` (provider hook for the compressed, lazily expanded ICU data; see [ICU data compression](../docs/icu-data-compression.md)) and the `partition_alloc` series has `0001-lazy-frameworks` (deferred macOS framework loading). Current V8 series:
 
 1. `0001-intrinsics` retains original builtin functions in a context table
 2. `0002-hardening` freezes the intrinsic graph and builtin globals

@@ -1,7 +1,6 @@
 const std = @import("std");
 const v8_build = @import("build/v8.build.zig");
 const binding_build = @import("build/binding.build.zig");
-const mimalloc_build = @import("build/mimalloc.build.zig");
 const rusty_build = @import("build/rusty.build.zig");
 
 /// Configures build-owned V8/mimalloc artifacts and modules; retains no runtime state.
@@ -49,14 +48,12 @@ pub fn build(b: *std.Build) void {
         native.addArg(clang_bin);
         native.addArgs(&.{ "--target", b.fmt("{s}-apple-macos{f}", .{ @tagName(target.result.cpu.arch), target.result.os.version_range.semver.min }) });
     }
-    const mimalloc = mimalloc_build.add(b, target, if (optimize == .debug) .fast else .safe);
-    if (optimize != .debug) {
-        mimalloc.use_llvm = true;
-        if (enable_lto) {
-            mimalloc.use_lld = true;
-            mimalloc.lto = .full;
-        }
-    }
+    const mimalloc_dep = b.dependency("mimalloc", .{
+        .target = target,
+        .optimize = if (optimize == .debug) std.builtin.OptimizeMode.fast else .safe,
+        .lto = enable_lto,
+    });
+    const mimalloc = mimalloc_dep.artifact("mimalloc");
 
     const module = b.addModule("@v8", .{
         .root_source_file = b.path("src/v8.zig"),
@@ -83,14 +80,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    const mimalloc_module = b.addModule("@mimalloc", .{
-        .root_source_file = b.path("src/memory/mimalloc.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
+    // Re-exported so dependents (the root build) take `@mimalloc` from here with `@v8`.
+    const mimalloc_module = mimalloc_dep.module("@mimalloc");
+    b.modules.put(b.graph.arena, b.dupe("@mimalloc"), mimalloc_module) catch @panic("OOM");
     if (link_native) mimalloc_module.linkLibrary(mimalloc);
     util_module.addImport("@mimalloc", mimalloc_module);
+    module.addImport("@mimalloc", mimalloc_module);
 
     // Inspect the same native archive the wrappers link on macOS. System nm
     // cannot read the newer LLVM bitcode in V8's raw ThinLTO archive.

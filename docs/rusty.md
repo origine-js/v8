@@ -45,8 +45,11 @@ Command Line Tools).
   ShadowRealm is not installed by the hardened engine.
   `zig build test-rusty -Drusty_cargo_args="--features inspector --no-fail-fast"` runs the
   `inspector_tests` and `crdtp_tests` modules.
-* **Sandbox is on** (`v8_enable_sandbox`): external ArrayBuffer backing stores and Zig/Rust custom
-  allocators are rejected by V8. Origine's errno channel was changed to live in sandbox memory.
+* **Sandbox is on** (`v8_sandbox`): external ArrayBuffer backing stores and Zig/Rust custom
+  allocators that use ordinary memory are rejected by V8. Zig code gets sandbox-resident backing
+  stores from `ArrayBuffer.Allocator.fromSandbox` (`src/v8/ArrayBuffer.zig`): a mimalloc arena over
+  pages from `V8::sandboxReservePages` (`v8::V8::GetSandboxAddressSpace()`), unloaded and returned
+  on `deinit` (mimalloc patches in `lib/mimalloc/patches`). Origine's errno channel was changed to live in sandbox memory.
 * **WebAssembly is on** (`-Dwebassembly=false` to remove). Patch 0007 installs and seals the
   `WebAssembly` namespace like the other intrinsics.
 * `v8::V8::attach_initialized(platform)` joins a V8 that Zig's `Engine` already initialized

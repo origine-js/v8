@@ -139,6 +139,31 @@ extern "C" bool v8__V8__IsSandboxEnabled() {
   return v8::internal::SandboxIsEnabled();
 }
 
+// Allocates `size` bytes inside the V8 sandbox, `alignment`-aligned, for an embedder
+// allocator that backs ArrayBuffers: zero-filled and readable/writable when `writable`,
+// otherwise inaccessible (a reservation). Null without a sandbox or when it is out of address
+// space. V8 must be initialized (the sandbox is created by V8::Initialize).
+extern "C" void* v8__V8__SandboxReservePages(size_t size, size_t alignment,
+                                             bool writable) {
+#ifdef V8_ENABLE_SANDBOX
+  v8::VirtualAddressSpace* space = v8::V8::GetSandboxAddressSpace();
+  return reinterpret_cast<void*>(
+      space->AllocatePages(v8::VirtualAddressSpace::kNoHint, size, alignment,
+                           writable ? v8::PagePermissions::kReadWrite
+                                    : v8::PagePermissions::kNoAccess));
+#else
+  return nullptr;
+#endif
+}
+
+// Returns pages from v8__V8__SandboxReservePages; `size` must match the reservation.
+extern "C" void v8__V8__SandboxReleasePages(void* address, size_t size) {
+#ifdef V8_ENABLE_SANDBOX
+  v8::V8::GetSandboxAddressSpace()->FreePages(
+      reinterpret_cast<v8::VirtualAddressSpace::Address>(address), size);
+#endif
+}
+
 extern "C" {
 
 // Host-only access to original public method functions retained by the engine

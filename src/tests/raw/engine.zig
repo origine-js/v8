@@ -1,6 +1,7 @@
 const std = @import("std");
 const t = std.testing;
 const v8 = @import("@v8");
+const mi = @import("@mimalloc");
 const support = @import("support.zig");
 const Env = support.Env;
 const withEnv = support.withEnv;
@@ -322,7 +323,7 @@ test "V8: general allocations come from mimalloc" {
     env.start();
     defer env.stop();
     // i::Isolate is allocated with base::AlignedAlloc, which the V8 patch routes to mimalloc.
-    try t.expect(@import("@mimalloc").mi_is_in_heap_region(env.isolate.handle));
+    try t.expect(@import("@mimalloc").isInHeapRegion(env.isolate.handle));
 }
 
 test "V8: initialize and ICU" {
@@ -367,4 +368,43 @@ test "Platform: message loop pumps without work" {
             try t.expect(!@import("../support.zig").engine.platform.pumpMessageLoop(env.isolate, false));
         }
     }.run);
+}
+
+// Owns the allocator and isolate it creates and releases both before return.
+test "ArrayBuffer.Allocator.fromSandbox: stores are zeroed, reused, and the arena unloads and pages return to V8" {
+    ensureV8();
+    if (!v8.V8.isSandboxEnabled()) return error.SkipZigTest;
+    // Every page goes back to V8 and the arena leaves mimalloc on each round; the second round starts from nothing again.
+    for (0..2) |_| {
+        const aba = try v8.ArrayBuffer.Allocator.fromSandbox();
+        var params = v8.Isolate.CreateParams.init();
+        params.array_buffer_allocator = aba;
+        {
+            const isolate = v8.Isolate.init(&params);
+            defer isolate.deinit();
+            isolate.enter();
+            defer isolate.exit();
+            var h_scope: v8.HandleScope = undefined;
+            h_scope.init(isolate);
+            defer h_scope.deinit();
+            const context = v8.Context.init(isolate, null, null, null);
+            context.enter();
+            defer context.exit();
+            const script = v8.Script.compile(context, v8.String.initUtf8(isolate,
+                \\let ok = new ArrayBuffer(0).byteLength === 0;
+                \\for (const size of [1, 17, 4096, 70000, 1 << 20, 24 << 20, 96 << 20]) {
+                \\  for (let round = 0; round < 3; round++) {
+                \\    const bytes = new Uint8Array(new ArrayBuffer(size));
+                \\    ok = ok && bytes.every((x) => x === 0);
+                \\    bytes.fill(0xaa);
+                \\  }
+                \\}
+                \\ok
+            ), null).?;
+            try t.expect(script.run(context).?.isTrue());
+        }
+        aba.deinit();
+        // Faults if mimalloc still visits the unmapped arena.
+        mi.collect(true);
+    }
 }

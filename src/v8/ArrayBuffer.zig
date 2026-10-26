@@ -1,6 +1,7 @@
 const e = @import("../generated/externs.gen.zig");
 const std = @import("std");
 const v8 = @import("../v8.zig");
+const mi = @import("@mimalloc");
 const Object = v8.Object;
 
 pub const ArrayBuffer = extern struct {
@@ -29,7 +30,8 @@ pub const ArrayBuffer = extern struct {
         /// adapter-owned storage allocated through alloc. Its state must be thread-safe
         /// and stay alive until this allocator and every backing store are released.
         /// Call deinit once after all users. On failure no allocations are retained.
-        /// Rejects V8 sandbox builds; ordinary allocators cannot supply sandbox memory.
+        /// Rejects V8 sandbox builds; ordinary allocators cannot supply sandbox memory (use
+        /// `fromSandbox`).
         /// Does not redirect V8 GC/code pages, native malloc/new, or host allocations.
         pub fn fromZig(alloc: std.mem.Allocator) !@This() {
             if (v8.V8.isSandboxEnabled()) return error.UnsupportedSandboxAllocator;
@@ -38,6 +40,111 @@ pub const ArrayBuffer = extern struct {
             state.* = .{ .alloc = alloc };
             return newZigAllocator(state, &ZigState.table) orelse error.OutOfMemory;
         }
+
+        /// Creates an owning allocator whose backing stores live in the V8 sandbox, the only
+        /// place a sandboxed V8 accepts them: a mimalloc heap over an arena of sandbox pages,
+        /// with stores over 16 MiB (more than an arena block can hold) in pages of their own.
+        /// Stores are zero-filled on request, 16-byte aligned, and may be allocated and freed
+        /// from any thread. `deinit` destroys the heap and unloads the arena (mimalloc keeps the
+        /// arena's metadata inside the sandbox) before returning the pages, so it must run before
+        /// `V8.dispose`, after all isolates and backing stores using it (a store that outlives its
+        /// isolate keeps the allocator alive until the store is freed). V8 must be initialized.
+        /// Errors: SandboxDisabled without a sandbox, OutOfMemory otherwise.
+        pub fn fromSandbox() !@This() {
+            if (!v8.V8.isSandboxEnabled()) return error.SandboxDisabled;
+            const state = try SandboxState.create();
+            errdefer state.destroy();
+            return newZigAllocator(state, &SandboxState.table) orelse error.OutOfMemory;
+        }
+
+        const SandboxState = struct {
+            heap: *mi.Heap,
+            arena: mi.Arena.Id,
+            base: [*]u8,
+            size: usize,
+
+            const alignment: std.mem.Alignment = .@"16";
+            /// Address space (not memory) of the arena: the most one mimalloc arena can span.
+            const arena_bytes = 8 << 30;
+            const arena_alignment = 4 << 20;
+            const min_arena_bytes = 256 << 20;
+            /// mimalloc serves arena blocks only up to 32 MiB, so bigger stores take whole sandbox
+            /// pages like V8's own allocator. `free` gets the same length, so it can tell.
+            const direct_threshold = 16 << 20;
+            const page = 64 << 10;
+            const table: v8.ZigAllocatorTable = .{
+                .alloc_zeroed = allocZeroed,
+                .alloc = allocUninitialized,
+                .free = free,
+                .deinit = destroyCallback,
+            };
+
+            /// Reserves the arena (halving the request while the sandbox is short of address
+            /// space) and a heap in it. Caller-owned result, released with `destroy`.
+            fn create() !*SandboxState {
+                const self = try mi.allocator.create(SandboxState);
+                errdefer mi.allocator.destroy(self);
+                var size: usize = arena_bytes;
+                const base = while (size >= min_arena_bytes) : (size /= 2) {
+                    if (v8.V8.sandboxReservePages(size, arena_alignment, false)) |base| break base;
+                } else return error.OutOfMemory;
+                errdefer v8.V8.sandboxReleasePages(base, size);
+                const arena = mi.Arena.manage(base[0..size], .{}) catch return error.OutOfMemory;
+                errdefer unloadArena(arena);
+                const heap = try mi.Heap.createInArena(arena);
+                self.* = .{ .heap = heap, .arena = arena, .base = base, .size = size };
+                return self;
+            }
+
+            /// Takes an arena whose heaps are destroyed out of mimalloc. Failure would leave
+            /// mimalloc visiting memory about to be unmapped, so it is fatal in every build mode.
+            fn unloadArena(arena: mi.Arena.Id) void {
+                arena.unload() catch @panic("mimalloc refused to unload the sandbox arena");
+            }
+
+            /// Consumes the state. Every store must already be freed; the pages go back to V8.
+            fn destroy(self: *SandboxState) void {
+                self.heap.destroy();
+                unloadArena(self.arena);
+                v8.V8.sandboxReleasePages(self.base, self.size);
+                mi.allocator.destroy(self);
+            }
+
+            /// Zero-filled sandbox pages for a large store; null when the sandbox is full.
+            fn allocDirect(length: usize) ?*anyopaque {
+                if (length > std.math.maxInt(usize) - page) return null;
+                return v8.V8.sandboxReservePages(std.mem.alignForward(usize, length, page), page, true);
+            }
+
+            /// Borrows the state; returns caller-owned sandbox storage, freed by `free` with the same
+            /// length. Null on exhaustion. Zero-length requests get a minimal block.
+            fn allocUninitialized(handle: ?*anyopaque, length: usize) callconv(.c) ?*anyopaque {
+                const self: *SandboxState = @ptrCast(@alignCast(handle.?));
+                if (length > direct_threshold) return allocDirect(length);
+                return self.heap.alloc(@max(length, 1), alignment);
+            }
+
+            /// As allocUninitialized, zero-filled.
+            fn allocZeroed(handle: ?*anyopaque, length: usize) callconv(.c) ?*anyopaque {
+                const self: *SandboxState = @ptrCast(@alignCast(handle.?));
+                if (length > direct_threshold) return allocDirect(length);
+                return self.heap.allocZeroed(@max(length, 1), alignment);
+            }
+
+            /// Consumes a store from either allocate function; `length` is the one it got.
+            fn free(_: ?*anyopaque, ptr: ?*anyopaque, length: usize) callconv(.c) void {
+                if (length > direct_threshold) {
+                    const bytes: [*]u8 = @ptrCast(ptr orelse return);
+                    return v8.V8.sandboxReleasePages(bytes, std.mem.alignForward(usize, length, page));
+                }
+                mi.free(ptr);
+            }
+
+            fn destroyCallback(handle: ?*anyopaque) callconv(.c) void {
+                const self: *SandboxState = @ptrCast(@alignCast(handle.?));
+                self.destroy();
+            }
+        };
 
         /// On success the native allocator retains handle/table until deinit and
         /// invokes table.deinit(handle) once. On null neither is consumed. The caller

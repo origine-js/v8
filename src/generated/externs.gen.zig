@@ -246,6 +246,12 @@ pub const support = struct {
 /// bool ()
 pub extern fn v8__V8__IsSandboxEnabled() bool;
 
+/// void *(size_t, size_t, bool)
+pub extern fn v8__V8__SandboxReservePages(size: usize, alignment: usize, writable: bool) ?*anyopaque;
+
+/// void (void *, size_t)
+pub extern fn v8__V8__SandboxReleasePages(address: ?*anyopaque, size: usize) void;
+
 /// const v8::Function *(const v8::Context &, const uint8_t *, size_t)
 /// Borrows context and any name bytes through return on the entered isolate
 /// thread, with a live HandleScope. Returns a GC-owned local handle valid

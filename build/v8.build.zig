@@ -9,7 +9,6 @@
 
 const std = @import("std");
 const zstd_build = @import("zstd.build.zig");
-const mimalloc_build = @import("mimalloc.build.zig");
 
 const LazyPath = std.Build.LazyPath;
 
@@ -50,7 +49,7 @@ const GnArgs = struct {
     symbol_level: u8,
     is_asan: bool,
     is_tsan: bool,
-    v8_enable_sandbox: bool,
+    v8_sandbox: bool,
     /// Pass V8 handles as direct object addresses. This changes the C ABI, so
     /// `zig build gen` must be re-run after toggling it (src/generated/binding.zig and
     /// binding/layout.gen.h record the configuration).
@@ -100,7 +99,7 @@ const GnArgs = struct {
         lines.append(a, b.fmt("symbol_level={d}", .{self.symbol_level})) catch @panic("OOM");
         lines.append(a, b.fmt("is_asan={}", .{self.is_asan})) catch @panic("OOM");
         lines.append(a, b.fmt("is_tsan={}", .{self.is_tsan})) catch @panic("OOM");
-        lines.append(a, b.fmt("v8_enable_sandbox={}", .{self.v8_enable_sandbox})) catch @panic("OOM");
+        lines.append(a, b.fmt("v8_enable_sandbox={}", .{self.v8_sandbox})) catch @panic("OOM");
         lines.append(a, b.fmt("v8_enable_webassembly={}", .{self.webassembly})) catch @panic("OOM");
         // Only spelled out when enabled so the default configuration keeps its build directory.
         if (self.v8_enable_direct_handle) lines.append(a, "v8_enable_direct_handle=true") catch @panic("OOM");
@@ -259,7 +258,7 @@ pub fn add(
         .symbol_level = b.option(u8, "symbol_level", "GN symbol_level") orelse if (optimize == .debug) 1 else 0,
         .is_asan = b.option(bool, "is_asan", "Build V8 with AddressSanitizer") orelse false,
         .is_tsan = b.option(bool, "is_tsan", "Build V8 with ThreadSanitizer") orelse false,
-        .v8_enable_sandbox = b.option(bool, "v8_enable_sandbox", "Enable the V8 sandbox (default: on; requires pointer compression)") orelse true,
+        .v8_sandbox = b.option(bool, "v8_sandbox", "Enable the V8 sandbox (default: on; requires pointer compression)") orelse true,
         .v8_enable_direct_handle = b.option(bool, "v8_enable_direct_handle", "Use V8 direct handles (changes the C ABI; re-run `zig build gen`)") orelse false,
         .exclude_unwind_tables = b.option(bool, "exclude_unwind_tables", "Omit C++ unwind tables from V8 (default: on for release V8)") orelse (optimize != .debug),
         .optimize_for_size = b.option(bool, "optimize_for_size", "Favour code size over speed when compiling V8") orelse false,
@@ -271,7 +270,7 @@ pub fn add(
         .mac_sdk_path = b.option([]const u8, "mac_sdk_path", "macOS SDK directory to build V8 against; V8 15.8 GN rejects paths outside the build directory, so leave unset and select the SDK with xcode-select/DEVELOPER_DIR"),
     };
     if (gn_args.builtin_pgo and (gn_args.is_debug or !gn_args.webassembly or
-        !gn_args.v8_enable_sandbox or target.result.os.tag == .ios))
+        !gn_args.v8_sandbox or target.result.os.tag == .ios))
         @panic("Google builtin PGO requires release V8, WebAssembly, pointer compression and sandbox; pass -Dbuiltin_pgo=false for this configuration");
     const cache_root = b.option([]const u8, "cache_root", "Directory holding the V8 and depot_tools checkouts") orelse b.root.joinString(b.allocator, ".lp-cache") catch @panic("OOM");
 
@@ -418,7 +417,7 @@ pub fn add(
         native_archive.addArg(b.fmt("{s}/third_party/llvm-build/Release+Asserts/bin", .{v8_dir}));
         native_archive.addArgs(&.{ "--target", b.fmt("{s}-apple-macos{f}", .{ @tagName(target.result.cpu.arch), target.result.os.version_range.semver.min }) });
         native_test_module.addObjectFile(native_lib);
-        native_test_module.linkLibrary(mimalloc_build.add(b, target, .safe));
+        native_test_module.linkLibrary(b.dependency("mimalloc", .{ .target = target, .optimize = .safe }).artifact("mimalloc"));
         const native_test = b.addExecutable(.{ .name = "darwin-frameworks-test", .root_module = native_test_module, .use_llvm = true });
         const run_native_test = b.addRunArtifact(native_test);
         b.step("test-darwin-frameworks", "Test deferred macOS framework APIs and JIT policy").dependOn(&run_native_test.step);

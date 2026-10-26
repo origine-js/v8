@@ -53,7 +53,7 @@ Declare `.v8 = .{ .path = "lib/v8_zig" }` in the application's `build.zig.zon`,
 then call `b.dependency("v8", .{ .target = target, .optimize = optimize })`.
 Other options: `-Dv8_debug`, `-Dbuiltin_pgo`, `-Dcache_root`, `-Dprebuilt_v8_path`, `-Dv8_clang_dir`,
 `-Dthin_lto`, `-Dexclude_unwind_tables`, `-Dtemporal`, `-Dwebassembly`, `-Dsymbol_level`,
-`-Dv8_enable_sandbox`, `-Doptimize_for_size`, `-Druntime_call_stats` (see `zig build --help`).
+`-Dv8_sandbox`, `-Doptimize_for_size`, `-Druntime_call_stats` (see `zig build --help`).
 Modules link their native dependencies by default, including cached Darwin
 bitcode conversion. External final linkers can pass `.link_native = false`,
 then use `dependency.namedLazyPath("v8")`, `dependency.namedLazyPath("clang_bin")`,

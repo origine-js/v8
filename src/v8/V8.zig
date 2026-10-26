@@ -46,6 +46,20 @@ pub const V8 = struct {
         return e.v8__V8__IsSandboxEnabled();
     }
 
+    /// Allocates `size` bytes inside the V8 sandbox, `alignment`-aligned (a multiple of the OS
+    /// allocation granularity): zero-filled and read/write when `writable`, else an inaccessible
+    /// reservation the caller commits itself. Returns null without a sandbox or when it has no
+    /// address space left. V8 must be initialized. Release with `sandboxReleasePages` and the
+    /// same size.
+    pub fn sandboxReservePages(size: usize, alignment: usize, writable: bool) ?[*]u8 {
+        return @ptrCast(e.v8__V8__SandboxReservePages(size, alignment, writable));
+    }
+
+    /// Consumes a reservation from `sandboxReservePages`; `size` must match it.
+    pub fn sandboxReleasePages(address: [*]u8, size: usize) void {
+        e.v8__V8__SandboxReleasePages(address, size);
+    }
+
     /// Parses (and removes from `argv`) V8 flags. Exits the process on `--help`.
     pub fn setFlagsFromCommandLine(argc: *c_int, argv: [*]?[*]u8, usage: ?[*:0]const u8) void {
         e.v8__V8__SetFlagsFromCommandLine(argc, argv, usage);

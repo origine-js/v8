@@ -4,23 +4,23 @@ Research date: 2026-10-14. Inspected the pinned V8 15.2.124.1 tree, which contai
 
 ## Implemented size-focused path
 
-The build now embeds the entire original package as one zstd level-19 frame,
+The build embeds the entire original package as one zstd level-22 frame with long-distance matching (LDM),
 including content size and checksum. The generator verifies a byte-for-byte
 round trip. It retains every original locale and feature; no filtering or lazy
 per-item loading is implemented.
 
 `build/zstd.build.zig` compiles only common and decompression sources from pinned
 zstd 1.5.7, using Zig `.small`, stripped debug information, no legacy support or
-assembly, and upstream size options (`HUF_FORCE_DECOMPRESS_X1`,
-`ZSTD_FORCE_DECOMPRESS_SEQUENCES_SHORT`, `ZSTD_NO_INLINE`,
-`ZSTD_STRIP_ERROR_STRINGS`, `ZSTD_NO_UNUSED_FUNCTIONS`, `DYNAMIC_BMI2=0`).
+assembly, and `ZSTD_STRIP_ERROR_STRINGS`.
 The decoder archive is 71,520 bytes on the measured macOS arm64 build; this is
 the archive size, not its final executable contribution. Its decoder expanded
 the real ICU frame and matched every byte in an independent C smoke check.
 See [upstream size-reduction guidance](https://github.com/facebook/zstd/blob/v1.5.7/lib/README.md).
 
-The compressed payload is 3,808,080 bytes versus 10,822,192 original bytes:
-64.8% smaller, before accounting for decoder and registration overhead.
+The historical ICU 78.2 measurement was 3,808,080 bytes versus 10,822,192
+original bytes at level 19. For current ICU data and level-22 measurements,
+see the measurements below. These payload figures exclude decoder and
+registration overhead.
 The Zig build flattens the decoder archive into `libv8_zig.a`. GN builds the
 binding/loader and data array, but does not build zstd. `zig build build-zstd`
 also installs the decoder alone for inspection. Python compression dependencies
@@ -48,7 +48,7 @@ Prebuilt archives must include the patched ICU loader and matching binding.
 `zig build test-icu-lazy` runs a separate-process test verifying that startup and
 plain JS leave data compressed, followed by concurrent multilingual first use.
 
-### Measured result and verification
+### Historical executable measurement and verification
 
 The release shell decreased from 53,468,808 bytes (50.99 MiB) to 46,617,240
 bytes (44.46 MiB): 6,851,568 bytes (6.53 MiB, 12.81%) smaller. Temporary stripped
@@ -73,6 +73,38 @@ see [startup measurement guidance](../../../docs/shell-performance.md#startup-tr
 measuring the current shell.
 
 Yes: ICU data can be filtered and compressed. Per-item lazy decompression with a shared zstd dictionary is feasible, but requires a custom ICU loader change; it is not an existing public ICU configuration switch. Compressing data does not compress ICU's native machine code.
+
+## Measurements on V8 15.8.30 (2026-10-27)
+
+The 10,824,432-byte ICU data package compresses to 3,820,105 bytes with the
+current level-22 one-shot encoder and LDM, down from 3,825,234 bytes without
+LDM. The frame window is the uncompressed size. `zstd --ultra -22 --long=24`
+produced 3,820,235 bytes with `-T1` and 3,823,870 bytes with `--single-thread`.
+All frames include a checksum and content size.
+
+A small C benchmark linked against the existing `libzstd_decoder.a` measured
+200 warm runs after five warmups on macOS arm64. Median decode time was
+18.497 ms without LDM (10th–90th percentile 18.360–18.661 ms) and 18.586 ms
+with LDM (18.407–18.768 ms). Each result was checked against the original;
+allocation, file I/O and ICU registration were outside the timed region. The
+ranges overlap, and the full executable size has not been measured. Linker
+alignment can eliminate small payload savings.
+
+Other experiments used the pre-LDM frame as a baseline:
+
+- Dictionaries trained on contiguous chunks or ICU items and used to compress
+  a single frame or independent locale/type groups did not reduce total size
+  after including the dictionary. The best single-frame dictionary result was
+  3,963,977 bytes, excluding loader code.
+- Reordering the 2,360 ICU items by type yielded a 3,820,956-byte frame plus
+  compressed reconstruction map. Two small test binaries embedding the original
+  and reordered payloads were both 3,941,080 bytes after linking; reconstruction
+  added copying and a temporary buffer. Grouping by locale was larger.
+- Smaller compression windows did not improve the payload: a 4 MiB window
+  produced 3,825,483 bytes versus 3,825,234 bytes for the whole-package window.
+
+These experiments do not rule out other dictionaries, groupings or indexing
+schemes. Payload sizes exclude decoder and registration overhead.
 
 ## Filtering
 

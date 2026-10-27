@@ -55,6 +55,9 @@ const GnArgs = struct {
     is_asan: bool,
     is_tsan: bool,
     v8_sandbox: bool,
+    /// Compile the memory corruption API (`V8_ENABLE_MEMORY_CORRUPTION_API`). V8 exposes it only
+    /// under --sandbox-testing or --sandbox-fuzzing, and it requires the sandbox.
+    v8_enable_memory_corruption_api: bool,
     /// Pass V8 handles as direct object addresses. This changes the C ABI, so
     /// `zig build gen` must be re-run after toggling it (src/generated/binding.zig and
     /// binding/layout.gen.h record the configuration).
@@ -105,6 +108,8 @@ const GnArgs = struct {
         lines.append(a, b.fmt("is_asan={}", .{self.is_asan})) catch @panic("OOM");
         lines.append(a, b.fmt("is_tsan={}", .{self.is_tsan})) catch @panic("OOM");
         lines.append(a, b.fmt("v8_enable_sandbox={}", .{self.v8_sandbox})) catch @panic("OOM");
+        // Only spelled out when enabled so the default configuration keeps its build directory.
+        if (self.v8_enable_memory_corruption_api) lines.append(a, "v8_enable_memory_corruption_api=true") catch @panic("OOM");
         lines.append(a, b.fmt("v8_enable_webassembly={}", .{self.webassembly})) catch @panic("OOM");
         // Only spelled out when enabled so the default configuration keeps its build directory.
         if (self.v8_enable_direct_handle) lines.append(a, "v8_enable_direct_handle=true") catch @panic("OOM");
@@ -263,6 +268,7 @@ pub fn add(
         .is_asan = b.option(bool, "is_asan", "Build V8 with AddressSanitizer") orelse false,
         .is_tsan = b.option(bool, "is_tsan", "Build V8 with ThreadSanitizer") orelse false,
         .v8_sandbox = b.option(bool, "v8_sandbox", "Enable the V8 sandbox (default: on; requires pointer compression)") orelse true,
+        .v8_enable_memory_corruption_api = b.option(bool, "v8_memory_corruption_api", "Build V8 with the memory corruption API (default: off; exposed only under --sandbox-testing/--sandbox-fuzzing; requires the sandbox)") orelse false,
         .v8_enable_direct_handle = b.option(bool, "v8_enable_direct_handle", "Use V8 direct handles (changes the C ABI; re-run `zig build gen`)") orelse false,
         .exclude_unwind_tables = b.option(bool, "exclude_unwind_tables", "Omit C++ unwind tables from V8 (default: on for release V8)") orelse (optimize != .debug),
         .optimize_for_size = b.option(bool, "optimize_for_size", "Favour code size over speed when compiling V8") orelse false,
@@ -276,6 +282,8 @@ pub fn add(
     if (gn_args.builtin_pgo and (gn_args.is_debug or !gn_args.webassembly or
         !gn_args.v8_sandbox or target.result.os.tag == .ios))
         @panic("Google builtin PGO requires release V8, WebAssembly, pointer compression and sandbox; pass -Dbuiltin_pgo=false for this configuration");
+    if (gn_args.v8_enable_memory_corruption_api and !gn_args.v8_sandbox)
+        @panic("The V8 memory corruption API requires the sandbox; pass -Dv8_sandbox=true or drop -Dv8_memory_corruption_api");
     const cache_root = b.option([]const u8, "cache_root", "Directory holding the V8 and depot_tools checkouts") orelse b.root.joinString(b.allocator, ".lp-cache") catch @panic("OOM");
 
     const v8_dir = b.fmt("{s}/v8-{s}", .{ cache_root, version });

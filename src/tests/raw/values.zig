@@ -211,7 +211,7 @@ test "JSON, RegExp, Proxy and Function invocation" {
             const text = try env.utf8(json.name.primitive.value);
             defer t.allocator.free(text);
             try t.expectEqualStrings("{\"answer\":42}", text);
-            const regex = v8.RegExp.init(env.context, env.str("a+"), 0).?;
+            const regex = v8.RegExp.init(env.context, env.str("a+"), .{}).?;
             try t.expect(regex.exec(env.context, env.str("aaa")) != null);
             const target = parsed.toObject(env.context).?;
             const handler = env.eval("({})").toObject(env.context).?;

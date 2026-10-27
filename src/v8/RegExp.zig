@@ -8,7 +8,21 @@ pub const RegExp = extern struct {
         return .{ .object = v8.Object.from_opaque(o) orelse return null };
     }
 
-    pub fn init(context: v8.Context, pattern: v8.String, flags: u32) ?v8.RegExp {
+    /// Mirrors `v8::RegExp::Flags`; all clear is `kNone`.
+    pub const Flags = packed struct(u32) {
+        Global: bool = false,
+        IgnoreCase: bool = false,
+        Multiline: bool = false,
+        Sticky: bool = false,
+        Unicode: bool = false,
+        DotAll: bool = false,
+        Linear: bool = false,
+        HasIndices: bool = false,
+        UnicodeSets: bool = false,
+        _unused: u23 = 0,
+    };
+
+    pub fn init(context: v8.Context, pattern: v8.String, flags: Flags) ?v8.RegExp {
         return v8.RegExp.from_opaque(e.v8__RegExp__New(context, pattern, flags));
     }
 

@@ -86,7 +86,7 @@ test "Intrinsics: frozen identity, rejected tampering, realm ownership and GC" {
             env.setGlobal("allIntrinsics", all.value);
             try t.expect(env.eval("Object.isFrozen(allIntrinsics)").isTrue());
             try t.expect(env.eval("!Object.hasOwn(allIntrinsics, 'ReturnReceiver') && !Object.hasOwn(allIntrinsics, 'Call_ReceiverIsAny')").isTrue());
-            const keys = all.getOwnPropertyNames(env.context, 0, 0).?;
+            const keys = all.getOwnPropertyNames(env.context, .{}, .ConvertToString).?;
             try t.expect(keys.len() > 0);
             var index: u32 = 0;
             while (index < keys.len()) : (index += 1) {
@@ -137,7 +137,7 @@ test "Intrinsics: frozen graph and bindings survive a custom context snapshot" {
             creator.setDefaultContext(context);
         }
         // CreateBlob must run outside all handle scopes.
-        break :make creator.createBlob(0);
+        break :make creator.createBlob(.Clear);
     };
     defer blob.deinit();
     try t.expect(blob.slice().len > 0);
@@ -215,7 +215,7 @@ test "Module: an evaluated ES module graph survives a context snapshot without r
             dependency_index = creator.addDataToContext(context, dependency.data);
         }
         // CreateBlob must run outside all handle scopes.
-        break :make creator.createBlob(0);
+        break :make creator.createBlob(.Clear);
     };
     defer blob.deinit();
     try t.expect(blob.slice().len > 0);

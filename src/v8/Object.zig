@@ -144,11 +144,11 @@ pub const Object = extern struct {
         return Context.from_opaque(e.v8__Object__GetCreationContext(self));
     }
 
-    pub fn getOwnPropertyNames(self: v8.Object, context: ?v8.Context, filter: u32, key_conversion: i32) ?v8.Array {
+    pub fn getOwnPropertyNames(self: v8.Object, context: ?v8.Context, filter: v8.PropertyFilter, key_conversion: v8.KeyConversionMode) ?v8.Array {
         return v8.Array.from_opaque(e.v8__Object__GetOwnPropertyNames(v8.support.rawHandle(self), if (context) |v| v8.support.rawHandle(v) else null, filter, key_conversion));
     }
 
-    pub fn getPropertyNames(self: v8.Object, context: ?v8.Context, mode: i32, property_filter: u32, index_filter: i32, key_conversion: i32) ?v8.Array {
+    pub fn getPropertyNames(self: v8.Object, context: ?v8.Context, mode: v8.KeyCollectionMode, property_filter: v8.PropertyFilter, index_filter: v8.IndexFilter, key_conversion: v8.KeyConversionMode) ?v8.Array {
         return v8.Array.from_opaque(e.v8__Object__GetPropertyNames(v8.support.rawHandle(self), if (context) |v| v8.support.rawHandle(v) else null, mode, property_filter, index_filter, key_conversion));
     }
 
@@ -180,7 +180,7 @@ pub const Object = extern struct {
         return v8.Data.from_opaque(e.v8__Object__GetInternalField(self, index));
     }
 
-    pub fn setIntegrityLevel(self: v8.Object, context: v8.Context, level: i32) ?bool {
+    pub fn setIntegrityLevel(self: v8.Object, context: v8.Context, level: v8.IntegrityLevel) ?bool {
         return e.v8__Object__SetIntegrityLevel(self, context, level).as_optional();
     }
 

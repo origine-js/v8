@@ -23,10 +23,10 @@ pub const CTypeInfo = extern struct {
     },
     /// `v8::CTypeInfo::Flags` is a `uint8_t` enum: sizeof(CTypeInfo) == 2.
     flags: packed struct(u8) {
-        AllowSharedBit: bool,
-        EnforceRangeBit: bool,
-        ClampBit: bool,
-        IsRestrictedBit: bool,
+        AllowSharedBit: bool = false,
+        EnforceRangeBit: bool = false,
+        ClampBit: bool = false,
+        IsRestrictedBit: bool = false,
         _unused: u4 = 0,
     },
 };

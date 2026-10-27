@@ -33,7 +33,10 @@ pub const SnapshotCreator = extern struct {
         return e.v8__SnapshotCreator__AddData_to_context(self, context, data);
     }
 
-    pub fn createBlob(self: *v8.SnapshotCreator, function_code_handling: i32) v8.StartupData {
+    /// Mirrors `v8::SnapshotCreator::FunctionCodeHandling`.
+    pub const FunctionCodeHandling = enum(c_int) { Clear, Keep };
+
+    pub fn createBlob(self: *v8.SnapshotCreator, function_code_handling: FunctionCodeHandling) v8.StartupData {
         const blob = e.v8__SnapshotCreator__CreateBlob(self, function_code_handling);
         return .{ .data = blob.data, .raw_size = blob.raw_size };
     }

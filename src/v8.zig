@@ -23,6 +23,13 @@ pub const PrimitiveArray = @import("v8/PrimitiveArray.zig").PrimitiveArray;
 pub const Array = @import("v8/Array.zig").Array;
 pub const ModuleImportPhase = @import("v8/enums.zig").ModuleImportPhase;
 pub const PropertyAttribute = @import("v8/enums.zig").PropertyAttribute;
+pub const PropertyFilter = @import("v8/enums.zig").PropertyFilter;
+pub const KeyCollectionMode = @import("v8/enums.zig").KeyCollectionMode;
+pub const IndexFilter = @import("v8/enums.zig").IndexFilter;
+pub const KeyConversionMode = @import("v8/enums.zig").KeyConversionMode;
+pub const IntegrityLevel = @import("v8/enums.zig").IntegrityLevel;
+pub const MemoryPressureLevel = @import("v8/enums.zig").MemoryPressureLevel;
+pub const PropertyHandlerFlags = @import("v8/enums.zig").PropertyHandlerFlags;
 pub const ConstructorBehavior = @import("v8/enums.zig").ConstructorBehavior;
 pub const SideEffectType = @import("v8/enums.zig").SideEffectType;
 pub const MicrotasksPolicy = @import("v8/enums.zig").MicrotasksPolicy;
@@ -127,6 +134,11 @@ pub const WeakCallbackInfo = @import("v8/WeakCallbackInfo.zig").WeakCallbackInfo
 
 const std = @import("std");
 const e = @import("generated/externs.gen.zig");
+
+// Fails the build when a flag or enum above stops matching V8's header values.
+comptime {
+    std.debug.assert(@import("v8/flag_abi.zig").checked);
+}
 
 // Zig only analyzes what is used, so reference every declaration explicitly:
 // this is what proves the wrappers still match the generated externs.

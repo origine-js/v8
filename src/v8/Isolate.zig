@@ -148,7 +148,7 @@ pub const Isolate = extern struct {
         return v8.Data.from_opaque(e.v8__Isolate__GetCurrentHostDefinedOptions(isolate.handle));
     }
 
-    pub fn memoryPressureNotification(isolate: v8.Isolate, level: i32) void {
+    pub fn memoryPressureNotification(isolate: v8.Isolate, level: v8.MemoryPressureLevel) void {
         e.v8__Isolate__MemoryPressureNotification(isolate.handle, level);
     }
 
@@ -200,8 +200,24 @@ pub const Isolate = extern struct {
         return e.v8__Isolate__AddMessageListener(isolate.handle, callback);
     }
 
-    pub fn addMessageListenerWithErrorLevel(isolate: v8.Isolate, callback: v8.Callbacks.MessageCallback, error_level: c_int) bool {
-        return e.v8__Isolate__AddMessageListenerWithErrorLevel(isolate.handle, callback, error_level);
+    /// Mirrors `v8::Isolate::MessageErrorLevel` (bit flags selecting which message levels reach a listener).
+    pub const MessageErrorLevel = packed struct(c_int) {
+        Log: bool = false,
+        Debug: bool = false,
+        Info: bool = false,
+        Error: bool = false,
+        Warning: bool = false,
+        _unused: u27 = 0,
+
+        /// `kMessageAll`.
+        pub const all: MessageErrorLevel = .{ .Log = true, .Debug = true, .Info = true, .Error = true, .Warning = true };
+    };
+
+    /// Mirrors `v8::Isolate::TimeZoneDetection`.
+    pub const TimeZoneDetection = enum(c_int) { Skip, Redetect };
+
+    pub fn addMessageListenerWithErrorLevel(isolate: v8.Isolate, callback: v8.Callbacks.MessageCallback, error_level: MessageErrorLevel) bool {
+        return e.v8__Isolate__AddMessageListenerWithErrorLevel(isolate.handle, callback, @bitCast(error_level));
     }
 
     pub fn addGCPrologueCallback(isolate: v8.Isolate, callback: v8.Callbacks.Isolate_GCCallbackWithData, data: ?*anyopaque, gc_type_filter: u32) void {
@@ -259,7 +275,7 @@ pub const Isolate = extern struct {
         e.v8__Isolate__RequestGarbageCollectionForTesting(isolate.handle, @"type");
     }
 
-    pub fn dateTimeConfigurationChangeNotification(isolate: v8.Isolate, time_zone_detection: i32) void {
+    pub fn dateTimeConfigurationChangeNotification(isolate: v8.Isolate, time_zone_detection: TimeZoneDetection) void {
         e.v8__Isolate__DateTimeConfigurationChangeNotification(isolate.handle, time_zone_detection);
     }
     /// Construct in place; do not copy an active execution scope.

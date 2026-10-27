@@ -8,11 +8,11 @@ const Name = v8.Name;
 pub const String = extern struct {
     pub const NewStringType = enum(c_int) { Normal, Internalized };
 
-    /// Mirrors `v8::String::WriteFlags` (the V2 Write* API). Pure constants.
-    pub const WriteFlags = struct {
-        pub const None = @as(c_int, 0);
-        pub const NullTermination = @as(c_int, 1) << 0;
-        pub const ReplaceInvalidUtf8 = @as(c_int, 1) << 1;
+    /// Mirrors `v8::String::WriteFlags` (the V2 Write* API); all clear is `kNone`.
+    pub const WriteFlags = packed struct(c_int) {
+        NullTerminate: bool = false,
+        ReplaceInvalidUtf8: bool = false,
+        _unused: u30 = 0,
     };
 
     name: Name,
@@ -117,20 +117,20 @@ pub const String = extern struct {
     }
 
     pub fn writeUtf8(self: Self, isolate: Isolate, buf: []u8) usize {
-        const flags = WriteFlags.ReplaceInvalidUtf8;
-        return e.v8__String__WriteUtf8(self, isolate.handle, buf.ptr, buf.len, flags, null);
+        const flags: WriteFlags = .{ .ReplaceInvalidUtf8 = true };
+        return e.v8__String__WriteUtf8(self, isolate.handle, buf.ptr, buf.len, @bitCast(flags), null);
     }
 
     pub fn empty(isolate: v8.Isolate) ?v8.String {
         return v8.String.from_opaque(e.v8__String__Empty(isolate.handle));
     }
 
-    pub fn write(self: v8.String, isolate: v8.Isolate, offset: u32, length: u32, buffer: ?[*]u16, flags: c_int) void {
-        e.v8__String__Write(self, isolate.handle, offset, length, buffer, flags);
+    pub fn write(self: v8.String, isolate: v8.Isolate, offset: u32, length: u32, buffer: ?[*]u16, flags: WriteFlags) void {
+        e.v8__String__Write(self, isolate.handle, offset, length, buffer, @bitCast(flags));
     }
 
-    pub fn writeOneByte(self: v8.String, isolate: v8.Isolate, offset: u32, length: u32, buffer: ?[*]u8, flags: c_int) void {
-        e.v8__String__WriteOneByte(self, isolate.handle, offset, length, buffer, flags);
+    pub fn writeOneByte(self: v8.String, isolate: v8.Isolate, offset: u32, length: u32, buffer: ?[*]u8, flags: WriteFlags) void {
+        e.v8__String__WriteOneByte(self, isolate.handle, offset, length, buffer, @bitCast(flags));
     }
 
     pub fn getExternalStringResource(self: v8.String) @typeInfo(@TypeOf(e.v8__String__GetExternalStringResource)).@"fn".return_type.? {

@@ -34,11 +34,11 @@ pub const ObjectTemplate = extern struct {
         e.v8__ObjectTemplate__SetNativeDataProperty(self, key, getter, setter, if (data_or_null) |v| v8.support.rawHandle(v) else null, attr);
     }
 
-    pub fn setNamedPropertyHandler(self: v8.ObjectTemplate, getter: v8.Callbacks.NamedPropertyGetterCallback, setter: v8.Callbacks.NamedPropertySetterCallback, query: v8.Callbacks.NamedPropertyQueryCallback, deleter: v8.Callbacks.NamedPropertyDeleterCallback, enumerator: v8.Callbacks.NamedPropertyEnumeratorCallback, definer: v8.Callbacks.NamedPropertyDefinerCallback, descriptor: v8.Callbacks.NamedPropertyDescriptorCallback, data_or_null: ?v8.Value, flags: i32) void {
+    pub fn setNamedPropertyHandler(self: v8.ObjectTemplate, getter: v8.Callbacks.NamedPropertyGetterCallback, setter: v8.Callbacks.NamedPropertySetterCallback, query: v8.Callbacks.NamedPropertyQueryCallback, deleter: v8.Callbacks.NamedPropertyDeleterCallback, enumerator: v8.Callbacks.NamedPropertyEnumeratorCallback, definer: v8.Callbacks.NamedPropertyDefinerCallback, descriptor: v8.Callbacks.NamedPropertyDescriptorCallback, data_or_null: ?v8.Value, flags: v8.PropertyHandlerFlags) void {
         e.v8__ObjectTemplate__SetNamedPropertyHandler(self, getter, setter, query, deleter, enumerator, definer, descriptor, if (data_or_null) |v| v8.support.rawHandle(v) else null, flags);
     }
 
-    pub fn setIndexedPropertyHandler(self: v8.ObjectTemplate, getter: v8.Callbacks.IndexedPropertyGetterCallbackV2, setter: v8.Callbacks.IndexedPropertySetterCallbackV2, query: v8.Callbacks.IndexedPropertyQueryCallbackV2, deleter: v8.Callbacks.IndexedPropertyDeleterCallbackV2, enumerator: v8.Callbacks.IndexedPropertyEnumeratorCallback, definer: v8.Callbacks.IndexedPropertyDefinerCallbackV2, descriptor: v8.Callbacks.IndexedPropertyDescriptorCallbackV2, data_or_null: ?v8.Value, flags: i32) void {
+    pub fn setIndexedPropertyHandler(self: v8.ObjectTemplate, getter: v8.Callbacks.IndexedPropertyGetterCallbackV2, setter: v8.Callbacks.IndexedPropertySetterCallbackV2, query: v8.Callbacks.IndexedPropertyQueryCallbackV2, deleter: v8.Callbacks.IndexedPropertyDeleterCallbackV2, enumerator: v8.Callbacks.IndexedPropertyEnumeratorCallback, definer: v8.Callbacks.IndexedPropertyDefinerCallbackV2, descriptor: v8.Callbacks.IndexedPropertyDescriptorCallbackV2, data_or_null: ?v8.Value, flags: v8.PropertyHandlerFlags) void {
         e.v8__ObjectTemplate__SetIndexedPropertyHandler(self, getter, setter, query, deleter, enumerator, definer, descriptor, if (data_or_null) |v| v8.support.rawHandle(v) else null, flags);
     }
 

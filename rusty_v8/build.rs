@@ -7,6 +7,7 @@
 //!
 //! - `V8_ZIG_ARCHIVE`   absolute path of `libv8_zig.a`
 //! - `V8_ZIG_MIMALLOC`  absolute path of `libmimalloc.a`
+//! - `V8_ZIG_ICU`       absolute path of `libv8_icu.a` (the ICU data provider link object)
 //! - `V8_ZIG_V8_ROOT`   V8 checkout the archive was built from (headers, libc++)
 //! - `V8_ZIG_BINDING`   `../binding` (binding.hpp, support.h)
 //! - `V8_ZIG_GN_OUT`    GN output directory holding `compile_commands.json`
@@ -178,8 +179,8 @@ fn build_binding(root: &Path, binding_dir: &Path, gn_out: &Path) {
 
 /// Emits link directives for the Zig-built archives. V8 carries its own libc++
 /// (`std::__Cr`), so no C++ standard library is linked here.
-fn print_link_flags(archive: &Path, mimalloc: &Path) {
-  for p in [archive, mimalloc] {
+fn print_link_flags(archive: &Path, mimalloc: &Path, icu: &Path) {
+  for p in [archive, mimalloc, icu] {
     println!("cargo:rerun-if-changed={}", p.display());
     println!(
       "cargo:rustc-link-search=native={}",
@@ -191,10 +192,12 @@ fn print_link_flags(archive: &Path, mimalloc: &Path) {
     n.strip_prefix("lib").unwrap_or(n).to_string()
   };
   // `-bundle`: never copy the archives into a consuming staticlib/rlib. The
-  // final link (Zig) supplies V8 and mimalloc exactly once; `rusty_v8`'s own
+  // final link (Zig) supplies V8, mimalloc and the ICU provider exactly once; `rusty_v8`'s own
   // binaries/tests get them through these directives as before.
   println!("cargo:rustc-link-lib=static:-bundle={}", stem(archive));
   println!("cargo:rustc-link-lib=static:-bundle={}", stem(mimalloc));
+  // After the archive: it references the provider's `v8_zig_icu_initialize`.
+  println!("cargo:rustc-link-lib=static:-bundle={}", stem(icu));
 
   match env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
     "macos" | "ios" => {
@@ -213,10 +216,11 @@ fn main() {
   println!("cargo:rerun-if-changed=build.rs");
   let archive = PathBuf::from(required("V8_ZIG_ARCHIVE"));
   let mimalloc = PathBuf::from(required("V8_ZIG_MIMALLOC"));
+  let icu = PathBuf::from(required("V8_ZIG_ICU"));
   let root = PathBuf::from(required("V8_ZIG_V8_ROOT"));
   let binding_dir = PathBuf::from(required("V8_ZIG_BINDING"));
   let gn_out = PathBuf::from(required("V8_ZIG_GN_OUT"));
 
-  print_link_flags(&archive, &mimalloc);
+  print_link_flags(&archive, &mimalloc, &icu);
   build_binding(&root, &binding_dir, &gn_out);
 }

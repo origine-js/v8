@@ -2,7 +2,7 @@ const std = @import("std");
 const v8 = @import("@v8");
 
 /// Returns the process-wide publication state by value; retains no resources.
-extern fn v8_zig_is_compressed_icu_loaded() bool;
+extern fn v8_zig_icu_is_loaded() bool;
 
 /// Borrows source until return; V8 copies its bytes. Owns an isolate, backing
 /// allocator, and local handles, released before return on success or failure.
@@ -44,12 +44,12 @@ fn useIntl(result: *std.atomic.Value(bool), gate: *std.atomic.Value(bool)) void 
 test "ICU: initialization and plain JS stay compressed; concurrent first use loads once" {
     var engine = @import("support.zig").Engine.init(0);
     defer engine.deinit();
-    try std.testing.expect(!v8_zig_is_compressed_icu_loaded());
+    try std.testing.expect(!v8_zig_icu_is_loaded());
     try std.testing.expect(v8.V8.initializeICU());
     try std.testing.expect(v8.V8.initializeICU());
-    try std.testing.expect(!v8_zig_is_compressed_icu_loaded());
+    try std.testing.expect(!v8_zig_icu_is_loaded());
     try std.testing.expect(evaluate("1 + 2 === 3 && Object.isFrozen(Array.prototype)"));
-    try std.testing.expect(!v8_zig_is_compressed_icu_loaded());
+    try std.testing.expect(!v8_zig_icu_is_loaded());
 
     var results: [4]std.atomic.Value(bool) = .{ .init(false), .init(false), .init(false), .init(false) };
     var threads: [4]std.Thread = undefined;
@@ -67,5 +67,5 @@ test "ICU: initialization and plain JS stay compressed; concurrent first use loa
     for (threads) |thread| thread.join();
     started = 0;
     for (&results) |*result| try std.testing.expect(result.load(.acquire));
-    try std.testing.expect(v8_zig_is_compressed_icu_loaded());
+    try std.testing.expect(v8_zig_icu_is_loaded());
 }

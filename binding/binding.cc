@@ -36,7 +36,7 @@
 
 #include "binding.hpp"
 #include "layout.gen.h"
-#include "icu-compressed.h"
+#include "icu.h"
 
 using namespace support;
 
@@ -318,19 +318,19 @@ void v8__V8__InitializePlatform(v8::Platform* platform) {
 // archive stays unloaded and V8 silently allocates from libc.
 extern "C" int mi_version(void);
 
-// Registers the lazy ICU provider and initializes V8; owns no caller storage.
-// Requires libmimalloc.a at final link. Aborts if the linked mimalloc is unusable.
-// Does not expand the ICU package. Configuration failure aborts; first ICU data
-// use publishes immutable process-lifetime storage or reports an ICU error.
+// Registers the ICU data provider (linked separately, see icu.h) and initializes V8;
+// owns no caller storage. Requires libmimalloc.a at final link. Aborts if the linked
+// mimalloc is unusable. Configuration failure aborts; with the compressed provider the
+// first ICU data use publishes immutable process-lifetime storage or reports an ICU error.
 void v8__V8__Initialize() {
   if (mi_version() <= 0) std::abort();
-  if (!v8_zig_initialize_compressed_icu()) std::abort();
+  if (!v8_zig_icu_initialize()) std::abort();
   v8::V8::Initialize();
 }
 
-// Registers the lazy process-lifetime ICU provider once; retains no inputs and
-// does not expand data. False means configuration failure; no caller cleanup.
-bool v8__V8__InitializeICU() { return v8_zig_initialize_compressed_icu(); }
+// Registers the process-lifetime ICU provider once; retains no inputs. False means
+// configuration failure; no caller cleanup.
+bool v8__V8__InitializeICU() { return v8_zig_icu_initialize(); }
 
 bool v8__V8__Dispose() { return v8::V8::Dispose(); }
 

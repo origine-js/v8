@@ -15,7 +15,7 @@ zig build rusty -Drusty_cargo_args="--example hello_world"
 ```
 
 `build/rusty.build.zig` runs `build-tools/scripts/cargo-rusty.sh`, which exports what
-`rusty_v8/build.rs` consumes (`V8_ZIG_ARCHIVE`, `V8_ZIG_MIMALLOC`, `V8_ZIG_V8_ROOT`,
+`rusty_v8/build.rs` consumes (`V8_ZIG_ARCHIVE`, `V8_ZIG_MIMALLOC`, `V8_ZIG_ICU`, `V8_ZIG_V8_ROOT`,
 `V8_ZIG_BINDING`, `V8_ZIG_GN_OUT`), checks that Rust's LLVM is not newer than V8's clang, and
 links with V8's own `ld64.lld` through `lto-clang.sh`. `build.rs` runs bindgen over
 `binding/binding.hpp` with the defines GN used for `binding.cc`, so struct layouts always match

@@ -191,7 +191,14 @@ against a different SDK, switch it with `xcode-select` or `DEVELOPER_DIR`.
 
 Once complete, you can find v8 in: `zig-out/libv8_zig.a`
 
-The library embeds the complete ICU data package compressed with zstd 1.5.7.
+ICU's data is not in `libv8_zig.a`: it is its own link object, `libv8_icu.a` (installed artifact
+`v8_icu`, built by `build/icu.build.zig`), and every final link takes it next to the archive.
+`-Dv8_icu=compressed|raw` (default compressed) selects the provider behind `binding/icu.h`;
+`raw` embeds the uncompressed package (about 7 MB more executable) and publishes it at
+initialization with no expansion. A prebuilt archive (`-Dprebuilt_v8_path`) carries no provider:
+the program links its own `v8_zig_icu_initialize`.
+
+The compressed provider embeds the complete ICU data package compressed with zstd 1.5.7.
 The C binding expands it once, before V8 initialization, into aligned immutable
 storage retained until process exit. No external `icudtl.dat` is required at
 runtime, and all bundled locales/features are preserved. This trades startup

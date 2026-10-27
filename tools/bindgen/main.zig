@@ -143,7 +143,7 @@ fn genLayout(
     try zw.writeAll("};\n\npub const consts = struct {\n");
     for (m.consts, values[m.sizes.len..][0..m.consts.len]) |c, value| {
         try zw.print("    pub const {s} = {d};\n", .{ c.name, value });
-        try hw.print("static_assert(({s}) == {d}, \"{s} changed\");\n", .{ c.expr, value, c.name });
+        try hw.print("static_assert(static_cast<long long>({s}) == {d}, \"{s} changed\");\n", .{ c.expr, value, c.name });
     }
     try zw.writeAll("};\n\npub const opts = struct {\n");
     for (m.flags, values[m.sizes.len + m.consts.len ..]) |f, value| {

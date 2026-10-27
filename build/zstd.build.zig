@@ -5,7 +5,6 @@ const std = @import("std");
 /// Includes no compression, dictionary-training, legacy, or CLI implementation.
 /// Configuration allocation failure panics; compiler failures retain build outputs.
 pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step.Compile {
-    const source = b.dependency("zstd", .{});
     const module = b.createModule(.{
         .target = target,
         .optimize = .small,
@@ -13,6 +12,20 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step.Comp
         .pic = true,
         .strip = true,
     });
+    addSources(b, module);
+    return b.addLibrary(.{
+        .name = "zstd_decoder",
+        .linkage = .static,
+        .root_module = module,
+        .use_llvm = true,
+    });
+}
+
+/// Adds the decoder's C sources and `zstd.h` to `module`, for a library that bundles the
+/// decoder with its caller (see icu.build.zig). Borrows b and module through build teardown.
+pub fn addSources(b: *std.Build, module: *std.Build.Module) void {
+    const source = b.dependency("zstd", .{});
+    module.addIncludePath(source.path("lib"));
     module.addCSourceFiles(.{
         .root = source.path("lib"),
         .files = &.{
@@ -28,11 +41,5 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step.Comp
             "decompress/zstd_decompress_block.c",
         },
         .flags = &.{ "-std=c99", "-DZSTD_DISABLE_ASM", "-DZSTD_LEGACY_SUPPORT=0", "-DZSTD_STRIP_ERROR_STRINGS" },
-    });
-    return b.addLibrary(.{
-        .name = "zstd_decoder",
-        .linkage = .static,
-        .root_module = module,
-        .use_llvm = true,
     });
 }

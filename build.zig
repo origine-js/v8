@@ -65,6 +65,7 @@ pub fn build(b: *std.Build) void {
     if (link_native) {
         module.addObjectFile(link_lib);
         module.linkLibrary(mimalloc);
+        if (v8.icu) |icu| module.linkLibrary(icu);
     }
 
     const util_module = b.addModule("@util", .{
@@ -97,6 +98,8 @@ pub fn build(b: *std.Build) void {
     // `zig build` installs the static library for non-Zig consumers.
     b.getInstallStep().dependOn(&b.addInstallFile(v8.lib, "libv8_zig.a").step);
     b.installArtifact(mimalloc);
+    // The ICU provider is a separate link object; an external final link takes it from here.
+    if (v8.icu) |icu| b.installArtifact(icu);
 
     const test_module = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
@@ -117,29 +120,31 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
 
-    // A separate process is required to inspect ICU before any test uses Intl.
-    const lazy_icu_module = b.createModule(.{
-        .root_source_file = b.path("src/tests/icu_lazy.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-        .link_libcpp = true,
-    });
-    lazy_icu_module.addImport("@v8", module);
-    const lazy_icu_test = b.addTest(.{
-        .root_module = lazy_icu_module,
-        .filters = &.{"ICU: initialization and plain JS"},
-    });
-    if (optimize != .debug) {
-        lazy_icu_test.use_llvm = true;
-        if (enable_lto) {
-            lazy_icu_test.use_lld = true;
-            lazy_icu_test.lto = .full;
+    if (v8.icu_mode == .compressed) {
+        // A separate process is required to inspect ICU before any test uses Intl.
+        const lazy_icu_module = b.createModule(.{
+            .root_source_file = b.path("src/tests/icu_lazy.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .link_libcpp = true,
+        });
+        lazy_icu_module.addImport("@v8", module);
+        const lazy_icu_test = b.addTest(.{
+            .root_module = lazy_icu_module,
+            .filters = &.{"ICU: initialization and plain JS"},
+        });
+        if (optimize != .debug) {
+            lazy_icu_test.use_llvm = true;
+            if (enable_lto) {
+                lazy_icu_test.use_lld = true;
+                lazy_icu_test.lto = .full;
+            }
         }
+        const run_lazy_icu_test = b.addRunArtifact(lazy_icu_test);
+        test_step.dependOn(&run_lazy_icu_test.step);
+        b.step("test-icu-lazy", "Verify deferred ICU loading in a fresh process").dependOn(&run_lazy_icu_test.step);
     }
-    const run_lazy_icu_test = b.addRunArtifact(lazy_icu_test);
-    test_step.dependOn(&run_lazy_icu_test.step);
-    b.step("test-icu-lazy", "Verify deferred ICU loading in a fresh process").dependOn(&run_lazy_icu_test.step);
 
     // The forged-property regression needs an unfrozen construction context.
     // Its flags are set before initialization in a separate test process.

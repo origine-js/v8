@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs cargo for rusty_v8 against the libv8_zig.a built by this repository.
 #
-# usage: cargo-rusty.sh <rusty_v8_dir> <archive> <mimalloc> <v8_root> <gn_out> <binding_dir> <clang_bin> <cargo args...>
+# usage: cargo-rusty.sh <rusty_v8_dir> <archive> <mimalloc> <icu> <v8_root> <gn_out> <binding_dir> <clang_bin> <cargo args...>
 #
 # Reads the paths, borrows them for the duration of the cargo run, writes only
 # under <rusty_v8_dir>/target. Exports the V8_ZIG_* variables rusty_v8/build.rs
@@ -10,12 +10,13 @@
 set -eu
 # Zig passes cache paths relative to the invocation directory; cargo runs elsewhere.
 abs() { case $1 in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$(pwd)" "$1" ;; esac; }
-dir=$(abs "$1") archive=$(abs "$2") mimalloc=$(abs "$3") root=$(abs "$4")
-gn_out=$(abs "$5") binding=$(abs "$6") clang_bin=$(abs "$7")
-shift 7
+dir=$(abs "$1") archive=$(abs "$2") mimalloc=$(abs "$3") icu=$(abs "$4") root=$(abs "$5")
+gn_out=$(abs "$6") binding=$(abs "$7") clang_bin=$(abs "$8")
+shift 8
 
 export V8_ZIG_ARCHIVE="$archive"
 export V8_ZIG_MIMALLOC="$mimalloc"
+export V8_ZIG_ICU="$icu"
 export V8_ZIG_V8_ROOT="$root"
 export V8_ZIG_GN_OUT="$gn_out"
 export V8_ZIG_BINDING="$binding"

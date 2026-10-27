@@ -1,9 +1,9 @@
-#include "icu-compressed.h"
+#include "icu.h"
 
 #include <cstddef>
 #include <atomic>
 #include <new>
-#include "../zstd/lib/zstd.h"
+#include <zstd.h>
 #include "unicode/udata.h"
 
 extern "C" {
@@ -66,12 +66,12 @@ bool configure_data() {
 
 // Retains only the provider callback until process exit; borrows no caller
 // resources. Static initialization serializes configuration and caches failure.
-bool v8_zig_initialize_compressed_icu() {
+bool v8_zig_icu_initialize() {
   static const bool initialized = configure_data();
   return initialized;
 }
 
 // Returns a copied publication flag; thread-safe and retains no resources.
-extern "C" bool v8_zig_is_compressed_icu_loaded() {
+extern "C" bool v8_zig_icu_is_loaded() {
   return data_loaded.load(std::memory_order_acquire);
 }

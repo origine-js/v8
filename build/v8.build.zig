@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const zstd_build = @import("zstd.build.zig");
+const icu_build = @import("icu.build.zig");
 
 const LazyPath = std.Build.LazyPath;
 
@@ -21,6 +22,11 @@ pub const V8 = struct {
     /// `temporal_capi` elsewhere (rusty_v8 pulls it from crates.io). Equals `lib` when
     /// Temporal is disabled or the library is prebuilt.
     lib_no_temporal: LazyPath,
+    /// The ICU data provider (`libv8_icu.a`) every final link needs next to `lib`. Null for
+    /// prebuilt libraries, which must supply `v8_zig_icu_initialize` (binding/icu.h) themselves.
+    icu: ?*std.Build.Step.Compile = null,
+    /// Which provider `icu` is.
+    icu_mode: icu_build.Mode = .compressed,
     /// GN output directory (holds compile_commands.json). Null for prebuilt libraries.
     build_dir: ?[]const u8 = null,
     /// Finishes once GN has generated `build_dir`. Null for prebuilt libraries.
@@ -35,9 +41,8 @@ const shims = [_]struct { src: []const u8, dest: []const u8 }{
     .{ .src = "binding/binding.cc", .dest = "zig/binding/binding.cc" },
     .{ .src = "binding/rusty.cc", .dest = "zig/binding/rusty.cc" },
     .{ .src = "binding/binding.hpp", .dest = "zig/binding/binding.hpp" },
-    .{ .src = "binding/icu-compressed.cc", .dest = "zig/binding/icu-compressed.cc" },
     .{ .src = "binding/darwin-frameworks.cc", .dest = "zig/binding/darwin-frameworks.cc" },
-    .{ .src = "binding/icu-compressed.h", .dest = "zig/binding/icu-compressed.h" },
+    .{ .src = "binding/icu.h", .dest = "zig/binding/icu.h" },
     .{ .src = "binding/support.h", .dest = "zig/binding/support.h" },
     .{ .src = "binding/layout.gen.h", .dest = "zig/binding/layout.gen.h" },
     .{ .src = "build-tools/gn/BUILD.gn", .dest = "zig/BUILD.gn" },
@@ -158,14 +163,13 @@ fn googleProfile(target: std.Build.ResolvedTarget) []const u8 {
 
 const Bundle = struct { lib: LazyPath, run: *std.Build.Step.Run };
 
-/// Flattens V8's archive, the zstd decoder and (optionally) the temporal_capi rlibs into one
-/// `libv8_zig.a`. Borrows b, the decoder and the dependency step for graph construction;
+/// Flattens V8's archive and (optionally) the temporal_capi rlibs into one
+/// `libv8_zig.a`. Borrows b and the dependency step for graph construction;
 /// the output is build-cache owned. `with_rust` adds the Rust rlibs GN's alink drops.
 fn bundleArchive(
     b: *std.Build,
     v8_dir: []const u8,
     out_dir: []const u8,
-    decoder: *std.Build.Step.Compile,
     bitcode_darwin: bool,
     with_rust: bool,
     after: *std.Build.Step,
@@ -185,7 +189,6 @@ fn bundleArchive(
         bundle.addArgs(&.{ "--rust", b.fmt("{s}/third_party/ninja/ninja", .{v8_dir}), b.fmt("{s}/{s}", .{ v8_dir, out_dir }), "v8_zig" });
     }
     bundle.addFileArg(.{ .cwd_relative = b.fmt("{s}/{s}/obj/zig/libv8_zig.a", .{ v8_dir, out_dir }) });
-    bundle.addArtifactArg(decoder);
     bundle.step.dependOn(after);
     return .{ .lib = lib, .run = bundle };
 }
@@ -242,8 +245,8 @@ fn gnOs(target: std.Build.ResolvedTarget) []const u8 {
 /// Copies target's descriptor; borrows b and its target storage through build
 /// teardown. Returns build-owned artifact paths
 /// valid through build teardown. Build steps own generated compressed ICU bytes.
-/// A prebuilt path is borrowed through build execution and must include its own
-/// ICU initialization implementation. Configuration allocation failure panics.
+/// A prebuilt path is borrowed through build execution; it carries no ICU provider,
+/// so the program must link its own `v8_zig_icu_initialize`. Configuration allocation failure panics.
 pub fn add(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -253,6 +256,7 @@ pub fn add(
         return .{ .lib = .{ .cwd_relative = path }, .lib_no_temporal = .{ .cwd_relative = path } };
     }
 
+    const icu_mode = b.option(icu_build.Mode, "v8_icu", "ICU data embedding: compressed (zstd, expanded on first Intl use; default) or raw (about 7 MB larger executable, no expansion)") orelse .compressed;
     const gn_args: GnArgs = .{
         .is_debug = optimize == .debug,
         .symbol_level = b.option(u8, "symbol_level", "GN symbol_level") orelse if (optimize == .debug) 1 else 0,
@@ -289,10 +293,6 @@ pub fn add(
     //    ninja's mtime tracking stays accurate.
     const staged = b.addWriteFiles();
     for (shims) |shim| _ = staged.addCopyFile(b.path(shim.src), shim.dest);
-    const zstd = b.dependency("zstd", .{});
-    _ = staged.addCopyFile(zstd.path("lib/zstd.h"), "zig/zstd/lib/zstd.h");
-    _ = staged.addCopyFile(zstd.path("lib/zstd_errors.h"), "zig/zstd/lib/zstd_errors.h");
-    _ = staged.addCopyFile(zstd.path("LICENSE"), "zig/zstd/LICENSE");
 
     const stage = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && rsync -rc \"$1/\" \"$2/\"", "stage" });
     stage.addDirectoryArg(staged.getDirectory());
@@ -321,14 +321,23 @@ pub fn add(
     const icu_patch = applyPatches(b, b.fmt("{s}/third_party/icu", .{v8_dir}), "icu");
     icu_patch.step.dependOn(&pa_patch.step);
 
-    // 4. Compress the complete ICU package before GN resolves generated sources.
-    const compress = b.addSystemCommand(&.{ "uv", "run" });
-    compress.addFileArg(b.path("build-tools/scripts/compress-icu.py"));
-    const icu_data_dir = if (target.result.os.tag == .ios) "ios" else "common";
-    compress.addArg(b.fmt("{s}/third_party/icu/{s}/icudtl.dat", .{ v8_dir, icu_data_dir }));
-    const compressed_source = compress.addOutputFileArg2("icu-data.gen.cc", .{});
-    compress.step.dependOn(&icu_patch.step);
-    const published_icu = publish(b, compressed_source, b.fmt("{s}/zig/binding/icu-data.gen.cc", .{v8_dir}));
+    // 4. The ICU data provider is its own link object (icu.build.zig), not part of libv8_zig.a.
+    // Compressed mode compresses the complete package first.
+    const icu_data_dir = b.fmt("{s}/third_party/icu/{s}", .{ v8_dir, if (target.result.os.tag == .ios) "ios" else "common" });
+    var compressed_source: ?LazyPath = null;
+    if (icu_mode == .compressed) {
+        const compress = b.addSystemCommand(&.{ "uv", "run" });
+        compress.addFileArg(b.path("build-tools/scripts/compress-icu.py"));
+        compress.addArg(b.fmt("{s}/icudtl.dat", .{icu_data_dir}));
+        compressed_source = compress.addOutputFileArg2("icu-data.gen.cc", .{});
+        compress.step.dependOn(&icu_patch.step);
+    }
+    const icu = icu_build.add(b, target, icu_mode, .{
+        .icu_dir = b.fmt("{s}/third_party/icu", .{v8_dir}),
+        .data_dir = icu_data_dir,
+        .checkout = &icu_patch.step,
+        .compressed_source = compressed_source,
+    });
 
     // 5. Generate and build.
     const path_env = b.fmt("{s}:{s}", .{ depot_dir, b.graph.environ_map.get("PATH") orelse "" });
@@ -347,7 +356,6 @@ pub fn add(
     gn.setCwd(.{ .cwd_relative = v8_dir });
     gn.setEnvironmentVariable("PATH", path_env);
     gn.has_side_effects = true;
-    gn.step.dependOn(&published_icu.run.step);
     if (gn_args.builtin_pgo) {
         const profiles = b.addSystemCommand(&.{ "uv", "run" });
         profiles.addFileArg(b.path("build-tools/scripts/download-pgo.py"));
@@ -362,7 +370,6 @@ pub fn add(
             custom.addArgs(&.{ "--gn-args", args });
             custom.has_side_effects = true;
             custom.step.dependOn(&profiles.step);
-            custom.step.dependOn(&published_icu.run.step);
             gn.step.dependOn(&custom.step);
         } else {
             gn.step.dependOn(&profiles.step);
@@ -375,19 +382,19 @@ pub fn add(
     ninja.has_side_effects = true;
     ninja.step.dependOn(&gn.step);
 
-    // Zig builds only zstd's decoder with .small; flatten it into the V8 archive.
+    // The zstd decoder alone, for inspection (the compressed ICU provider bundles its own copy).
     const decoder = zstd_build.add(b, target);
     b.step("build-zstd", "Build and install the size-optimized zstd decoder").dependOn(&b.addInstallArtifact(decoder, .{}).step);
     // `zig ar` writes no symbol index for bitcode members, so ThinLTO Darwin archives
     // are flattened with the llvm-ar that shipped with (and matches) V8's clang.
     const bitcode_darwin = !gn_args.is_debug and gn_args.thin_lto and target.result.os.tag.isDarwin();
-    const bundle = bundleArchive(b, v8_dir, out_dir, decoder, bitcode_darwin, gn_args.temporal, &ninja.step);
+    const bundle = bundleArchive(b, v8_dir, out_dir, bitcode_darwin, gn_args.temporal, &ninja.step);
     const stable_dir = b.fmt("{s}/{s}/zig-bundle", .{ v8_dir, out_dir });
     const stable_lib = b.fmt("{s}/libv8_zig.a", .{stable_dir});
     const stable_no_temporal = if (gn_args.temporal) b.fmt("{s}/libv8_zig_no_temporal.a", .{stable_dir}) else stable_lib;
     const published = publish(b, bundle.lib, stable_lib);
     const published_no_temporal = if (gn_args.temporal)
-        publish(b, bundleArchive(b, v8_dir, out_dir, decoder, bitcode_darwin, false, &ninja.step).lib, stable_no_temporal)
+        publish(b, bundleArchive(b, v8_dir, out_dir, bitcode_darwin, false, &ninja.step).lib, stable_no_temporal)
     else
         published;
     // Without a built archive, linking pulls in the whole pipeline once. Afterwards the
@@ -432,6 +439,8 @@ pub fn add(
     return .{
         .lib = lib,
         .lib_no_temporal = lib_no_temporal,
+        .icu = icu,
+        .icu_mode = icu_mode,
         .build_dir = b.fmt("{s}/{s}", .{ v8_dir, out_dir }),
         .gn_step = &gn.step,
         .clang_bin = b.fmt("{s}/third_party/llvm-build/Release+Asserts/bin", .{v8_dir}),

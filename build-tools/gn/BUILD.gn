@@ -7,8 +7,6 @@ static_library("v8_zig") {
   sources = [
     "./binding/binding.cc",
     "./binding/rusty.cc",
-    "./binding/icu-compressed.cc",
-    "./binding/icu-data.gen.cc",
   ]
   if (is_mac) {
     sources += [ "./binding/darwin-frameworks.cc" ]
@@ -18,7 +16,7 @@ static_library("v8_zig") {
     "//:v8",
     "//:v8_libbase",
     "//:v8_libplatform",
-    # The shim and compressed-data provider call ICU directly. V8's internal
+    # The shim calls ICU directly (the data provider is a separate link object). V8's internal
     # dependency no longer propagates ICU's include configuration to embedders.
     "//third_party/icu:icu",
     "//third_party/fp16",

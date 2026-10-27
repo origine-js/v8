@@ -10,6 +10,7 @@ const v8_build = @import("v8.build.zig");
 pub fn addSteps(b: *std.Build, v8: v8_build.V8, mimalloc: *std.Build.Step.Compile) void {
     const build_dir = v8.build_dir orelse return;
     const clang_bin = v8.clang_bin orelse return;
+    if (v8.icu == null) return;
     const crate_dir = b.option([]const u8, "rusty_v8_dir", "Rust v8 crate (default rusty_v8)") orelse
         b.root.joinString(b.allocator, "rusty_v8") catch @panic("OOM");
     const extra_args = b.option([]const u8, "rusty_cargo_args", "Extra space-separated cargo arguments for the rusty steps") orelse "";
@@ -26,6 +27,7 @@ pub fn addSteps(b: *std.Build, v8: v8_build.V8, mimalloc: *std.Build.Step.Compil
         run.addArg(crate_dir);
         run.addFileArg(v8.lib_no_temporal);
         run.addFileArg(mimalloc.getEmittedBin());
+        run.addFileArg(v8.icu.?.getEmittedBin());
         run.addArgs(&.{ v8_root, build_dir, b.root.joinString(b.allocator, "binding") catch @panic("OOM"), clang_bin });
         run.addArgs(n.args);
         if (extra_args.len != 0) {

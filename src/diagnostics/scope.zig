@@ -1,5 +1,6 @@
 //! Optional, allocation-free scope initialization tracing on the calling thread.
 const std = @import("std");
+const stderr = @import("stderr.zig");
 threadlocal var count: usize = 0;
 threadlocal var samples: [64]struct { name: []const u8, ns: i64 } = undefined;
 
@@ -31,6 +32,6 @@ pub fn mark(start: *?i64, comptime name: []const u8) void {
 /// Writes and clears this thread's collected samples; retains no resources.
 /// Caller must invoke after measured startup so output does not affect spans.
 pub fn report() void {
-    for (samples[0..count]) |sample| std.debug.print("scope_detail {s}: {d} ns\n", .{ sample.name, sample.ns });
+    for (samples[0..count]) |sample| stderr.print("scope_detail {s}: {d} ns\n", .{ sample.name, sample.ns });
     count = 0;
 }

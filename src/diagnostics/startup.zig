@@ -1,5 +1,6 @@
 //! Inline application startup stage samples; no allocations.
 const std = @import("std");
+const stderr = @import("stderr.zig");
 
 enabled: bool,
 last: i64,
@@ -33,8 +34,8 @@ pub fn report(self: *const @This()) void {
     if (!self.enabled) return;
     var total: i64 = 0;
     for (self.samples[0..self.count]) |sample| {
-        std.debug.print("startup {s}: {d} ns\n", .{ sample.name, sample.ns });
+        stderr.print("startup {s}: {d} ns\n", .{ sample.name, sample.ns });
         total += sample.ns;
     }
-    std.debug.print("startup total: {d} ns\n", .{total});
+    stderr.print("startup total: {d} ns\n", .{total});
 }

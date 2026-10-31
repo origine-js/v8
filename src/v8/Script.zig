@@ -23,6 +23,23 @@ pub const Script = extern struct {
         return @This().from_opaque(e.v8__Script__Compile(context, source, ptr));
     }
 
+    /// Option bit the V8 patch `0011-repl-mode.patch` reads in `CompileUnboundInternal`; it is
+    /// outside `ScriptCompiler::CompileOptions` and is removed before V8 sees the options.
+    const repl_mode_option: u32 = 1 << 20;
+
+    /// Like `compile`, in REPL mode (the mode of the inspector's `Runtime.evaluate` `replMode`):
+    /// a top-level `let`, `const` or `class` may be declared again by a later REPL script, which
+    /// replaces the binding, while `const` stays read-only. Requires an entered `context` and a
+    /// live handle scope. Borrows `source` and `origin` for this call (V8 copies what it keeps);
+    /// the result is a local handle in the current handle scope, null with a pending exception
+    /// on a syntax error.
+    pub fn compileRepl(context: Context, source: String, origin: ScriptOrigin) ?Self {
+        var script_source: v8.ScriptCompiler.Source = undefined;
+        v8.ScriptCompiler.Source.init(&script_source, source, &origin, null);
+        defer script_source.deinit();
+        return v8.ScriptCompiler.compile(context, &script_source, repl_mode_option, 0);
+    }
+
     /// Borrows `self` for this call; returns V8's script id. Retains nothing.
     pub fn scriptId(self: Self) c_int {
         return e.v8__Script__ScriptId(self);

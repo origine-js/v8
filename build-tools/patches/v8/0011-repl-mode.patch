@@ -1,0 +1,25 @@
+diff --git a/src/api/api.cc b/src/api/api.cc
+index d1133a8f6c4..0a66a1b90aa 100644
+--- a/src/api/api.cc
++++ b/src/api/api.cc
+@@ -2734,12 +2734,20 @@ MaybeLocal<UnboundScript> ScriptCompiler::CompileUnboundInternal(
+ 
+   auto str = Utils::OpenHandle(*(source->source_string));
+ 
++  // zig-v8: a private option bit (outside CompileOptions) compiles the script in
++  // REPL mode, the mode the inspector's Runtime.evaluate `replMode` uses: top-level
++  // let/const/class may be redeclared by later REPL scripts.
++  constexpr int kZigReplMode = 1 << 20;
++  const bool zig_repl_mode = (options & kZigReplMode) != 0;
++  options = static_cast<CompileOptions>(options & ~kZigReplMode);
++
+   i::DirectHandle<i::SharedFunctionInfo> result;
+   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.CompileScript");
+   i::ScriptDetails script_details = GetScriptDetails(
+       i_isolate, source->resource_name, source->resource_line_offset,
+       source->resource_column_offset, source->source_map_url,
+       source->host_defined_options, source->resource_options);
++  if (zig_repl_mode) script_details.repl_mode = i::REPLMode::kYes;
+ 
+   i::MaybeDirectHandle<i::SharedFunctionInfo> maybe_function_info;
+   if (options & kConsumeCodeCache) {

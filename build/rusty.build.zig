@@ -23,11 +23,11 @@ pub fn addSteps(b: *std.Build, v8: v8_build.V8, mimalloc: *std.Build.Step.Compil
     };
     for (names) |n| {
         const run = b.addSystemCommand(&.{"sh"});
-        run.addFileArg(b.path("build-tools/scripts/cargo-rusty.sh"));
+        run.addFileArg2(b.path("build-tools/scripts/cargo-rusty.sh"), .{});
         run.addArg(crate_dir);
-        run.addFileArg(v8.lib_no_temporal);
-        run.addFileArg(mimalloc.getEmittedBin());
-        run.addFileArg(v8.icu.?.getEmittedBin());
+        run.addFileArg2(v8.lib_no_temporal, .{});
+        run.addFileArg2(mimalloc.getEmittedBin(), .{});
+        run.addFileArg2(v8.icu.?.getEmittedBin(), .{});
         run.addArgs(&.{ v8_root, build_dir, b.root.joinString(b.allocator, "binding") catch @panic("OOM"), clang_bin });
         run.addArgs(n.args);
         if (extra_args.len != 0) {

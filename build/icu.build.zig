@@ -42,14 +42,14 @@ const icu_flags = [_][]const u8{
 pub fn add(b: *std.Build, target: std.Build.ResolvedTarget, mode: Mode, inputs: Inputs) *std.Build.Step.Compile {
     const module = b.createModule(.{
         .target = target,
-        .optimize = .ReleaseSmall,
+        .optimize = .small,
         .link_libc = true,
         .link_libcpp = true,
         .pic = true,
         .strip = true,
     });
     module.addIncludePath(b.path("binding"));
-    module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/source/common", .{inputs.icu_dir}) });
+    module.addIncludePath(b.graph.cwdRelativePath(b.fmt("{s}/source/common", .{inputs.icu_dir})));
     switch (mode) {
         .compressed => {
             zstd_build.addSources(b, module);

@@ -4,7 +4,7 @@ const binding_build = @import("build/binding.build.zig");
 const rusty_build = @import("build/rusty.build.zig");
 
 /// Configures build-owned V8/mimalloc artifacts and modules; retains no runtime state.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const link_native = b.option(bool, "link_native", "Link native libraries into exported modules; disable for an external final link") orelse true;
@@ -21,30 +21,30 @@ pub fn build(b: *std.Build) void {
         (b.root.joinString(b.allocator, b.fmt(".lp-cache/v8-{s}/third_party/llvm-build/Release+Asserts/bin", .{v8_build.version})) catch @panic("OOM"));
     b.addNamedLazyPath("v8", v8.lib);
     b.addNamedLazyPath("v8_no_temporal", v8.lib_no_temporal);
-    b.addNamedLazyPath("clang_bin", .{ .cwd_relative = clang_bin });
+    b.addNamedLazyPath("clang_bin", b.graph.cwdRelativePath(clang_bin));
     // For a Rust consumer of the `v8` crate (rusty_v8 build.rs): the checkout, the shim sources and the
     // GN compile commands that select V8's ABI. Absent for a prebuilt archive, which has no GN output.
     b.addNamedLazyPath("binding", b.path("binding"));
     if (v8.build_dir) |build_dir| {
-        b.addNamedLazyPath("v8_root", .{ .cwd_relative = std.fs.path.dirname(std.fs.path.dirname(build_dir).?).? });
+        b.addNamedLazyPath("v8_root", b.graph.cwdRelativePath(std.fs.path.dirname(std.fs.path.dirname(build_dir).?).?));
         const commands = b.fmt("{s}/compile_commands.json", .{build_dir});
         const have_commands = if (std.Io.Dir.accessAbsolute(b.graph.io, commands, .{})) |_| true else |_| false;
         if (have_commands) {
-            b.addNamedLazyPath("gn_compile_commands", .{ .cwd_relative = commands });
+            b.addNamedLazyPath("gn_compile_commands", b.graph.cwdRelativePath(commands));
         } else {
             // First build: GN has not run yet; copy its output once it has.
             const copy = b.addSystemCommand(&.{"cp"});
             copy.addArg(commands);
-            b.addNamedLazyPath("gn_compile_commands", copy.addOutputFileArg("compile_commands.json"));
+            b.addNamedLazyPath("gn_compile_commands", copy.addOutputFileArg2("compile_commands.json", .{}));
             copy.step.dependOn(v8.gn_step.?);
         }
     }
     var link_lib = v8.lib;
     if (link_native and target.result.os.tag == .macos) {
         const native = b.addSystemCommand(&.{ "uv", "run", "--script" });
-        native.addFileArg(b.path("build-tools/scripts/native-archive.py"));
-        native.addFileArg(v8.lib);
-        link_lib = native.addOutputFileArg("libv8_zig.a");
+        native.addFileArg2(b.path("build-tools/scripts/native-archive.py"), .{});
+        native.addFileArg2(v8.lib, .{});
+        link_lib = native.addOutputFileArg2("libv8_zig.a", .{});
         native.addArg(clang_bin);
         native.addArgs(&.{ "--target", b.fmt("{s}-apple-macos{f}", .{ @tagName(target.result.cpu.arch), target.result.os.version_range.semver.min }) });
     }
@@ -83,7 +83,7 @@ pub fn build(b: *std.Build) void {
     });
     // Re-exported so dependents (the root build) take `@mimalloc` from here with `@v8`.
     const mimalloc_module = mimalloc_dep.module("@mimalloc");
-    b.modules.put(b.graph.arena, b.dupe("@mimalloc"), mimalloc_module) catch @panic("OOM");
+    b.modules.put(b.graph.arena, b.graph.dupeString("@mimalloc"), mimalloc_module) catch @panic("OOM");
     if (link_native) mimalloc_module.linkLibrary(mimalloc);
     util_module.addImport("@mimalloc", mimalloc_module);
     module.addImport("@mimalloc", mimalloc_module);
@@ -93,7 +93,7 @@ pub fn build(b: *std.Build) void {
     rusty_build.addSteps(b, v8, mimalloc);
     var binding_v8 = v8;
     binding_v8.lib = link_lib;
-    binding_build.addSteps(b, binding_v8);
+    try binding_build.addSteps(b, binding_v8);
 
     // `zig build` installs the static library for non-Zig consumers.
     b.getInstallStep().dependOn(&b.addInstallFile(v8.lib, "libv8_zig.a").step);

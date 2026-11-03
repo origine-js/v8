@@ -180,20 +180,20 @@ fn bundleArchive(
     after: *std.Build.Step,
 ) Bundle {
     const bundle = b.addSystemCommand(&.{"sh"});
-    bundle.addFileArg(b.path("build-tools/scripts/bundle-archives.sh"));
+    bundle.addFileArg2(b.path("build-tools/scripts/bundle-archives.sh"), .{});
     if (bitcode_darwin) {
         bundle.addArg(b.fmt("{s}/third_party/llvm-build/Release+Asserts/bin/llvm-ar", .{v8_dir}));
         bundle.addArg("-");
     } else {
         bundle.addArgs(&.{ b.graph.zig_exe, "ar" });
     }
-    const lib = bundle.addOutputFileArg("libv8_zig.a");
+    const lib = bundle.addOutputFileArg2("libv8_zig.a", .{});
     if (with_rust) {
         // temporal_capi is Rust; GN's alink drops rlibs from static libraries (rusty_v8 gets
         // them through Cargo), so the bundler adds them. Host-side proc-macro rlibs are skipped.
         bundle.addArgs(&.{ "--rust", b.fmt("{s}/third_party/ninja/ninja", .{v8_dir}), b.fmt("{s}/{s}", .{ v8_dir, out_dir }), "v8_zig" });
     }
-    bundle.addFileArg(.{ .cwd_relative = b.fmt("{s}/{s}/obj/zig/libv8_zig.a", .{ v8_dir, out_dir }) });
+    bundle.addFileArg2(b.graph.cwdRelativePath(b.fmt("{s}/{s}/obj/zig/libv8_zig.a", .{ v8_dir, out_dir })), .{});
     bundle.step.dependOn(after);
     return .{ .lib = lib, .run = bundle };
 }
@@ -203,9 +203,9 @@ fn bundleArchive(
 /// construction; the stable file is owned by the cache directory, the output by the build cache.
 fn publish(b: *std.Build, src: LazyPath, dest: []const u8) Bundle {
     const run = b.addSystemCommand(&.{ "sh", "-c", "cmp -s \"$1\" \"$2\" || { mkdir -p \"$(dirname \"$2\")\" && cp -f \"$1\" \"$2\"; } && cp -f \"$1\" \"$3\"", "publish" });
-    run.addFileArg(src);
+    run.addFileArg2(src, .{});
     run.addArg(dest);
-    return .{ .lib = run.addOutputFileArg(std.fs.path.basename(dest)), .run = run };
+    return .{ .lib = run.addOutputFileArg2(std.fs.path.basename(dest), .{}), .run = run };
 }
 
 /// Reports whether the absolute `path` exists; borrows b and path, retains nothing.
@@ -219,9 +219,9 @@ fn exists(b: *std.Build, path: []const u8) bool {
 /// (the applier is incremental and idempotent). Returns a builder-owned run step.
 fn applyPatches(b: *std.Build, checkout: []const u8, series: []const u8) *std.Build.Step.Run {
     const run = b.addSystemCommand(&.{"sh"});
-    run.addFileArg(b.path("build-tools/scripts/apply-patches.sh"));
+    run.addFileArg2(b.path("build-tools/scripts/apply-patches.sh"), .{});
     run.addArg(checkout);
-    run.addDirectoryArg(b.path(b.fmt("build-tools/patches/{s}", .{series})));
+    run.addDirectoryArg2(b.path(b.fmt("build-tools/patches/{s}", .{series})), .{});
     run.has_side_effects = true;
     return run;
 }
@@ -258,7 +258,7 @@ pub fn add(
     optimize: std.builtin.Optimize,
 ) V8 {
     if (b.option([]const u8, "prebuilt_v8_path", "Path to a prebuilt libv8_zig.a; skips building V8")) |path| {
-        return .{ .lib = .{ .cwd_relative = path }, .lib_no_temporal = .{ .cwd_relative = path } };
+        return .{ .lib = b.graph.cwdRelativePath(path), .lib_no_temporal = b.graph.cwdRelativePath(path) };
     }
 
     const icu_mode = b.option(icu_build.Mode, "v8_icu", "ICU data embedding: compressed (zstd, expanded on first Intl use; default) or raw (about 7 MB larger executable, no expansion)") orelse .compressed;
@@ -303,16 +303,16 @@ pub fn add(
     for (shims) |shim| _ = staged.addCopyFile(b.path(shim.src), shim.dest);
 
     const stage = b.addSystemCommand(&.{ "sh", "-c", "mkdir -p \"$2\" && rsync -rc \"$1/\" \"$2/\"", "stage" });
-    stage.addDirectoryArg(staged.getDirectory());
+    stage.addDirectoryArg2(staged.getDirectory(), .{});
     stage.addArg(v8_dir);
     stage.has_side_effects = true;
 
     // 2. depot_tools, the V8 checkout and the bundled clang.
     const depot_tools = b.dependency("depot_tools", .{});
     const fetch = b.addSystemCommand(&.{"sh"});
-    fetch.addFileArg(b.path("build-tools/scripts/fetch-v8.sh"));
+    fetch.addFileArg2(b.path("build-tools/scripts/fetch-v8.sh"), .{});
     fetch.addArgs(&.{ cache_root, version });
-    fetch.addDirectoryArg(depot_tools.path(""));
+    fetch.addDirectoryArg2(depot_tools.path(""), .{});
     fetch.has_side_effects = true;
     fetch.step.dependOn(&stage.step);
 
@@ -335,7 +335,7 @@ pub fn add(
     var compressed_source: ?LazyPath = null;
     if (icu_mode == .compressed) {
         const compress = b.addSystemCommand(&.{ "uv", "run" });
-        compress.addFileArg(b.path("build-tools/scripts/compress-icu.py"));
+        compress.addFileArg2(b.path("build-tools/scripts/compress-icu.py"), .{});
         compress.addArg(b.fmt("{s}/icudtl.dat", .{icu_data_dir}));
         compressed_source = compress.addOutputFileArg2("icu-data.gen.cc", .{});
         compress.step.dependOn(&icu_patch.step);
@@ -361,20 +361,20 @@ pub fn add(
         "--export-compile-commands=v8_zig",
         b.fmt("--args={s}", .{args}),
     });
-    gn.setCwd(.{ .cwd_relative = v8_dir });
+    gn.setCwd(b.graph.cwdRelativePath(v8_dir));
     gn.setEnvironmentVariable("PATH", path_env);
     gn.has_side_effects = true;
     if (gn_args.builtin_pgo) {
         const profiles = b.addSystemCommand(&.{ "uv", "run" });
-        profiles.addFileArg(b.path("build-tools/scripts/download-pgo.py"));
+        profiles.addFileArg2(b.path("build-tools/scripts/download-pgo.py"), .{});
         profiles.addArgs(&.{ v8_dir, googleProfile(target) });
         profiles.has_side_effects = true;
         profiles.step.dependOn(&fetch.step);
         if (customBuiltinPgo(target)) {
             const custom = b.addSystemCommand(&.{ "uv", "run" });
-            custom.addFileArg(b.path("build-tools/scripts/prepare-custom-pgo.py"));
+            custom.addFileArg2(b.path("build-tools/scripts/prepare-custom-pgo.py"), .{});
             custom.addArg(v8_dir);
-            custom.addDirectoryArg(b.path(b.fmt("build-tools/pgo/profiles/{s}/mac-arm64", .{version})));
+            custom.addDirectoryArg2(b.path(b.fmt("build-tools/pgo/profiles/{s}/mac-arm64", .{version})), .{});
             custom.addArgs(&.{ "--gn-args", args });
             custom.has_side_effects = true;
             custom.step.dependOn(&profiles.step);
@@ -385,7 +385,7 @@ pub fn add(
     }
 
     const ninja = b.addSystemCommand(&.{ b.fmt("{s}/autoninja", .{depot_dir}), "-C", out_dir, "v8_zig" });
-    ninja.setCwd(.{ .cwd_relative = v8_dir });
+    ninja.setCwd(b.graph.cwdRelativePath(v8_dir));
     ninja.setEnvironmentVariable("PATH", path_env);
     ninja.has_side_effects = true;
     ninja.step.dependOn(&gn.step);
@@ -408,8 +408,8 @@ pub fn add(
     // Without a built archive, linking pulls in the whole pipeline once. Afterwards the
     // archives are plain files and V8 is rebuilt only by `build-v8`.
     const have_archive = exists(b, stable_lib);
-    const lib: LazyPath = if (have_archive) .{ .cwd_relative = stable_lib } else published.lib;
-    const lib_no_temporal: LazyPath = if (exists(b, stable_no_temporal)) .{ .cwd_relative = stable_no_temporal } else published_no_temporal.lib;
+    const lib: LazyPath = if (have_archive) b.graph.cwdRelativePath(stable_lib) else published.lib;
+    const lib_no_temporal: LazyPath = if (exists(b, stable_no_temporal)) b.graph.cwdRelativePath(stable_no_temporal) else published_no_temporal.lib;
 
     if (target.result.os.tag == .macos) {
         const native_test_module = b.createModule(.{
@@ -419,16 +419,16 @@ pub fn add(
             .link_libcpp = true,
         });
         native_test_module.addCSourceFile(.{ .file = b.path("tests/darwin-frameworks.cc"), .flags = &.{"-std=c++20"} });
-        native_test_module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/third_party/partition_alloc/src", .{v8_dir}) });
-        native_test_module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/{s}/gen", .{ v8_dir, out_dir }) });
-        native_test_module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/{s}/gen/third_party/partition_alloc/src", .{ v8_dir, out_dir }) });
-        native_test_module.addSystemFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{gn_args.mac_sdk_path orelse "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"}) });
+        native_test_module.addIncludePath(b.graph.cwdRelativePath(b.fmt("{s}/third_party/partition_alloc/src", .{v8_dir})));
+        native_test_module.addIncludePath(b.graph.cwdRelativePath(b.fmt("{s}/{s}/gen", .{ v8_dir, out_dir })));
+        native_test_module.addIncludePath(b.graph.cwdRelativePath(b.fmt("{s}/{s}/gen/third_party/partition_alloc/src", .{ v8_dir, out_dir })));
+        native_test_module.addSystemFrameworkPath(b.graph.cwdRelativePath(b.fmt("{s}/System/Library/Frameworks", .{gn_args.mac_sdk_path orelse "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"})));
         // Zig's Mach-O linker cannot consume the release archive's LLVM bitcode.
         // Use the same native-object conversion as the exported Zig module.
         const native_archive = b.addSystemCommand(&.{ "uv", "run", "--script" });
-        native_archive.addFileArg(b.path("build-tools/scripts/native-archive.py"));
-        native_archive.addFileArg(lib);
-        const native_lib = native_archive.addOutputFileArg("libv8_zig.a");
+        native_archive.addFileArg2(b.path("build-tools/scripts/native-archive.py"), .{});
+        native_archive.addFileArg2(lib, .{});
+        const native_lib = native_archive.addOutputFileArg2("libv8_zig.a", .{});
         native_archive.addArg(b.fmt("{s}/third_party/llvm-build/Release+Asserts/bin", .{v8_dir}));
         native_archive.addArgs(&.{ "--target", b.fmt("{s}-apple-macos{f}", .{ @tagName(target.result.cpu.arch), target.result.os.version_range.semver.min }) });
         native_test_module.addObjectFile(native_lib);

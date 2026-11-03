@@ -15,7 +15,7 @@ const v8_build = @import("v8.build.zig");
 
 /// Borrows build/V8 configuration during graph construction; allocates build
 /// graph state owned by b until build teardown. Retains no runtime resources.
-pub fn addSteps(b: *std.Build, v8: v8_build.V8) void {
+pub fn addSteps(b: *std.Build, v8: v8_build.V8) !void {
     const gen = b.step("gen", "Regenerate src/generated/binding.zig, binding/layout.gen.h and src/generated/externs.gen.zig");
     const check_generated = b.step("check-generated", "Fail if the committed generated files are stale");
     const check_bindings = b.step("check-bindings", "Compare the library, externs.gen.zig, v8.zig and rusty_v8");
@@ -33,11 +33,11 @@ pub fn addSteps(b: *std.Build, v8: v8_build.V8) void {
     {
         const run = b.addRunArtifact(tool);
         run.addArg("check");
-        run.addFileArg(v8.lib);
-        run.addFileArg(b.path("src/generated/externs.gen.zig"));
-        run.addDirectoryArg(b.path("src/v8"));
-        run.addFileArg(b.path("binding/rusty.cc"));
-        if (b.lazyDependency("rusty_v8", .{})) |rusty| run.addFileArg(rusty.path("src/binding.cc"));
+        run.addFileArg2(v8.lib, .{});
+        run.addFileArg2(b.path("src/generated/externs.gen.zig"), .{});
+        run.addDirectoryArg2(b.path("src/v8"), .{});
+        run.addFileArg2(b.path("binding/rusty.cc"), .{});
+        run.addFileArg2((try b.dependencyLazy("rusty_v8", .{})).path("src/binding.cc"), .{});
         check_bindings.dependOn(&run.step);
     }
 

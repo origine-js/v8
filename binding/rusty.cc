@@ -34,13 +34,13 @@
 #include "v8-platform.h"
 #include "v8-profiler.h"
 #include "v8.h"
-#include "../../src/flags/flags.h"
-#include "../../third_party/inspector_protocol/crdtp/cbor.h"
-#include "../../third_party/inspector_protocol/crdtp/dispatch.h"
-#include "../../third_party/inspector_protocol/crdtp/frontend_channel.h"
-#include "../../third_party/inspector_protocol/crdtp/json.h"
-#include "../../third_party/inspector_protocol/crdtp/parser_handler.h"
-#include "../../src/libplatform/default-platform.h"
+#include "src/flags/flags.h"
+#include "third_party/inspector_protocol/crdtp/cbor.h"
+#include "third_party/inspector_protocol/crdtp/dispatch.h"
+#include "third_party/inspector_protocol/crdtp/frontend_channel.h"
+#include "third_party/inspector_protocol/crdtp/json.h"
+#include "third_party/inspector_protocol/crdtp/parser_handler.h"
+#include "src/libplatform/default-platform.h"
 
 using namespace support;
 

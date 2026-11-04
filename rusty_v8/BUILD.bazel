@@ -1,1 +1,35 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("//build/bazel:bindgen.bzl", "v8_bindgen")
+load("//build/bazel:rust_dependencies.bzl", "package_features", "registry_deps")
+
 exports_files(["Cargo.toml"])
+
+# build.rs's bindgen step as a tool; bindgen_config.rs holds the options both use.
+rust_binary(
+    name = "bindgen",
+    srcs = ["bindgen_main.rs", "bindgen_config.rs"],
+    crate_root = "bindgen_main.rs",
+    deps = [d for d in registry_deps("v8", kind = "build") if "bindgen" in d],
+    visibility = ["//build/bazel:__pkg__"],
+)
+
+# src/binding.rs's bindings, parsed with the flags @v8//:origine_binding compiles with.
+v8_bindgen(
+    name = "binding",
+    header = "//lib/v8_zig/binding:binding.hpp",
+    srcs = ["//lib/v8_zig/binding:support.h"],
+    cc_dep = "@v8//:origine_binding_icu",
+)
+
+rust_library(
+    name = "v8",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    crate_features = package_features("v8"),
+    compile_data = [":binding"],
+    # rules_rust makes `$(execpath)` absolute here, as `include!` needs.
+    rustc_env = {"RUSTY_V8_SRC_BINDING_PATH": "$(execpath :binding)"},
+    deps = registry_deps("v8"),
+    proc_macro_deps = registry_deps("v8", kind = "proc_macro"),
+    visibility = ["//visibility:public"],
+)

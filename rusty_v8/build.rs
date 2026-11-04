@@ -18,6 +18,8 @@ use std::env;
 use std::path::Path;
 use std::path::PathBuf;
 
+include!("bindgen_config.rs");
+
 /// Reads a required environment variable and registers it for rebuilds.
 /// Panics with the variable name when missing; retains nothing.
 fn required(name: &str) -> String {
@@ -140,31 +142,14 @@ fn build_binding(root: &Path, binding_dir: &Path, gn_out: &Path) {
     binding_dir.join("support.h").display()
   );
 
-  let bindings = bindgen::Builder::default()
-    .header(header.display().to_string())
-    .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-    .clang_args(clang_args)
-    // libc++ 24 implements the deprecated, unused std::aligned_union through a
-    // recursive union that panics bindgen's layout traversal. No public V8 or
-    // shim declaration uses this trait. Omit only its definition while parsing;
-    // native C++ compilation still sees the unmodified matching libc++ headers.
-    .clang_arg("-D_LIBCPP___TYPE_TRAITS_ALIGNED_UNION_H")
-    .generate_cstr(true)
-    .rustified_enum(".*UseCounterFeature")
-    .rustified_enum(".*ModuleImportPhase")
-    .rustified_enum(".*Intercepted")
-    .bitfield_enum(".*GCType")
-    .bitfield_enum(".*GCCallbackFlags")
-    .allowlist_item("v8__.*")
-    .allowlist_item("cppgc__.*")
-    .allowlist_item("RustObj")
-    .allowlist_item("memory_span_t")
-    .allowlist_item("const_memory_span_t")
-    .allowlist_item("ExternalConstOneByteStringResource")
-    .blocklist_item("cppgc.*Visitor")
-    .blocklist_item("RustObj.*Trace")
-    .generate()
-    .expect("Unable to generate bindings");
+  let bindings = configure(
+    bindgen::Builder::default()
+      .header(header.display().to_string())
+      .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+      .clang_args(clang_args),
+  )
+  .generate()
+  .expect("Unable to generate bindings");
 
   let out_path =
     PathBuf::from(env::var("OUT_DIR").unwrap()).join("src_binding.rs");

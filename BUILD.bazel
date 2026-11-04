@@ -1,0 +1,29 @@
+load("@rules_zig//zig:defs.bzl", "zig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# `@v8`: the Zig binding over V8 and the shim. Its externs (src/generated/binding.zig) resolve
+# against @v8//:origine_binding_icu at the program's link, not through a cc dependency here,
+# which would run translate-c over V8's headers.
+zig_library(
+    name = "v8",
+    main = "src/v8.zig",
+    srcs = glob(["src/v8/**/*.zig", "src/generated/**/*.zig"]),
+    import_name = "@v8",
+    deps = ["//lib/mimalloc"],
+)
+
+# `@util`: embedding helpers (value constructors, the process allocator).
+zig_library(
+    name = "util",
+    main = "src/eu.zig",
+    import_name = "@util",
+    deps = [":v8", "//lib/mimalloc"],
+)
+
+zig_library(
+    name = "diagnostics",
+    main = "src/diagnostics.zig",
+    srcs = glob(["src/diagnostics/**/*.zig"]),
+    import_name = "@diagnostics",
+)

@@ -1,0 +1,30 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# The shim; compiled as @v8//:origine_binding, inside V8's package and with V8's flags.
+filegroup(
+    name = "shim",
+    srcs = ["binding.cc", "rusty.cc"] + glob(["*.h", "*.hpp"]) + select({
+        "@platforms//os:macos": ["darwin-frameworks.cc"],
+        "//conditions:default": [],
+    }),
+)
+
+exports_files(["binding.hpp", "support.h"])
+
+# The ICU data provider (`v8_zig_icu_initialize`, icu.h), its own link object as in
+# build/icu.build.zig. Raw mode: the package embedded as it is (.incbin), read in place.
+cc_library(
+    name = "icu_raw",
+    srcs = ["icu-raw.cc", "icu-raw-data.S", "icu.h"],
+    additional_compiler_inputs = ["@origine_icu//:common/icudtl.dat"],
+    copts = [
+        "-fno-exceptions",
+        "-fno-rtti",
+        # A string literal for `.incbin`; the single quotes survive copts' shell-style splitting.
+        "-DICU_DATA_PATH='\"$(execpath @origine_icu//:common/icudtl.dat)\"'",
+    ],
+    # ICU's headers and their configuration defines (the same ICU V8 links).
+    deps = ["@origine_icu//:icuuc"],
+)

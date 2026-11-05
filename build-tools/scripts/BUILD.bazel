@@ -1,0 +1,12 @@
+load("@icu_python_deps//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+# Embeds the ICU package as a zstd frame (a C++ source); hermetic, with locked dependencies
+# (//build/bazel:icu-requirements.lock).
+py_binary(
+    name = "compress_icu",
+    srcs = ["compress-icu.py"],
+    main = "compress-icu.py",
+    deps = [requirement("zstandard"), requirement("typer")],
+    visibility = ["//lib/v8_zig:__subpackages__"],
+)

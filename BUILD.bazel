@@ -1,4 +1,5 @@
 load("@rules_zig//zig:defs.bzl", "zig_library")
+load("//build/bazel:opt.bzl", "zig_opt")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -11,6 +12,7 @@ zig_library(
     srcs = glob(["src/v8/**/*.zig", "src/generated/**/*.zig"]),
     import_name = "@v8",
     deps = ["//lib/mimalloc"],
+    zigopts = zig_opt("v8"),
 )
 
 # `@util`: embedding helpers (value constructors, the process allocator).
@@ -19,11 +21,13 @@ zig_library(
     main = "src/eu.zig",
     import_name = "@util",
     deps = [":v8", "//lib/mimalloc"],
+    zigopts = zig_opt("util"),
 )
 
 zig_library(
     name = "diagnostics",
     main = "src/diagnostics.zig",
     srcs = glob(["src/diagnostics/**/*.zig"]),
+    zigopts = zig_opt("diagnostics"),
     import_name = "@diagnostics",
 )

@@ -1,6 +1,7 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
 load("//build/bazel:bindgen.bzl", "v8_bindgen")
 load("//build/bazel:rust_dependencies.bzl", "package_features", "registry_deps")
+load("//build/bazel:opt.bzl", "rust_opt")
 
 exports_files(["Cargo.toml"])
 
@@ -23,6 +24,7 @@ v8_bindgen(
 
 rust_library(
     name = "v8",
+    rustc_flags = rust_opt("rusty_v8"),
     srcs = glob(["src/**/*.rs"]),
     crate_root = "src/lib.rs",
     crate_features = package_features("v8"),

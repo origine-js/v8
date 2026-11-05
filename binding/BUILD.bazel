@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//build/bazel:opt.bzl", "c_opt")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -24,7 +25,28 @@ cc_library(
         "-fno-rtti",
         # A string literal for `.incbin`; the single quotes survive copts' shell-style splitting.
         "-DICU_DATA_PATH='\"$(execpath @origine_icu//:common/icudtl.dat)\"'",
-    ],
+    ] + c_opt("icu_raw"),
     # ICU's headers and their configuration defines (the same ICU V8 links).
     deps = ["@origine_icu//:icuuc"],
+)
+
+# The compressed provider (build/icu.build.zig's default): the package embedded as one zstd frame,
+# expanded on first Intl use. Same ICU defines as the V8 ICU (build/icu.build.zig's `icu_flags`).
+genrule(
+    name = "icu_data_gen",
+    srcs = ["@origine_icu//:common/icudtl.dat"],
+    outs = ["icu-data.gen.cc"],
+    cmd = "$(execpath //lib/v8_zig/build-tools/scripts:compress_icu) $< $@ > /dev/null",
+    tools = ["//lib/v8_zig/build-tools/scripts:compress_icu"],
+)
+
+cc_library(
+    name = "icu_compressed",
+    srcs = ["icu-compressed.cc", "icu-data.gen.cc", "icu.h"],
+    copts = [
+        "-std=c++20",
+        "-fno-exceptions",
+        "-fno-rtti",
+    ] + c_opt("icu_compressed"),
+    deps = ["@origine_icu//:icuuc", "@origine_zstd//:zstd_decoder"],
 )
